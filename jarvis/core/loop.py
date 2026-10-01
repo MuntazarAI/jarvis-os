@@ -225,6 +225,8 @@ class Jarvis:
         handled = any(a in ("daily_status", "daily_continue",
                                "daily_changes", "daily_tests", "daily_repo",
                                "daily_preference", "daily_decision",
+                               "daily_memory", "identified", "greeted",
+                               "conversed",
                                "error_explained") for a in actions)
         if (understanding.intent == "command" and not blocked
                 and not assessment.requires_approval and not handled
@@ -286,11 +288,16 @@ class Jarvis:
         if daily is not None:
             return daily
         if intent == "greeting":
-            return "Hello. How can I help?", [], []
+            return "Hello. How can I help?", ["greeted"], []
         if intent == "farewell":
             return "Goodbye.", [], []
         if intent == "confirmation":
             return "Acknowledged.", [], []
+        if intent == "identity":
+            return ("I'm JARVIS — your personal AI assistant running on this machine. "
+                    "I remember what you tell me, answer questions, run tasks and tools "
+                    "with your approval, and help with research, code and daily work. "
+                    "What would you like to do?", ["identified"], [])
         if intent == "question":
             if mem_context:
                 return (f"Based on what I remember: {mem_context[0][:300]}",
@@ -303,9 +310,13 @@ class Jarvis:
                     ["gap_identified"], [])
         if intent == "command":
             return "Working on it.", ["planned"], []
-        remembered = f" I recall: {mem_context[0][:200]}." if mem_context else ""
-        return (f"Noted.{remembered} What would you like me to do with that?",
-                ["stored"], [])
+        # Normal conversation: answer conversationally. Memory is consulted
+        # for questions (above), never injected unprompted into chatter, and
+        # nothing here writes facts — that needs an explicit remember command.
+        answer = self._ask_model(f"Reply conversationally and briefly: {text}")
+        if answer is not None:
+            return (answer, ["conversed"], [])
+        return ("Noted.", ["conversed"], [])
 
     def _act(self, text: str, actions: list[str],
              tools_used: list[str]) -> tuple[list[str], list[str]]:
@@ -326,6 +337,9 @@ class Jarvis:
                 actions.append(f"probe failed: {result.error}")
         elif low.startswith("remember "):
             fact = text[len("remember "):].strip()
+            # "remember that I ..." → strip the filler so the fact is clean.
+            if fact.lower().startswith("that "):
+                fact = fact[len("that "):].strip()
             self.palace.store_fact(fact, room="Knowledge Library",
                                    source="user", importance=0.8)
             actions.append(f"stored fact: {fact[:80]}")
@@ -384,6 +398,20 @@ class Jarvis:
             body = text.split(" ", 1)[1] if " " in text else text
             mem = DecisionLog(self.palace).decide(body)
             return (f"Recorded decision: {body[:150]}", ["daily_decision"], [])
+        if any(p in low for p in ("what do you remember", "what do you know about me",
+                                     "what have i told you", "list what you remember")):
+            from ..memory.decisions import PreferenceStore
+            facts = [m.content for m in
+                     self.palace.all(tier="semantic", limit=30)
+                     if m.kind in ("fact", "note")][:5]
+            prefs = [m.content for m in PreferenceStore(self.palace).all()][:3]
+            items = facts + prefs
+            if not items:
+                return ("I don't have anything stored yet. Tell me something "
+                        "with 'remember ...' and I'll keep it.",
+                        ["daily_memory"], [])
+            lines = "\n".join(f"- {item[:160]}" for item in items[:6])
+            return (f"Here's what I remember:\n{lines}", ["daily_memory"], [])
         if any(p in low for p in ("analyze this repo", "what is in this repo",
                                      "summarize this repo", "repo status")):
             from ..developer.dev import GitAssistant, RepoInspector

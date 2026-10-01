@@ -52,9 +52,14 @@ class Perception:
 
 # -- understanding -------------------------------------------------------
 INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
+    # Identity first: "who are you?" must not fall through to question.
+    ("identity", re.compile(r"(who are you|what are you|your name|about yourself|"
+                            r"introduce yourself|who made you|who created you)", re.I)),
     ("question", re.compile(r"\b(what|why|how|when|where|who|which|is|are|can|could|do|does)\b.*\?", re.I)),
     ("command", re.compile(r"^(please\s+)?(run|open|close|start|stop|delete|create|build|show|list|check|deploy|restart|install|search|remember|forget|schedule|calculate|compute|remind|tell|set|write|send|fetch|find)\b", re.I)),
-    ("greeting", re.compile(r"^(hi|hey|hello|good\s?(morning|afternoon|evening)|yo)\b", re.I)),
+    # Elongated forms (hii, heyy, hellooo) are greetings, not statements.
+    ("greeting", re.compile(r"^(h+i+|hey+|hello+|helo|howdy|hiya|yo+|"
+                            r"good\s?(morning|afternoon|evening))\b", re.I)),
     ("farewell", re.compile(r"^(bye|goodbye|good\s?night|see you)\b", re.I)),
     ("confirmation", re.compile(r"^(yes|yeah|yep|no|nope|cancel|stop)\.?$", re.I)),
 ]

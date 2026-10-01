@@ -136,10 +136,11 @@ class ConversationManager:
 
     def needs_clarification(self, intent: str, confidence: float,
                             response: str) -> bool:
-        """Ambiguous-command detection: low-confidence statement that ended
-        in a generic 'what would you like' deflection."""
-        return (intent == "statement" and confidence < 0.55
-                and "What would you like" in response)
+        """Ambiguous-input detection: low-confidence input that ended in
+        the gap deflection (no verified answer, asking for more)."""
+        return (intent in ("statement", "question") and confidence < 0.55
+                and ("don't have a verified answer" in response
+                     or "Could you tell me more" in response))
 
     def clarify(self, goal: str, unknown: str, known: list[str]) -> str:
         plan = self.questions.generate(goal, [unknown], known)

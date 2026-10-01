@@ -52,9 +52,11 @@ def test_manager_turn_and_clarification(tmp_path):
         assert first["context"]["turns"] == 1
         second = manager.turn(jarvis, sid, "which editor do i use?")
         assert "helix" in second["response"].lower()
-        assert manager.needs_clarification("statement", 0.3,
-                                           "Noted. What would you like?")
+        assert manager.needs_clarification(
+            "statement", 0.3,
+            "I don't have a verified answer yet. Could you tell me more?")
         assert not manager.needs_clarification("command", 0.8, "Working.")
+        assert not manager.needs_clarification("statement", 0.8, "Noted.")
         question = manager.clarify("do the task", "the target", ["context"])
         assert "target" in question
     finally:
