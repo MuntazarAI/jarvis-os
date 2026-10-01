@@ -1,0 +1,1537 @@
+# JARVIS — PERSONAL AI OPERATING SYSTEM (UNIFIED, DEDUPED)
+# Source: Downloads/JARVIS_FULL_MASTER_MAP.md (1582 lines) + user spec
+# Dedup date: 2026-10-01
+#
+# REMOVED DUPLICATES (merged, no info lost):
+#  1. ADVANCED MEMORY PALACE → merged into MEMORY PALACE (canonical). 15 rooms, 8 extended types, 8 extra ops, 15 metadata fields preserved.
+#  2. MENTALIST / PATRICK-JANE-STYLE SYSTEM → condensed duplicate of MENTALIST-STYLE HUMAN INTELLIGENCE. 8 unique extensions preserved under PATRICK-JANE EXTENSIONS.
+#  3. JARVIS HUD (top-level) → demoted to subsection of UI ARCHITECTURE (HUD is an implementation, not a sibling).
+# KEPT WITH DISAMBIGUATION (system-level vs mind-level, not true duplicates):
+#  - COGNITIVE ARCHITECTURE / Perception (input channels) vs ADVANCED PERCEPTION (processing pipeline) — keep both, see notes below.
+#  - COGNITIVE ARCHITECTURE / Reasoning+Reflection vs EVIDENCE ENGINE / HYPOTHESIS LAB / EXPERIMENT & VERIFICATION / META-REASONING — former is core faculty, latter are system services. Cross-linked.
+#  - MEMORY PALACE / Memory Operations vs MEMORY CONSOLIDATION ENGINE (nightly dedup job) — operation vs scheduled process. Keep both.
+#  - MENTALIST-STYLE sub-engines vs standalone ATTENTION / EVIDENCE / HYPOTHESIS / META-REASONING engines — mentalist = usage policy, standalone = infrastructure. Keep both.
+#
+- JARVIS — PERSONAL AI OPERATING SYSTEM (UNIFIED — duplicates removed, see file header)
+  - COGNITIVE ARCHITECTURE / THE "MIND"
+    - Perception
+      - Textual input via terminal, chat interfaces, and system logs
+      - Voice input through multi-microphone arrays with beamforming
+      - Image data from local storage, web URLs, or clipboard
+      - Live camera feeds for environmental awareness and face recognition
+      - Screen capture for UI context and visual debugging
+      - Document parsing for PDF, DOCX, and Markdown files
+      - IoT sensor data including temperature, motion, and ambient light
+      - System state monitoring including active windows and background services
+      - User action tracking such as typing cadence and application switching
+    - Understanding
+      - Intent recognition to distinguish between queries, commands, and casual talk
+      - Entity extraction for names, dates, locations, and specific technical terms
+      - Context understanding to maintain thread relevance across sessions
+      - Situation awareness regarding current user activity (e.g., working, gaming, sleeping)
+      - Temporal understanding for relative time references like next Tuesday or two hours ago
+      - Spatial understanding of physical room layouts and digital window placements
+      - User-state estimation including focus levels and potential frustration
+      - Task understanding to identify implicit requirements and constraints
+    - Reasoning
+      - Logical reasoning for deductive problem solving and troubleshooting
+      - Mathematical reasoning for data analysis and complex calculations
+      - Causal reasoning to understand why a system error or event occurred
+      - Planning to create multi-step strategies for complex user requests
+      - Hypothesis generation for scientific research or debugging code
+      - Induction to identify patterns in user behavior or system performance
+      - Abduction to find the most likely explanation for incomplete data
+      - Constraint solving for scheduling and resource optimization
+      - Decision making based on utility functions and user preferences
+      - Uncertainty estimation to know when to ask for clarification
+    - Executive Function
+      - Goal management to track progress on long-term objectives
+      - Priority management using Eisenhower Matrix logic to sort tasks
+      - Task decomposition breaking "Build a website" into specific sub-tasks
+      - Scheduling automated actions via Cron or system timers
+      - Resource allocation of CPU, GPU, and RAM for AI sub-processes
+      - Attention management to filter out low-priority notifications
+      - Interrupt management to handle urgent tasks without losing state
+      - Delegation of sub-tasks to specialized sub-agents
+      - Verification of completed tasks against original requirements
+    - Reflection
+      - Self-checking of generated code or text for errors before output
+      - Error detection in internal logic or tool execution
+      - Result verification by comparing output against known ground truths
+      - Criticism of initial plans to find potential bottlenecks
+      - Replanning when environmental conditions or goals change
+      - Failure analysis to determine why a specific tool or agent failed
+      - Lessons learned stored in procedural memory for future use
+      - Post-task reflection to optimize efficiency in subsequent attempts
+  - MEMORY PALACE (canonical — merged with ADVANCED MEMORY PALACE, duplicate removed)
+    - Memory Palace Architecture
+      - Spatial Mapping
+        - Home: Central hub containing user profile and core identity settings
+        - Central Hall: Unified entry point / active context overview (from Advanced Palace)
+        - Current Situation Room: Live world-model snapshot — replaces scattered context (from Advanced Palace)
+        - Observation Room: Raw observation intake buffer before classification (from Advanced Palace)
+        - Study Room: Dedicated space for research, notes, and academic data
+        - Projects Room / Project Lab: Active workspace containing current codebases and drafts
+        - People Room / People Wing: Social graph containing contact details and interaction history
+        - Knowledge Library: Indexed repository of books, papers, and general facts
+        - Skills Workshop: Learned skills and prompt templates workspace (from Advanced Palace)
+        - Procedure Library: Step-by-step workflows (from Advanced Palace)
+        - Hypothesis Room: Active hypotheses under test (from Advanced Palace)
+        - Evidence Archive: Supporting / contradicting evidence store (from Advanced Palace)
+        - Idea Laboratory / Ideas: Sandbox for unrefined thoughts and future concepts
+        - Experiences / Events Archive: Chronological log of significant life and system events
+        - Future Plans: Calendar-integrated roadmap of goals and milestones
+        - Archive: Compressed storage for completed tasks and historical logs
+        - Trash / Expired Memories: Quarantine before permanent delete (from Advanced Palace)
+    - Memory Types
+      - Working Memory
+        - Active conversation buffer for the current dialogue turn
+        - Current task stack containing active sub-goal information
+        - Active context including open files and current directory
+        - Temporary variables and intermediate reasoning steps
+      - Short-Term Memory
+        - Recent conversation history from the last 24 hours
+        - Recent file modifications and terminal commands
+        - Recent web searches and browser history
+        - Status of tasks completed in the current session
+      - Long-Term Memory
+        - User preferences regarding communication style and tools
+        - Important facts about the user's family, career, and health
+        - Deep knowledge of long-term projects and repositories
+        - Learned skills and refined prompt templates
+      - Episodic Memory
+        - Event logs: what happened, when it happened, and the location
+        - Participant tracking: who was involved in a meeting or chat
+        - Action logs: what JARVIS did and the resulting user feedback
+        - Outcome assessments: whether the event was successful or failed
+      - Semantic Memory
+        - General world knowledge and factual definitions
+        - Conceptual relationships (e.g., Python is a Programming Language)
+        - Domain-specific expertise in fields like Medicine or Engineering
+      - Procedural Memory
+        - Step-by-step workflows for system administration
+        - Coding patterns and preferred architectural styles
+        - User-specific habits for morning routines or work blocks
+        - Command-line sequences for complex deployments
+      - Spatial Memory
+        - File system hierarchy and directory locations
+        - Device locations within the local network
+        - Virtual palace coordinates for internal data organization
+        - Physical environment maps of the user's office or home
+      - Extended Types (merged from ADVANCED MEMORY PALACE — were duplicates, now single source)
+        - Event memory / Observation memory / Evidence memory / Hypothesis memory
+        - Conversation memory / Project memory / Relationship memory
+        - Emotional and contextual metadata
+    - Memory Operations (canonical — merged, duplicates removed)
+      - Remember: Encoding new information into the appropriate memory tier
+      - Retrieve: Fetching data via semantic or keyword search
+      - Update: Modifying existing memories with new, more accurate data
+      - Merge: Combining fragmented information into a unified record
+      - Split: Dividing overloaded memories (from Advanced Palace)
+      - Summarize: Condensing long logs into high-level episodic summaries
+      - Compress: Lossy condensation for cold tiers (from Advanced Palace)
+      - Reinforce: Strengthen frequently useful memories (from Advanced Palace)
+      - Decay: Gradual relevance fading (from Advanced Palace)
+      - Archive: Moving low-relevance data to cold storage
+      - Expire: TTL-based invalidation (from Advanced Palace)
+      - Delete / Forget: Removing redundant or user-requested sensitive data
+      - Restore: Recover from archive / trash (from Advanced Palace)
+      - Version / Reconstruct: History + state rebuild (from Advanced Palace)
+    - Memory Metadata (merged from ADVANCED MEMORY PALACE — single source, was duplicated)
+      - Timestamp / Valid-from / Valid-until / Last accessed / Access frequency
+      - Location / Source / Provenance / Related entities / Related events / Related memories
+      - Confidence / Importance / Sensitivity / Privacy level
+    - Memory Retrieval
+      - Vector search for semantically similar concepts
+      - Graph traversal to find related entities in the Knowledge Graph
+      - Temporal search to find events occurring in a specific timeframe
+      - Contextual retrieval based on current active applications
+    - Memory Safety
+      - User control over what is remembered or forgotten
+      - Explicit deletion of sensitive memory nodes
+      - Memory provenance tracking to identify the source of information
+      - Privacy boundaries preventing memory sharing across different user profiles
+  - PERSONAL KNOWLEDGE GRAPH
+    - Graph Structure
+      - Nodes: Representing User, People, Projects, Places, and Devices
+      - Relationships: Defining links like "User works on Project X" or "Device A is in Place B"
+      - Attributes: Storing metadata like version numbers, timestamps, and confidence scores
+      - Confidence: Numerical value representing the certainty of a relationship
+      - Version history: Tracking how a specific node or link has evolved over time
+    - Relationship Examples
+      - Project node linked to specific GitHub repositories and Documentation files
+      - Person node linked to Meeting events and Email threads
+      - Skill node linked to Required Tools and Success Rate logs
+  - WORLD MODEL
+    - Digital World
+      - Filesystem state including directory trees and file metadata
+      - Application status for running GUI and CLI programs
+      - Network topology including local IP addresses and connected peers
+      - Account management for cloud services and local system users
+      - Container status for Docker or Podman environments
+    - Physical World
+      - Camera observations of the user's presence and posture
+      - Smart home sensor data for climate and lighting
+      - Known Bluetooth and Wi-Fi devices in proximity
+      - Physical room layout and object locations (e.g., Desk, Chair)
+    - Temporal World
+      - System clock and timezone synchronization
+      - Calendar integration for upcoming meetings and birthdays
+      - Deadline tracking for project milestones
+      - Historical timeline of system updates and user interactions
+    - System State
+      - Hardware telemetry: CPU load, RAM usage, and GPU temperature
+      - Battery level and power source status
+      - Storage health and available disk space
+      - Running services and background daemon health
+  - PERSONALITY & BEHAVIOR ENGINE
+    - Communication Style
+      - Formality levels ranging from "Casual/Slang" to "Professional/Technical"
+      - Humor settings including "Dry/Sarcastic" or "Purely Functional"
+      - Response length preferences: "Concise" vs "Detailed/Exploratory"
+      - Voice selection using high-quality neural TTS engines
+    - Interaction Rules
+      - Proactivity levels: how often JARVIS initiates conversation
+      - User preferences for notification delivery (e.g., "Don't disturb during focus")
+      - Context-sensitive behavior: "Quiet mode" during late hours or meetings
+      - Safeguards to ensure personality traits don't bypass security protocols
+  - GOAL SYSTEM
+    - Goal Hierarchy
+      - Vision: The ultimate high-level objective (e.g., "Become a Senior Developer")
+      - Long-term goals: Multi-month objectives like "Learn Rust Programming"
+      - Projects: Specific undertakings such as "Build a CLI Tool in Rust"
+      - Milestones: Key progress points like "Complete Rust Syntax Basics"
+      - Tasks: Immediate actions like "Read chapter 3 of the Rust Book"
+      - Subtasks: Atomic steps such as "Open the PDF reader to page 45"
+  - AGENT SYSTEM
+    - Multi-Agent Architecture
+      - Supervisor Agent: Manages the high-level loop and agent orchestration
+      - Planner Agent: Generates DAGs (Directed Acyclic Graphs) for task execution
+      - Research Agent: Performs web searches and synthesizes information
+      - Coding Agent: Writes, tests, and debugs code in a sandboxed environment
+      - Browser Agent: Navigates websites and interacts with web elements
+      - Computer Agent: Manipulates the local OS via mouse and keyboard simulation
+      - Security Agent: Validates tool calls against the permission policy
+      - Knowledge Agent: Queries the Vector DB and Knowledge Graph
+    - Agent Lifecycle
+      - Goal Reception: Receiving a task from the Supervisor
+      - Planning: Breaking the task into steps with assigned tools
+      - Execution: Running the steps and handling intermediate outputs
+      - Verification: Testing the output against the goal criteria
+      - Reporting: Sending the final result back to the Supervisor or User
+  - SKILL SYSTEM
+    - Skill Registry
+      - Linux Administration: Managing users, permissions, and systemd services
+      - Cybersecurity: Scanning for vulnerabilities and managing SSH keys
+      - Data Analysis: Using Pandas and Matplotlib to visualize local datasets
+      - Computer Automation: Controlling UI elements via PyAutoGUI
+      - Translation: Real-time conversion between languages using local models
+    - Skill Components
+      - Description: Clear explanation of what the skill does
+      - Required Tools: List of APIs or binaries needed (e.g., git, docker)
+      - Permissions: Level of system access required
+      - Documentation: Instructions for the Agent on how to use the skill
+  - TOOL SYSTEM
+    - Tool Registry
+      - Terminal: Execution of Bash, Zsh, or PowerShell commands
+      - Python Interpreter: Running scripts for data processing or automation
+      - Filesystem API: Reading, writing, and deleting files with safety checks
+      - Browser Controller: Headless or headed web navigation via Playwright
+      - Git/GitHub: Repository management and version control actions
+      - Smart Home API: Interaction with Home Assistant or Zigbee devices
+      - Notification System: Sending alerts to desktop or mobile devices
+    - Tool Metadata
+      - Input Schema: JSON definition of required arguments
+      - Output Schema: Format of the data returned by the tool
+      - Risk Level: Categorization from "Safe" to "Destructive"
+      - Timeout: Maximum allowed execution time before termination
+  - MODEL SYSTEM
+    - Model Manager
+      - Language Models: Orchestrating Llama 3 for local tasks and GPT-4 for complex reasoning
+      - Vision Models: Using Moondream for quick OCR and LLaVA for scene description
+      - Speech Models: Whisper for STT and Piper or Coqui for TTS
+      - Embedding Models: Using BGE-M3 for high-quality semantic search
+    - Model Router
+      - Task-based selection: Using small models for intent and large models for coding
+      - Cost/Privacy optimization: Preferring local models unless cloud power is needed
+      - Fallback logic: Switching to a cloud model if the local model fails a task
+  - VOICE SYSTEM
+    - Voice Pipeline
+      - Microphone: Capturing raw audio streams
+      - Wake Word: Detecting "Jarvis" using low-power local processing
+      - Speech-to-Text: Converting audio to text via Whisper.cpp
+      - Intent Engine: Determining if the user is speaking to JARVIS
+      - TTS Engine: Generating natural-sounding speech for the response
+      - Speaker: Outputting audio through the default system device
+  - VISION SYSTEM
+    - Visual Processing
+      - Screen Capture: Periodic or event-driven snapshots of the desktop
+      - OCR: Extracting text from images or non-selectable UI elements
+      - Object Detection: Identifying items like "Coffee Mug" or "Smartphone"
+      - Face Recognition: Identifying the user to unlock specific permissions
+      - Gesture Recognition: Detecting hand signals for volume or playback control
+  - COMPUTER CONTROL
+    - Interaction Layer
+      - Mouse Control: Moving cursor, clicking, and scrolling
+      - Keyboard Control: Typing text and executing hotkeys
+      - Clipboard Management: Reading and writing to the system clipboard
+      - Window Management: Focusing, resizing, and closing applications
+    - Permission Layer
+      - Read-only: Accessing file contents and system logs
+      - Low-risk: Creating new files or sending notifications
+      - Medium-risk: Installing new software or changing system settings
+      - High-risk: Deleting system files or modifying network configurations
+  - AUTOMATION ENGINE
+    - Trigger System
+      - Scheduled jobs: Running backups every night at 3 AM
+      - File triggers: Processing a file as soon as it is dropped in the "Inbox" folder
+      - Network triggers: Alerting when a specific IP connects to the local network
+      - System triggers: Cleaning temp files when disk space is below 10%
+      - Calendar triggers: Preparing meeting notes 5 minutes before a call starts
+  - PROACTIVE INTELLIGENCE
+    - Proactivity Control
+      - Passive: Only responds when specifically addressed by the user
+      - Suggestive: Offers tips or reminders via non-intrusive notifications
+      - Assisted: Automatically performs small tasks and asks for confirmation
+      - Automated: Handles routine workflows autonomously based on history
+    - Opportunity Detection
+      - Workflow repetition: Detecting if a user does the same 5 steps every morning
+      - Deadline awareness: Proactively gathering files for an upcoming project deadline
+      - Monitoring alerts: Notifying the user of unusual battery drain or CPU spikes
+  - KNOWLEDGE SYSTEM
+    - RAG Pipeline
+      - Document Parsing: Stripping text from various file formats
+      - Chunking: Breaking text into manageable pieces with overlap
+      - Embeddings: Generating vector representations of text chunks
+      - Vector DB: Storing embeddings in ChromaDB or Milvus for fast retrieval
+      - Source Attribution: Linking every fact back to the original file or URL
+  - PROJECT MANAGEMENT
+    - Project Structure
+      - Repository Links: Association with local and remote Git paths
+      - Dependency Tracking: Listing required libraries or hardware for a project
+      - Issue Tracking: Monitoring TODOs and bug reports within the codebase
+      - Milestone Mapping: Visualizing progress towards the final project goal
+  - MENTALIST-STYLE HUMAN INTELLIGENCE
+    - INFERENCE SAFETY PIPELINE
+      - Observation
+        - What was directly seen, heard, measured, or recorded
+        - Source, timestamp, modality, and scope
+      - Evidence
+        - Relevant observations that support or challenge a claim
+        - Provenance and reliability of each evidence item
+      - Interpretation
+        - Meaning assigned to evidence
+        - Keep interpretation separate from the recorded fact
+      - Hypothesis
+        - Possible explanation that accounts for the evidence
+        - Retain multiple competing explanations
+      - Confidence
+        - Unknown, Low, Medium, or High
+        - Never treat confidence as certainty
+      - Verification
+        - Test, source, observation, or question that could distinguish hypotheses
+        - Update the hypothesis after new evidence
+    - OBSERVATION ENGINE
+      - Visual observations
+        - Clothing
+        - Objects
+        - Environment
+        - Changes in environment
+        - Body position
+        - Facial expressions
+        - Gestures
+        - Hand movements
+        - Eye direction
+        - Movement patterns
+        - Spatial relationships
+        - Items being carried
+        - Visible wear or damage
+        - Environmental clues
+      - Audio observations
+        - Tone
+        - Speaking speed
+        - Pauses
+        - Hesitation
+        - Volume changes
+        - Speech patterns
+        - Repeated phrases
+        - Changes in wording
+        - Background sounds
+      - Conversation observations
+        - Word choice
+        - Contradictions
+        - Missing information
+        - Unusual phrasing
+        - Topic changes
+        - Evasiveness
+        - Corrections
+        - Timeline inconsistencies
+      - Fact and inference separation
+        - What I observed
+        - What it might mean
+        - What would verify the interpretation
+    - BASELINE ENGINE
+      - Contextual baseline
+        - Normal speaking style
+        - Normal vocabulary
+        - Normal response speed
+        - Normal behavior
+        - Normal gestures
+        - Normal routines
+        - Normal interaction patterns
+      - Deviation model
+        - Baseline
+        - Deviation
+        - Possible explanations
+        - Evidence required
+        - Confidence
+      - Interpretation guardrails
+        - A deviation is not automatically deception
+        - Consider stress, fatigue, environment, accessibility, and context
+        - Require corroboration before escalation
+    - MICRO-OBSERVATION SYSTEM
+      - Physical changes
+        - Object moved from normal position
+        - Unexpected item
+        - Missing item
+        - Change in clothing
+        - Environmental change
+      - Temporal and linguistic changes
+        - Unusual timestamp
+        - Different wording
+        - Change in routine
+        - New background sound
+      - Digital changes
+        - New application or process
+        - File modification
+        - Unexpected network activity
+      - Knowledge connections
+        - Link observations to the World Model
+        - Link observations to the Memory Palace
+        - Preserve source and timestamp
+    - BEHAVIORAL PATTERN ANALYSIS
+      - Pattern dimensions
+        - Repetition
+        - Routine
+        - Deviations
+        - Timing
+        - Sequencing
+        - Habits
+        - Interaction patterns
+        - Context changes
+      - Temporal reasoning
+        - Before
+        - Event
+        - After
+        - Dependencies and sequence constraints
+      - Anomaly workflow
+        - Pattern
+        - Anomaly
+        - Possible explanations
+        - Test
+      - Anti-overfitting rules
+        - Do not infer from an isolated action
+        - Search for counterexamples
+        - Compare against comparable contexts
+    - CONVERSATIONAL ANALYSIS
+      - Claim map
+        - Person
+        - Claim
+        - Evidence
+        - Supporting information
+        - Contradicting information
+        - Confidence
+      - Conversation elements
+        - Claims
+        - Evidence
+        - Assumptions
+        - Contradictions
+        - Missing details
+        - Timeline
+        - Changes in wording
+        - Ambiguity
+        - Topic avoidance
+        - Questions answered indirectly
+        - New information
+        - Corrections
+      - Conversation provenance
+        - Speaker and audience
+        - Time and location
+        - Original wording
+        - Context and omitted context
+    - HYPOTHESIS ENGINE
+      - Hypothesis workflow
+        - Observation
+        - Possible explanation A
+        - Possible explanation B
+        - Possible explanation C
+        - Compare evidence
+        - Identify distinguishing evidence
+        - Test
+        - Update confidence
+      - Bayesian-style reasoning
+        - Prior plausibility
+        - New evidence
+        - Likelihood of evidence under each explanation
+        - Alternative explanations
+        - Posterior confidence
+      - Hypothesis record
+        - Claim being evaluated
+        - Supporting evidence
+        - Evidence against
+        - Missing information
+        - Disconfirming test
+        - Last updated timestamp
+    - CONTRADICTION DETECTOR
+      - Comparison sources
+        - Current conversation
+        - Previous conversation
+        - Documents
+        - Timeline
+        - Video
+        - Images
+        - System logs
+        - User-provided information
+      - Contradiction types
+        - Direct contradiction
+        - Timeline conflict
+        - Numerical inconsistency
+        - Location inconsistency
+        - Changing explanation
+      - Alternative causes
+        - Memory error
+        - Misunderstanding
+        - Typo
+        - Missing context
+        - Different interpretation
+        - Genuine contradiction
+      - Output rule
+        - Report the conflict precisely
+        - Do not automatically label it a lie
+        - Request the smallest verification needed
+    - TIMELINE RECONSTRUCTION
+      - Event representation
+        - Timestamp
+        - Event
+        - Source
+        - Confidence
+        - Location and participants
+      - Timeline analysis
+        - Impossible sequences
+        - Missing intervals
+        - Unexpected gaps
+        - Overlapping events
+        - Dependencies
+      - Temporal links
+        - Connect events to the Memory Palace
+        - Connect events to system logs
+        - Preserve uncertain timestamps as ranges
+      - Example sequence
+        - 10:05 — Event A
+        - 10:17 — Event B
+        - 10:31 — Event C
+    - SCENE ANALYSIS
+      - Structured scene model
+        - People
+        - Objects
+        - Locations
+        - Actions
+        - Relationships
+        - Changes
+        - Timeline
+        - Unknowns
+      - Scene comparison
+        - Scene A versus Scene B
+        - Added objects
+        - Removed objects
+        - Moved objects
+        - Changed states
+        - Changed lighting or perspective
+      - Input handling
+        - Images
+        - Video
+        - Camera input
+        - Reference image provenance
+        - Limitations and occlusion
+    - HUMAN INTERACTION MODEL
+      - Relationship hypotheses
+        - Friend
+        - Colleague
+        - Family member
+        - Stranger
+        - Authority relationship
+        - Customer or service relationship
+        - Unknown
+      - Observable relationship evidence
+        - Language and address terms
+        - Turn-taking
+        - Physical distance
+        - Shared context
+        - Role-specific behavior
+        - Repeated interaction history
+      - Uncertainty controls
+        - Infer only from available evidence
+        - Mark relationship confidence
+        - Avoid identity or motive assumptions
+      - Interaction graph
+        - Person A
+        - Person B
+        - Observable interaction
+        - Context
+        - Relationship hypothesis
+    - QUESTION STRATEGY
+      - Question-generation chain
+        - Goal
+        - Information required
+        - Unknown variable
+        - Best question
+        - Expected answers
+        - Evidence interpretation
+      - Question types
+        - Clarifying questions
+        - Verification questions
+        - Follow-up questions
+        - Timeline questions
+        - Evidence questions
+        - Alternative-explanation questions
+      - Question safeguards
+        - Avoid manipulative questioning
+        - Avoid coercive questioning
+        - Prefer neutral wording
+        - Ask the minimum question that resolves uncertainty
+    - INFORMATION GAP DETECTION
+      - Knowledge states
+        - Known
+        - Unknown
+        - Uncertain
+        - Conflicting
+        - Needs verification
+      - Gap analysis
+        - What is required to decide
+        - What is currently available
+        - What is missing
+        - How missing data could change the conclusion
+      - Output behavior
+        - State uncertainty explicitly
+        - Do not fill gaps with invented facts
+        - Prioritize high-impact unknowns
+    - MEMORY PALACE + HUMAN OBSERVATION
+      - Person record
+        - Previous observations
+        - Conversations
+        - Context
+        - Known preferences
+        - Relevant events
+        - Timeline
+        - Relationships
+        - Evidence
+        - Uncertainties
+      - Spatial organization
+        - Place related observations in relevant rooms
+        - Use location as a retrieval cue
+        - Link physical scenes to digital records
+        - Keep historical states separate from current state
+      - Memory governance
+        - Do not store sensitive personal information unnecessarily
+        - Record provenance and retention reason
+        - Support explicit deletion
+        - Respect privacy boundaries
+    - PATTERN RECOGNITION
+      - Pattern dimensions
+        - Time
+        - People
+        - Locations
+        - Objects
+        - Conversations
+        - Files
+        - Events
+        - Behavior
+        - System activity
+      - Pattern record
+        - Pattern
+        - Frequency
+        - Context
+        - Exceptions
+        - Possible explanations
+        - Confidence
+      - Pattern validation
+        - Search for counterexamples
+        - Compare baseline periods
+        - Separate correlation from causation
+        - Test predictive usefulness
+    - DECEPTION ANALYSIS
+      - Explicit limitation
+        - Body language alone cannot reliably determine whether someone is lying
+        - A single behavior is not proof of deception
+        - Stress or discomfort is not equivalent to dishonesty
+      - Evidence analysis
+        - Internal consistency
+        - External consistency
+        - Evidence
+        - Timeline
+        - Claims
+        - Contradictions
+        - Changes in story
+        - Alternative explanations
+      - Safe output language
+        - Evidence consistent with X
+        - Evidence inconsistent with Y
+        - The available evidence is insufficient
+        - Person is lying — prohibited as an unsupported conclusion
+    - DEDUCTIVE REASONING
+      - Deduction workflow
+        - Observation
+        - Hypotheses
+        - Evidence
+        - Elimination
+        - Remaining possibilities
+        - Confidence
+      - Wet object example
+        - Observation: object is wet
+        - Rain
+        - Water spill
+        - Cleaning
+        - Condensation
+        - Additional evidence: location, weather, nearby objects, time, history
+      - Deductive safeguards
+        - Make premises explicit
+        - Check whether premises are reliable
+        - Do not eliminate explanations without distinguishing evidence
+    - INDUCTIVE REASONING
+      - Induction workflow
+        - Observation 1
+        - Observation 2
+        - Observation 3
+        - Observation 4
+        - Detect pattern
+        - Generate hypothesis
+        - Search for counterexamples
+        - Update hypothesis
+      - Generalization controls
+        - Track sample size
+        - Track context diversity
+        - Separate recurrence from coincidence
+        - Lower confidence when observations are dependent
+    - ABDUCTIVE REASONING
+      - Best-explanation workflow
+        - Collect available evidence
+        - Generate competing explanations
+        - Compare explanatory coverage
+        - Compare simplicity and assumptions
+        - Identify missing evidence
+        - Retain alternatives
+        - State calibrated confidence
+      - Abductive safeguards
+        - Best explanation is not proven explanation
+        - Avoid single-story reasoning
+        - Reopen the hypothesis when new evidence arrives
+    - RED-TEAM REASONING
+      - Challenge questions
+        - What if I am wrong?
+        - What evidence contradicts this?
+        - What alternative explanation exists?
+        - What information is missing?
+        - Am I confusing correlation with causation?
+        - Am I relying on an unreliable assumption?
+        - What evidence would change my conclusion?
+      - Adversarial review
+        - Construct the strongest counter-hypothesis
+        - Search for disconfirming evidence
+        - Check source reliability
+        - Recalculate confidence
+        - Produce a revised hypothesis
+    - CONFIDENCE ENGINE
+      - Confidence states
+        - Unknown
+        - Low
+        - Medium
+        - High
+      - Confidence explanation
+        - Evidence supporting it
+        - Evidence against it
+        - Missing information
+        - Alternative explanations
+      - Confidence rules
+        - Confidence is not certainty
+        - Confidence must cite evidence
+        - Confidence decreases when alternatives remain plausible
+        - Confidence updates after verification
+    - MENTALIST MODE
+      - Activation
+        - JARVIS → MENTALIST MODE
+        - Use only when the user requests careful evidence-based analysis
+      - Operating sequence
+        - Observe
+        - Record facts
+        - Establish baseline
+        - Retrieve relevant memory
+        - Build timeline
+        - Identify anomalies
+        - Generate hypotheses
+        - Search for contradictions
+        - Generate alternative explanations
+        - Ask targeted questions
+        - Verify evidence
+        - Update hypotheses
+        - Explain reasoning
+        - State remaining uncertainty
+      - Display contract
+        - Observations
+        - Evidence
+        - Hypotheses
+        - Alternatives
+        - Unknown
+        - Confidence
+        - Next test
+      - Prohibited behavior
+        - Do not display unsupported conclusions as facts
+        - Do not claim supernatural mind reading
+        - Do not infer intent without evidence
+    - ROOM-CHANGE EXAMPLE
+      - User report
+        - Something seems different about this room
+      - Observations
+        - Chair position differs from previous reference image
+        - A book is visible on the table
+        - Window appears open
+        - Lighting differs
+      - Memory
+        - Previous room state recorded at 18:30
+      - Changes
+        - Chair moved approximately X
+        - Book was previously absent
+        - Window state changed
+      - Possible explanations
+        - Someone moved the chair
+        - User moved the chair
+        - Image perspective changed
+        - Previous observation was incomplete
+      - Confidence
+        - Chair changed: High
+        - Cause: Unknown
+      - Next information needed
+        - Earlier or later image
+        - Timeline
+        - Additional context
+    - CORE OPERATING PRINCIPLE
+      - Notice more
+      - Assume less
+      - Remember everything relevant
+      - Connect information
+      - Generate multiple hypotheses
+      - Test them
+      - Update beliefs
+      - Explain uncertainty
+    - PATRICK-JANE EXTENSIONS (merged from removed duplicate MENTALIST / PATRICK-JANE-STYLE SYSTEM — unique items only, single source)
+      - Inference chains: Observation → hypothesis → verification loop
+      - Counterfactual reasoning: What if X had not happened?
+      - Probability updating: Bayesian-style prior → posterior revision
+      - Social-context reasoning / Relationship modeling
+      - Intent hypotheses / Motive hypotheses (marked as hypotheses, never facts)
+      - Context modeling / Behavioral history / Conversation history / Claim analysis
+      - Deception-analysis safeguards + Confidence calibration (see DECEPTION ANALYSIS + CONFIDENCE ENGINE)
+  - ATTENTION & AWARENESS ENGINE (system service — implements COGNITIVE ARCHITECTURE / Executive Function attention management)
+    - Attention controller
+    - Salience detection
+    - Novelty detection
+    - Anomaly detection
+    - Priority detection
+    - Context-dependent attention
+    - Attention shifting
+    - Focus mode
+    - Background awareness
+    - Multimodal attention
+    - Attention history
+    - What did I notice?
+    - What did I ignore?
+    - Why did I notice this?
+    - Attention budget
+    - Cognitive-load estimation
+    - Distraction detection
+  - ADVANCED PERCEPTION (processing pipeline — complements COGNITIVE ARCHITECTURE / Perception input channels, not a duplicate)
+    - Multimodal sensor fusion
+    - Camera perception
+    - Screen perception
+    - Audio perception
+    - Microphone array
+    - OCR
+    - Document understanding
+    - Object detection
+    - Object tracking
+    - Scene understanding
+    - Person detection
+    - Gesture recognition
+    - Hand tracking
+    - Pose estimation
+    - Spatial understanding
+    - Depth estimation
+    - Change detection
+    - Visual anomaly detection
+    - Environmental understanding
+    - Sensor confidence
+  - EVIDENCE ENGINE (system service — infrastructure for MENTALIST-STYLE Evidence handling, not a duplicate)
+    - Evidence collection
+    - Evidence classification
+    - Evidence provenance
+    - Evidence reliability
+    - Evidence timestamps
+    - Evidence sources
+    - Evidence relationships
+    - Evidence conflicts
+    - Evidence graph
+    - Supporting evidence
+    - Contradicting evidence
+    - Missing evidence
+    - Evidence strength
+    - Evidence expiration
+    - Evidence verification
+    - Chain of evidence
+    - Source credibility
+    - Fact versus inference separation
+  - HYPOTHESIS LAB (system service — infrastructure for MENTALIST-STYLE Hypothesis Engine, not a duplicate)
+    - Hypothesis generation
+    - Multiple competing hypotheses
+    - Hypothesis ranking
+    - Bayesian-style updating
+    - Confidence tracking
+    - Supporting evidence
+    - Contradicting evidence
+    - Missing evidence
+    - Counter-hypotheses
+    - Alternative explanations
+    - Hypothesis history
+    - Hypothesis expiration
+    - Hypothesis verification
+    - Hypothesis falsification
+    - What would prove me wrong?
+    - What evidence would change my mind?
+  - EXPERIMENT & VERIFICATION ENGINE (system service — executes MENTALIST-STYLE Verification steps)
+    - Verification planning
+    - Information-gathering actions
+    - Safe experiments
+    - Simulations
+    - A/B testing
+    - System diagnostics
+    - Automated tests
+    - Reality checks
+    - Cross-source verification
+    - Prediction testing
+    - Result comparison
+    - Experiment history
+    - Failed experiments
+    - Lessons learned
+  - META-REASONING (system service — infrastructure for COGNITIVE ARCHITECTURE / Reflection)
+    - Assumption tracking
+    - Unknown tracking
+    - Uncertainty tracking
+    - Reasoning provenance
+    - Alternative explanations
+    - Bias detection
+    - Confirmation-bias detection
+    - Anchoring detection
+    - Overconfidence detection
+    - Underconfidence detection
+    - Reasoning critique
+    - Self-questioning
+    - Why do I believe this?
+    - What am I assuming?
+    - What don't I know?
+    - What could I be missing?
+    - What would change my conclusion?
+  # REMOVED DUPLICATE: MENTALIST / PATRICK-JANE-STYLE SYSTEM was a condensed duplicate of MENTALIST-STYLE HUMAN INTELLIGENCE — uniques merged above
+  # REMOVED DUPLICATE: ADVANCED MEMORY PALACE merged into MEMORY PALACE above (single source of truth)
+  - MEMORY CONSOLIDATION ENGINE (scheduled process — runs MEMORY PALACE operations nightly: dedup/merge/summarize/archive)
+    - Review recent experiences
+    - Remove duplicates
+    - Merge related memories
+    - Extract important facts
+    - Generate summaries
+    - Update knowledge graph
+    - Update world model
+    - Strengthen frequently useful memories
+    - Detect stale information
+    - Archive obsolete information
+    - Identify contradictions
+    - Generate new relationships
+
+  - EVENT SOURCING & EVENT STORE
+    - Immutable event log
+    - Event schemas
+    - Event IDs
+    - Event versioning
+    - Event ordering
+    - Event deduplication
+    - Event correlation IDs
+    - Event causality
+    - Event retention policies
+    - Event snapshots
+    - Event replay
+    - State reconstruction
+    - Replay debugging
+  - DISTRIBUTED JARVIS ARCHITECTURE
+    - JARVIS nodes
+    - Node discovery
+    - Node registration
+    - Node health
+    - Node capabilities
+    - Node-to-node communication
+    - Message bus
+    - RPC
+    - Pub/Sub
+    - Distributed task execution
+    - Task migration
+    - Leader election
+    - Failover
+    - Replication
+    - Distributed locks
+    - Conflict resolution
+    - Clock synchronization
+    - Network partitions
+    - Offline nodes
+    - Reconnection
+    - State synchronization
+  - DATA ARCHITECTURE
+    - Relational database
+    - Vector database
+    - Graph database
+    - Time-series database
+    - Object storage
+    - Cache
+    - Search index
+    - Event store
+    - Data ingestion
+    - Validation
+    - Normalization
+    - Deduplication
+    - Indexing
+    - Compression
+    - Versioning
+    - Migration
+    - Backup
+    - Restore
+    - Data integrity
+    - Checksums
+    - Transactions
+    - Consistency
+    - Corruption detection
+    - Data repair
+  - API & SERVICE ARCHITECTURE
+    - Internal API
+    - REST API
+    - WebSocket API
+    - gRPC
+    - Event API
+    - Authentication
+    - Authorization
+    - API versioning
+    - Rate limiting
+    - Request validation
+    - Response validation
+    - Service discovery
+    - Health endpoints
+    - API gateway
+  - CONFIGURATION MANAGEMENT
+    - Global configuration
+    - User configuration
+    - Device configuration
+    - Agent configuration
+    - Model configuration
+    - Tool configuration
+    - Security configuration
+    - Voice configuration
+    - Memory configuration
+    - Environment variables
+    - Secrets
+    - Configuration profiles
+    - Configuration versioning
+    - Configuration validation
+    - Hot reload
+    - Configuration rollback
+  - SECRETS & KEY MANAGEMENT
+    - Secret vault
+    - API keys
+    - SSH keys
+    - Encryption keys
+    - Session tokens
+    - OAuth tokens
+    - Credential rotation
+    - Key rotation
+    - Secret expiration
+    - Secret access auditing
+    - Hardware-backed keys
+    - Secure credential injection
+  - IDENTITY GRAPH
+    - Person identity
+    - Device identity
+    - Account identity
+    - Service identity
+    - Agent identity
+    - Session identity
+    - Digital identity
+    - Physical identity
+    - Identity linking
+    - Identity verification
+    - Identity confidence
+    - Identity conflicts
+    - Alias management
+  - SESSION ENGINE
+    - Session creation
+    - Session persistence
+    - Session restoration
+    - Session expiration
+    - Session branching
+    - Session merging
+    - Session context
+    - Session permissions
+    - Session memory
+    - Session snapshots
+    - Session replay
+  - UNIFIED TASK ENGINE
+    - Task registry
+    - Task IDs
+    - Task states
+    - Dependencies
+    - DAG execution
+    - Task queue
+    - Priority queue
+    - Retries
+    - Checkpoints
+    - Deadlines
+    - Cancellation
+    - Pause
+    - Resume
+    - Task leasing
+    - Task ownership
+    - Task history
+    - Task replay
+    - Task rollback
+  - WORKFLOW ENGINE
+    - Workflow templates
+    - Triggers
+    - Conditions
+    - Tasks
+    - Agents
+    - Tools
+    - Verification
+    - Results
+    - Conditional branches
+    - Loops
+    - Parallel execution
+    - Human approval nodes
+    - Error branches
+    - Retry policies
+    - Timeouts
+    - Compensation actions
+    - Workflow versioning
+    - Workflow editor
+  - POLICY ENGINE
+    - Policy rules
+    - Permission policies
+    - Privacy policies
+    - Security policies
+    - Tool policies
+    - Agent policies
+    - Network policies
+    - Data policies
+    - User-specific policies
+    - Context-dependent policies
+    - Risk scoring
+    - Policy evaluation
+    - Policy conflicts
+    - Policy overrides
+    - Policy audit
+  - RISK ENGINE
+    - Risk classification
+    - Impact estimation
+    - Probability estimation
+    - Reversibility
+    - Blast radius
+    - Dependency analysis
+    - Security impact
+    - Privacy impact
+    - Resource impact
+    - Risk mitigation
+    - Risk thresholds
+  - ACTION PLANNING 2.0
+    - Preconditions
+    - Postconditions
+    - Side effects
+    - Dependencies
+    - Resource requirements
+    - Required permissions
+    - Expected duration
+    - Failure conditions
+    - Recovery actions
+    - Verification conditions
+    - Rollback actions
+  - CAUSAL MEMORY
+    - Event
+    - Possible cause
+    - Evidence
+    - Effect
+    - Confidence
+    - Counterexamples
+    - Causal history
+    - Causal updates
+  - SELF-MODEL
+    - Current capabilities
+    - Capability confidence
+    - Known limitations
+    - Current errors
+    - Resource limits
+    - Current workload
+    - Current goals
+    - Knowledge gaps
+    - Current uncertainty
+    - Current permissions
+    - Active agents
+    - Available tools
+    - Model health
+  - SELF-IMPROVEMENT ENGINE
+    - Performance monitoring
+    - Weakness detection
+    - Root-cause analysis
+    - Improvement generation
+    - Improvement testing
+    - Benchmarking
+    - Safe deployment
+    - Post-deployment monitoring
+    - Rollback if worse
+    - Prompt optimization
+    - Workflow optimization
+    - Tool optimization
+    - Model-routing optimization
+    - Memory optimization
+    - Agent optimization
+    - Latency optimization
+    - Resource optimization
+    - Regression detection
+  - CAPABILITY DISCOVERY
+    - Discover applications
+    - Discover CLI tools
+    - Discover APIs
+    - Discover devices
+    - Discover models
+    - Discover plugins
+    - Discover MCP servers
+    - Discover repositories
+    - Discover services
+    - Inspect capability
+    - Security scan
+    - Request permission
+    - Register capability
+    - Test capability
+    - Activate capability
+  - MODEL LIFECYCLE MANAGEMENT
+    - Model registry
+    - Model metadata
+    - Model versions
+    - Model installation
+    - Model unloading
+    - Model quantization
+    - Model benchmarking
+    - Model health
+    - Model compatibility
+    - Model warm-up
+    - Model caching
+    - Model rollback
+    - Model deprecation
+  - RESOURCE SCHEDULER
+    - CPU scheduling
+    - RAM scheduling
+    - GPU scheduling
+    - Model-memory scheduling
+    - Agent scheduling
+    - Background-task scheduling
+    - Priority queues
+    - Thermal awareness
+    - Battery awareness
+    - Power-aware scheduling
+    - Resource reservations
+    - Resource quotas
+  - FAILURE-TOLERANCE ENGINE
+    - Failure domains
+    - Circuit breakers
+    - Retry policies
+    - Exponential backoff
+    - Fallback services
+    - Graceful degradation
+    - Partial failure handling
+    - Timeout handling
+    - Dead-letter queues
+    - Fault isolation
+    - Health checks
+    - Recovery strategies
+  - OBSERVABILITY 2.0
+    - Structured logs
+    - Agent logs
+    - Tool logs
+    - Security logs
+    - Memory logs
+    - Latency metrics
+    - Throughput metrics
+    - Error rate
+    - Success rate
+    - Token usage
+    - Resource usage
+    - Request tracing
+    - Agent tracing
+    - Tool tracing
+    - Model tracing
+    - Memory retrieval tracing
+    - End-to-end tracing
+    - Correlation IDs
+  - TESTING ARCHITECTURE
+    - Unit tests
+    - Integration tests
+    - End-to-end tests
+    - Agent tests
+    - Tool tests
+    - Memory tests
+    - Model tests
+    - Vision tests
+    - Voice tests
+    - Security tests
+    - Failure tests
+    - Load tests
+    - Stress tests
+    - Regression tests
+    - Golden datasets
+    - Synthetic datasets
+    - Adversarial tests
+  - DIGITAL FORENSICS & INVESTIGATION
+    - File timeline
+    - Process timeline
+    - Network timeline
+    - Login timeline
+    - System-change timeline
+    - Package-change timeline
+    - Configuration history
+    - Event correlation
+    - Evidence preservation
+    - Investigation workspace
+    - Investigation reports
+  - MULTIMODAL TEMPORAL MEMORY
+    - Time-linked observations
+    - Camera references
+    - Screen references
+    - Audio references
+    - Object state history
+    - Person state history
+    - Location history
+    - Previous state comparison
+    - Change evidence
+    - Event linkage
+  - PERSONAL DIGITAL TWIN
+    - Projects
+    - Learning
+    - Goals
+    - Devices
+    - Workflows
+    - Knowledge
+    - Preferences
+    - Schedule
+    - Skills
+    - Environment
+    - History
+    - Decisions
+    - Digital-context model only
+  - ENVIRONMENTAL MEMORY
+    - Rooms
+    - Desks
+    - Devices
+    - Objects
+    - Positions
+    - Normal state
+    - Historical state
+    - Changes
+    - Camera references
+    - Sensor references
+  - KNOWLEDGE DECAY & FRESHNESS
+    - Freshness score
+    - Expiration
+    - Revalidation
+    - Staleness detection
+    - Update frequency
+    - Source changes
+    - Version comparison
+    - Knowledge confidence
+    - Previously known
+    - Possibly stale
+    - Reverified
+  - CONSENT & PRIVACY ENGINE
+    - Per-data consent
+    - Per-device consent
+    - Per-sensor consent
+    - Camera consent
+    - Microphone consent
+    - Memory consent
+    - Sharing consent
+    - Retention policies
+    - Automatic expiration
+    - Local-only mode
+    - Privacy mode
+    - Data export
+    - Data deletion
+    - Access history
+  - HUMAN OVERSIGHT CENTER
+    - Permissions
+    - Memory controls
+    - Agent controls
+    - Model controls
+    - Device controls
+    - Automation controls
+    - Security controls
+    - Logs
+    - Tasks
+    - Privacy
+    - Emergency stop
+  - UI ARCHITECTURE
+    - Main HUD
+    - Chat interface
+    - Voice interface
+    - Memory Palace visualization
+    - Knowledge graph
+    - Timeline
+    - World model
+    - Agent monitor
+    - Task monitor
+    - Security center
+    - System monitor
+    - Project workspace
+    - Research workspace
+    - Mentalist workspace
+    - Terminal
+    - Notification center
+    - Settings
+    - Command palette
+    - JARVIS HUD (implementation of UI ARCHITECTURE — demoted from top-level duplicate)
+      - Core orb
+      - System status
+      - Active task
+      - Current cognitive state
+      - Memory retrieval
+      - Agent activity
+      - Tool activity
+      - Network
+      - CPU and RAM
+      - Notifications
+      - Voice visualization
+      - Camera feed
+      - Event timeline
+  - ACCESSIBILITY ENGINE
+    - Voice-only mode
+    - Keyboard-only mode
+    - Screen-reader compatibility
+    - Adjustable TTS speed
+    - Captions
+    - Font scaling
+    - Contrast
+    - Reduced motion
+    - Language selection
+  - INTERNATIONALIZATION
+    - Multiple languages
+    - Translation
+    - Locale
+    - Date and time formats
+    - Number formats
+    - Speech recognition languages
+    - TTS languages
+    - Mixed-language conversations
+  - DEPLOYMENT ARCHITECTURE
+    - Development environment
+    - Testing environment
+    - Staging environment
+    - Production environment
+    - Configuration separation
+    - Deployment scripts
+    - Containerization
+    - Service management
+    - Upgrade system
+    - Migration system
+    - Rollback
+    - Health checks
+  - UPDATE SYSTEM
+    - Update detection
+    - Version checking
+    - Changelog
+    - Compatibility check
+    - Backup
+    - Staging
+    - Test
+    - Approval
+    - Update
+    - Verification
+    - Rollback
+  - DOCUMENTATION ENGINE
+    - Architecture documentation
+    - API documentation
+    - Tool documentation
+    - Agent documentation
+    - Project documentation
+    - Decision records
+    - Change logs
+    - Troubleshooting guides
+    - User manual
+  - KNOWLEDGE VERSION CONTROL
+    - Knowledge versions
+    - History
+    - Diff
+    - Revert
+    - Branch
+    - Merge
+    - Provenance
+    - Correction history
+  - COGNITIVE LOAD MANAGEMENT
+    - Task complexity estimation
+    - Reasoning budget
+    - Time budget
+    - Memory budget
+    - Token budget
+    - Tool budget
+    - Attention budget
+    - Energy budget
+    - Simple task → minimal cognition
+    - Complex task → deep cognition
+    - Critical task → verification and redundancy
+  - ARCHITECTURE GOVERNANCE
+    - System specifications
+    - Interface contracts
+    - Data schemas
+    - Versioning
+    - Compatibility
+    - Dependency rules
+    - Architecture Decision Records
+    - Design principles
+    - Coding standards
+    - Security standards
+    - Testing requirements
+    - Performance requirements
+    - Resource budgets
+    - Change approval
+    - Deprecation policy
+    - Migration policy
+  - MASTER COGNITIVE LOOP
+    - World
+    - Perception
+    - Attention
+    - Observation
+    - Evidence
+    - Memory
+    - World Model
+    - Reasoning
+    - Hypotheses
+    - Simulation
+    - Risk and Policy Check
+    - Planning
+    - Agent Selection
+    - Tool Selection
+    - Action
+    - Result
+    - Verification
+    - Reflection
+    - Learning
+    - Memory Update
+    - World Model Update
+    - Event Store
+    - Next Cycle

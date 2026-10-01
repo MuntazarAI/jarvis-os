@@ -1,0 +1,171 @@
+"""HTTP API: REST + WebSocket event stream over the standard library."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
+
+from ..core.loop import Jarvis
+
+
+class JarvisAPI:
+    """REST endpoints plus a WebSocket broadcast of bus events."""
+
+    def __init__(self, jarvis: Jarvis, host: str = "127.0.0.1", port: int = 8765,
+                 token: str = "") -> None:
+        self.jarvis = jarvis
+        self.host = host
+        self.port = port
+        self.token = token
+        self._server: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+        self._sockets: list[Any] = []
+        self._sockets_lock = threading.Lock()
+        jarvis.bus.subscribe("*", self._broadcast, name="ws-fanout")
+
+    # -- routing -----------------------------------------------------------
+    def handle(self, method: str, path: str, body: bytes,
+               headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        if self.token and headers.get("authorization", "") != f"Bearer {self.token}":
+            return 401, {"error": "unauthorized"}
+        try:
+            if method == "GET" and path == "/health":
+                return 200, {"status": "ok", "cycle": self.jarvis.cycle}
+            if method == "GET" and path == "/status":
+                return 200, self.jarvis.status()
+            if method == "POST" and path == "/cycle":
+                payload = json.loads(body.decode() or "{}")
+                text = str(payload.get("input", ""))
+                if not text:
+                    return 400, {"error": "missing 'input'"}
+                result = self.jarvis.cycle_once(text)
+                return 200, result.to_dict()
+            if method == "GET" and path == "/memory":
+                return 200, self.jarvis.palace.stats()
+            if method == "GET" and path == "/events":
+                return 200, {"types": self.jarvis.events.types(),
+                             "count": self.jarvis.events.count()}
+            if method == "POST" and path == "/mentalist":
+                payload = json.loads(body.decode() or "{}")
+                text = str(payload.get("input", ""))
+                mode = self.jarvis.mentalist
+                mode.observe(text, kind="text", source="api")
+                mode.hypothesize([f"interpretation A: {text[:60]}",
+                                  f"interpretation B (alternative): {text[:60]}"])
+                return 200, {"report": mode.render()}
+            return 404, {"error": f"no route {method} {path}"}
+        except json.JSONDecodeError:
+            return 400, {"error": "invalid JSON"}
+        except Exception as exc:
+            return 500, {"error": f"{type(exc).__name__}: {exc}"}
+
+    # -- websocket -----------------------------------------------------------
+    def _broadcast(self, event: Any) -> None:
+        with self._sockets_lock:
+            sockets = list(self._sockets)
+        dead = []
+        for sock in sockets:
+            try:
+                self._ws_send(sock, {"type": event.type, "payload": event.payload,
+                                     "seq": event.seq})
+            except OSError:
+                dead.append(sock)
+        if dead:
+            with self._sockets_lock:
+                self._sockets = [s for s in self._sockets if s not in dead]
+
+    @staticmethod
+    def _ws_send(sock: Any, message: dict[str, Any]) -> None:
+        import struct
+        data = json.dumps(message, default=str).encode()
+        header = bytes([0x81])
+        size = len(data)
+        if size < 126:
+            header += struct.pack("B", size)
+        elif size < 65536:
+            header += struct.pack("!BH", 126, size)
+        else:
+            header += struct.pack("!BQ", 127, size)
+        sock.sendall(header + data)
+
+    @staticmethod
+    def _ws_accept(key: str) -> str:
+        magic = "258EAFA5-E914-47DA-95CA-C5940E9E065"
+        digest = hashlib.sha1((key + magic).encode()).digest()
+        return base64.b64encode(digest).decode()
+
+    # -- serving ---------------------------------------------------------------
+    def serve_forever(self) -> None:
+        api = self
+
+        class Handler(BaseHTTPRequestHandler):
+            server_version = "jarvis-os/0.1"
+
+            def _headers(self, code: int, ctype: str = "application/json") -> None:
+                self.send_response(code)
+                self.send_header("Content-Type", ctype)
+                self.end_headers()
+
+            def log_message(self, *args: Any) -> None:  # keep quiet
+                pass
+
+            def do_GET(self) -> None:  # noqa: N802
+                if self.headers.get("Upgrade", "").lower() == "websocket":
+                    self._ws()
+                    return
+                code, payload = api.handle("GET", self.path, b"",
+                                           {k.lower(): v for k, v in self.headers.items()})
+                body = json.dumps(payload, default=str).encode()
+                self._headers(code)
+                self.wfile.write(body)
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length", "0") or 0)
+                body = self.rfile.read(length) if length else b""
+                code, payload = api.handle("POST", self.path, body,
+                                           {k.lower(): v for k, v in self.headers.items()})
+                raw = json.dumps(payload, default=str).encode()
+                self._headers(code)
+                self.wfile.write(raw)
+
+            def _ws(self) -> None:
+                key = self.headers.get("Sec-WebSocket-Key", "")
+                if not key:
+                    self._headers(400)
+                    return
+                accept = api._ws_accept(key)
+                self.send_response(101)
+                self.send_header("Upgrade", "websocket")
+                self.send_header("Connection", "Upgrade")
+                self.send_header("Sec-WebSocket-Accept", accept)
+                self.end_headers()
+                sock = self.request
+                with api._sockets_lock:
+                    api._sockets.append(sock)
+                try:
+                    while True:
+                        chunk = sock.recv(4096)
+                        if not chunk:
+                            break
+                except OSError:
+                    pass
+                finally:
+                    with api._sockets_lock:
+                        if sock in api._sockets:
+                            api._sockets.remove(sock)
+
+        self._server = ThreadingHTTPServer((self.host, self.port), Handler)
+        self.port = self._server.server_address[1]
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+
+    def shutdown(self) -> None:
+        if self._server:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread:
+            self._thread.join(timeout=5)
