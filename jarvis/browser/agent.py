@@ -103,8 +103,12 @@ class BrowserAgent:
         self.history: list[Page] = []
 
     def fetch(self, url: str, actor: str = "researcher") -> dict[str, Any]:
-        if not url.startswith(("http://", "https://")):
-            return {"ok": False, "error": "only http(s) URLs are allowed"}
+        from ..security.guards import is_safe_url, sanitize_for_context, scan_injection
+        safe, reason = is_safe_url(url)
+        if not safe:
+            self.audit.append({"actor": actor, "url": url, "at": now(),
+                               "ok": False, "blocked": reason})
+            return {"ok": False, "error": f"blocked: {reason}"}
         entry = {"actor": actor, "url": url, "at": now()}
         self.audit.append(entry)
         try:
@@ -123,6 +127,10 @@ class BrowserAgent:
         entry["truncated"] = truncated
         payload = page.to_dict()
         payload["truncated"] = truncated
+        scan = scan_injection(page.text)
+        if not scan["clean"]:
+            payload["injection"] = scan
+            entry["injection"] = scan["hits"]
         return {"ok": True, "page": payload}
 
     @staticmethod

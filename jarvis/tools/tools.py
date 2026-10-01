@@ -222,15 +222,20 @@ def system_probe() -> ToolResult:
 
 def web_fetch(url: str, timeout: float = 15.0, max_bytes: int = 65536) -> ToolResult:
     import urllib.request
-    if not url.startswith(("http://", "https://")):
-        return _fail("web_fetch", "only http(s) URLs are allowed")
+    from ..security.guards import is_safe_url, sanitize_for_context, scan_injection
+    safe, reason = is_safe_url(url)
+    if not safe:
+        return _fail("web_fetch", f"blocked: {reason}")
     try:
         with urllib.request.urlopen(url, timeout=min(timeout, 30.0)) as resp:  # noqa: S310
             body = resp.read(max_bytes + 1)
             truncated = len(body) > max_bytes
             text = body[:max_bytes].decode("utf-8", errors="replace")
+        scan = scan_injection(text)
         return _ok("web_fetch", {"url": url, "status": 200,
-                                 "truncated": truncated, "text": text})
+                                 "truncated": truncated,
+                                 "injection": None if scan["clean"] else scan,
+                                 "text": sanitize_for_context(text)})
     except Exception as exc:
         return _fail("web_fetch", f"{type(exc).__name__}: {exc}")
 

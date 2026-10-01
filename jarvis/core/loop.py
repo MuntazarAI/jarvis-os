@@ -224,6 +224,7 @@ class Jarvis:
         # marks those actions daily_*/error_explained.
         handled = any(a in ("daily_status", "daily_continue",
                                "daily_changes", "daily_tests", "daily_repo",
+                               "daily_preference", "daily_decision",
                                "error_explained") for a in actions)
         if (understanding.intent == "command" and not blocked
                 and not assessment.requires_approval and not handled
@@ -370,6 +371,19 @@ class Jarvis:
             items = report["memory_events"][:3] + report["world_events"][-2:]
             return ("Changes: " + " | ".join(items[:4]) if items
                     else "No changes recorded.", ["daily_changes"], [])
+        for prefix, polarity in (("i prefer ", "like"), ("i like ", "like"),
+                                   ("i dislike ", "dislike"), ("i hate ", "dislike")):
+            if low.startswith(prefix):
+                from ..memory.decisions import PreferenceStore
+                mem = PreferenceStore(self.palace).prefer(text[len(prefix):].strip(),
+                                                          polarity)
+                return (f"Noted — I'll go with {polarity} for that.",
+                        ["daily_preference"], [])
+        if low.startswith("decide ") or low.startswith("decision: "):
+            from ..memory.decisions import DecisionLog
+            body = text.split(" ", 1)[1] if " " in text else text
+            mem = DecisionLog(self.palace).decide(body)
+            return (f"Recorded decision: {body[:150]}", ["daily_decision"], [])
         if any(p in low for p in ("analyze this repo", "what is in this repo",
                                      "summarize this repo", "repo status")):
             from ..developer.dev import GitAssistant, RepoInspector

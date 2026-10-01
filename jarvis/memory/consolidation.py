@@ -173,10 +173,17 @@ class MemoryConsolidator:
             )
         return found
 
+    # Sources that may never self-promote: user speech and untrusted
+    # imports become "facts" only through explicit store_fact calls.
+    # This is the memory-poisoning guard.
+    UNPROMOTABLE = {"user", "cli", "voice", "web", "external"}
+
     def _extract_facts(self, report: ConsolidationReport) -> list[str]:
         """Promote high-confidence, highly-accessed episodic notes to semantic facts."""
         facts: list[str] = []
         for mem in self.palace.all(tier="episodic", limit=500):
+            if mem.source in self.UNPROMOTABLE:
+                continue
             score = Confidence.from_score(mem.confidence)
             if score in (Confidence.MEDIUM, Confidence.HIGH) and mem.importance >= 0.7:
                 facts.append(mem.content)

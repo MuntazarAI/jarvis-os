@@ -47,6 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("devices", help="capability snapshot: voice, vision, computer, models")
 
+    bench = sub.add_parser("benchmark", help="latency + resource benchmark")
+    bench.add_argument("--samples", type=int, default=3)
+
     sub.add_parser("start", help="start the JARVIS service (API server, supervised)")
     sub.add_parser("stop", help="stop the JARVIS service")
     sub.add_parser("restart", help="restart the JARVIS service")
@@ -211,6 +214,12 @@ def main(argv: list[str] | None = None) -> int:
             req = " (required)" if check.required else ""
             print(f"[{mark}] {check.name}: {check.detail}{req}")
         return 0 if not [c for c in checks if c.required and not c.ok] else 1
+
+    if args.command == "benchmark":
+        from .bench import run
+        print(json.dumps(run(jarvis, samples=args.samples), indent=2, default=str))
+        jarvis.close()
+        return 0
 
     if args.command == "devices":
         from .computer.computer import ComputerController

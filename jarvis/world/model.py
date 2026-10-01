@@ -149,6 +149,44 @@ class WorldModel:
                     found.append({"a": a.description, "b": b.description, "at": a.timestamp})
         return found
 
+    # -- expectations (expected-state modeling) ----------------------------------
+    def expect(self, metric: str, minimum: float | None = None,
+               maximum: float | None = None, note: str = "") -> dict[str, Any]:
+        """Declare what a system metric SHOULD look like. Checked on demand."""
+        if not hasattr(self, "_expectations"):
+            self._expectations: dict[str, dict[str, Any]] = {}
+        self._expectations[metric] = {"min": minimum, "max": maximum, "note": note}
+        return self._expectations[metric]
+
+    def check_expectations(self) -> list[dict[str, Any]]:
+        """Compare live system state against expectations. Violations out."""
+        state = self.system_state()
+        flat = {
+            "disk_free": state.get("disk", {}).get("free", 0),
+            "disk_percent_used": state.get("disk", {}).get("percent_used", 0),
+            "mem_percent_used": state.get("memory", {}).get("percent_used", 0),
+            "battery_percent": state.get("battery", {}).get("percent", 100),
+            "load_1": (state.get("load_average") or [0])[0],
+        }
+        violations: list[dict[str, Any]] = []
+        for metric, rule in getattr(self, "_expectations", {}).items():
+            value = flat.get(metric)
+            if value is None:
+                violations.append({"metric": metric, "status": "unknown",
+                                   "note": "no such metric"})
+                continue
+            if rule.get("min") is not None and value < rule["min"]:
+                violations.append({"metric": metric, "value": value,
+                                   "expected_min": rule["min"],
+                                   "status": "unexpected",
+                                   "note": rule.get("note", "")})
+            elif rule.get("max") is not None and value > rule["max"]:
+                violations.append({"metric": metric, "value": value,
+                                   "expected_max": rule["max"],
+                                   "status": "unexpected",
+                                   "note": rule.get("note", "")})
+        return violations
+
     # -- temporal --------------------------------------------------------
     def sync_clock(self, offset_seconds: float) -> None:
         self._clock_skew = offset_seconds
