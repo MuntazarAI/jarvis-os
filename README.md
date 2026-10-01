@@ -8,18 +8,27 @@ Voice STT lives in `.venv` (faster-whisper, offline); system backends
 
 ```bash
 jarvis talk "hello there"
-jarvis repl
+jarvis repl                 # /reset /summary session commands
 jarvis remember "deploy key rotates monthly" --room "Home"
 jarvis mentalist "chair moved"
 jarvis status
-jarvis devices          # voice/vision/computer/model capability snapshot
+jarvis devices              # voice/vision/computer/model snapshot
+jarvis doctor               # dependency + hardware + model checks
+jarvis start|stop|restart   # supervised API service
 jarvis see screen --fast
 jarvis see camera --fast
 jarvis say "Voice online"
 jarvis listen --always --no-speak   # needs .venv for offline STT
 jarvis serve --port 8765
+jarvis benchmark
+jarvis consolidate
 pytest tests/ -q
 ```
+
+Daily-driver phrases (just talk naturally): "what am I working on?",
+"continue my project", "what changed since yesterday?", "run my tests",
+"explain this error: ...", "analyze this repo", "i prefer concise answers",
+"decide ship on friday".
 
 ## Voice setup (one time, already done on this machine)
 
