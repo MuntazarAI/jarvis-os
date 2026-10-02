@@ -490,3 +490,36 @@ JARVIS-OS is licensed under the [Apache License 2.0](LICENSE).
 Copyright 2026 Muntazar Al-Zaidi.
 
 The software license does not automatically grant rights to use project branding or trademarks. See [NOTICE](NOTICE).
+
+## Developer platform
+
+The repository also includes an engineering platform around the runtime:
+
+- **Research Lab** — reproducible experiments and evidence-driven results: [research/](research/README.md)
+- **Hardware Lab** — compatibility levels and device reporting: [docs/HARDWARE.md](docs/HARDWARE.md)
+- **Developer Portal** — contributor map and subsystem entry points: [docs/DEVELOPER_PORTAL.md](docs/DEVELOPER_PORTAL.md)
+- **API map** — stable public boundaries and local API exploration: [docs/API.md](docs/API.md)
+- **Roadmap** — implementation, research, and platform work: [docs/ROADMAP.md](docs/ROADMAP.md)
+- **Nightly diagnostics** — scheduled deterministic tests and neural benchmark artifacts
+- **OpenSSF Scorecard** — supply-chain security analysis
+- **Container publishing** — tagged releases can publish a GHCR image
+- **Reproducible releases** — release automation already produces checksums, SBOM, and provenance
+
+### Container
+
+Build locally:
+
+```bash
+docker build -t jarvis-os .
+docker run --rm jarvis-os
+```
+
+The container is an orchestration/runtime image. Optional host integrations such as cameras, microphones, GUI automation, and device transports require explicit configuration outside the image.
+
+### GitHub planning
+
+The issue templates provide dedicated paths for research experiments and hardware reports. When GitHub Project-management API access is available, the recommended board columns are:
+
+`Backlog → Ready → In progress → Review → Verified → Released`
+
+Issues should link to the relevant roadmap, experiment, benchmark, or architecture decision.
