@@ -2,7 +2,24 @@
 
 `IntelligenceLoop` (`jarvis/intelligence/loop.py`) is the first-class
 bounded cycle: 11 stages (`STAGES`), explicit lifecycle
-(`START → RUNNING ⇄ PAUSED → STOPPING → STOPPED`, plus `ERROR` on timeout).
+(`START → RUNNING ⇄ PAUSED → STOPPING → STOPPED`, plus `ERROR` and
+`TIMEOUT`).
+
+## Timeout contract (real, monotonic)
+
+- Deadlines use `time.monotonic()`, checked **before and after every
+  stage** — not just between events. `run(events, max_cycles, timeout_s)`
+  and `cycle_once(event, timeout_s)` both enforce it.
+- Each stage also gets a per-stage budget (`stage_timeout_s`, defaults to
+  the cycle budget). A stage that overruns records
+  `failed_stage="timeout:<stage>"` with the measured vs budget detail and
+  the loop enters `TIMEOUT`. `status()` reports `total_timeouts`.
+- Hooks can cooperate via `context["deadline_monotonic"]`.
+- Residual limitation, documented honestly: a synchronous hook cannot be
+  preempted mid-call (no threads used to hide this). The guarantee is that
+  **nothing runs after the boundary**: the next stage never starts, no
+  action executes past timeout, and the timeout is reported
+  deterministically.
 
 ## Rules
 
@@ -22,4 +39,5 @@ Producers publish `SensoryEvent`s (source, type, timestamp, confidence,
 ≤4 KiB payload, correlation id) to the `SensoryBus`. Adapters exist for
 God's Eye observations, device-fabric events, and user text. Raw frames
 and audio never cross the loop — only references plus bounded features
-(see `VisualPreprocessor`: region-mean statistics, not pixels).
+(see `VisualPreprocessor`: every sample contributes to exactly one
+region; region-mean statistics, not pixels).

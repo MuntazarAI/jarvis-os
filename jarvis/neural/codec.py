@@ -107,12 +107,16 @@ class VisualPreprocessor:
         if not samples:
             return {}
         clean = [_clamp01(s) for s in samples]
-        chunk = max(1, len(clean) // self.regions)
+        # Every sample contributes to exactly one region: distribute as
+        # evenly as possible (first `extra` regions get one more sample).
+        regions = min(self.regions, len(clean))
+        base, extra = divmod(len(clean), regions)
         features: dict[str, float] = {}
-        for region in range(self.regions):
-            part = clean[region * chunk:(region + 1) * chunk]
-            if not part:
-                break
+        pos = 0
+        for region in range(regions):
+            size = base + (1 if region < extra else 0)
+            part = clean[pos:pos + size]
+            pos += size
             features[f"visual_region_{region:02d}"] = sum(part) / len(part)
         return features
 

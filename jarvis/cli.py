@@ -1190,9 +1190,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "intelligence":
         from .intelligence import wiring as intel_wiring
         from .intelligence.sensory import event_from_user
+        from .inference.reasoning import MetaReasoner
+        network, encoder, decoder = intel_wiring.default_neural_stack()
         loop = intel_wiring.build_loop(
             registry=jarvis.world_registry, spatial=jarvis.spatial,
-            palace=jarvis.palace, policy=jarvis.policy, tools=jarvis.tools)
+            palace=jarvis.palace, network=network, encoder=encoder,
+            decoder=decoder, reasoner=MetaReasoner(),
+            policy=jarvis.policy, tools=jarvis.tools)
         as_json = args.json
 
         def _intel_out(payload: Any, text: str) -> int:

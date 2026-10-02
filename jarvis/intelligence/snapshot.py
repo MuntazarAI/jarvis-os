@@ -67,31 +67,41 @@ def capture(record: CycleRecord, input_event: Any,
 
 
 def replay(snapshot: CycleSnapshot, loop: IntelligenceLoop) -> CycleRecord:
-    """Re-run the cycle's pure stages with the executor DISABLED.
+    """Re-run the cycle's decision path on a dry-run sandbox.
 
-    Temporarily unbinds the executor so replay can never cause side
-    effects, even if the snapshot's policy decision was 'allow'.
+    The sandbox shares the loop's pure hooks (normalize, neural, reason,
+    plan) but replaces every side-effecting hook (world, recall, policy,
+    observe, learn) with recording stubs and binds NO executor. The act
+    stage is additionally hard-disabled for dry-run loops. If the loop was
+    built with neural checkpoint/restore hooks, the live network is
+    restored afterwards, so replay never advances live neural state either.
     """
-    real_executor = loop.executor
-    loop.executor = None
-    try:
-        return loop.cycle_once(copy.deepcopy(snapshot.input_event))
-    finally:
-        loop.executor = real_executor
+    sandbox = loop.sandbox()
+    sandbox.start()
+    return sandbox.cycle_once(copy.deepcopy(snapshot.input_event))
 
 
 def compare(original: CycleRecord, replayed: CycleRecord) -> dict[str, Any]:
-    """Compare decisions between an original and a replayed cycle."""
+    """Compare the cognitive decision path between original and replay.
+
+    The decision path (normalize -> reason -> plan -> action choice) must
+    match. Policy *outcomes* are reported but excluded from the match:
+    policy depends on live audit/approval state that replay deliberately
+    never touches (see Problem 2: replay is side-effect free).
+    """
     def decisions(record: CycleRecord) -> dict[str, Any]:
         stages = {s.stage: s for s in record.stages}
         return {
             "failed_stage": record.failed_stage,
             "action_taken": record.action_taken,
-            "policy_allowed": record.policy_allowed,
             "plan_detail": (stages.get("plan").detail if "plan" in stages else {}),
-            "policy_detail": (stages.get("policy").detail if "policy" in stages else {}),
+            "reason_detail": (stages.get("reason").detail if "reason" in stages else {}),
         }
     left, right = decisions(original), decisions(replayed)
     mismatches = sorted(k for k in left if left[k] != right[k])
     return {"match": not mismatches, "mismatches": mismatches,
-            "original": left, "replayed": right}
+            "original": left, "replayed": right,
+            "policy_original": original.policy_allowed,
+            "policy_replayed": replayed.policy_allowed,
+            "policy_note": ("policy outcomes excluded: replay never "
+                            "touches live policy state")}

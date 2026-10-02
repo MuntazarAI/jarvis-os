@@ -210,36 +210,172 @@ class SparseLIFNetwork:
     def total_spikes(self) -> int:
         return sum(self.spike_counts)
 
-    def snapshot(self, include_weights: bool = False) -> dict[str, Any]:
+    def topology_digest(self) -> str:
+        return _digest_topology(self.row_ptr, self.targets, self.delays)
+
+    def snapshot(self, include_weights: bool = False,
+                 mode: str = "full") -> dict[str, Any]:
+        """Capture network state.
+
+        Contract:
+        - mode="full" (default): everything needed for bit-exact
+          deterministic continuation, including weights, last-spike times,
+          leaks, the pending delivery queue, and plasticity configuration.
+        - mode="diagnostic": same membrane state but weights replaced by a
+          digest. Restoring a diagnostic snapshot resumes dynamics but NOT
+          learned weights; restore() refuses it when exact=True.
+        include_weights=True is kept as a legacy alias for mode="full".
+        """
+        if include_weights:
+            mode = "full"
+        if mode not in ("full", "diagnostic"):
+            raise SnapshotError(f"unknown snapshot mode: {mode!r}")
         snap: dict[str, Any] = {
+            "version": SNAPSHOT_VERSION,
+            "mode": mode,
             "time": self.time,
             "size": self.size,
             "edge_count": len(self.weights),
+            "topology_digest": self.topology_digest(),
             "total_spikes": sum(self.spike_counts),
+            "refractory_steps": self.refractory_steps,
+            "max_delay": self.max_delay,
             "potentials": list(self.potentials),
             "thresholds": list(self.thresholds),
+            "leaks": list(self.leaks),
             "refractory_left": list(self.refractory_left),
             "spike_counts": list(self.spike_counts),
+            "last_spike": list(self.last_spike),
             "queue": [[arrival, node, current]
                       for arrival, events in self._queue.items()
                       for node, current in events],
+            "stdp": ({
+                "enabled": True,
+                "potentiation": self.stdp.potentiation,
+                "depression": self.stdp.depression,
+                "window": self.stdp.window,
+                "min_weight": self.stdp.min_weight,
+                "max_weight": self.stdp.max_weight,
+            } if self.stdp is not None else {"enabled": False}),
+            "homeostasis": ({
+                "enabled": True,
+                "target_rate": self.homeostasis.target_rate,
+                "learning_rate": self.homeostasis.learning_rate,
+                "min_threshold": self.homeostasis.min_threshold,
+                "max_threshold": self.homeostasis.max_threshold,
+            } if self.homeostasis is not None else {"enabled": False}),
         }
-        if include_weights:
+        if mode == "full":
             snap["weights"] = list(self.weights)
+        else:
+            snap["weights_digest"] = _digest_weights(self.weights)
         return snap
 
-    def restore(self, snap: dict[str, Any]) -> None:
+    def restore(self, snap: dict[str, Any], *, exact: bool = True) -> None:
+        """Restore state from :meth:`snapshot`. Validates everything
+        explicitly and raises SnapshotError (never bare KeyError) on any
+        malformed or incompatible snapshot.
+
+        exact=True (default): requires mode="full", matching topology
+        digest, and matching plasticity presence, so the future trajectory
+        is bit-identical. exact=False allows diagnostic snapshots and
+        missing-plasticity restores for inspection/debugging.
+        """
+        if not isinstance(snap, dict):
+            raise SnapshotError(f"snapshot must be a mapping, got {type(snap).__name__}")
+        if snap.get("version") != SNAPSHOT_VERSION:
+            raise SnapshotError(
+                f"unsupported snapshot version: {snap.get('version')!r} "
+                f"(expected {SNAPSHOT_VERSION})")
         if snap.get("size") != self.size:
-            raise ValueError("snapshot size mismatch")
+            raise SnapshotError(
+                f"snapshot size mismatch: snapshot has {snap.get('size')}, "
+                f"network has {self.size}")
+        if snap.get("edge_count") != len(self.weights):
+            raise SnapshotError(
+                f"snapshot edge count mismatch: snapshot has {snap.get('edge_count')}, "
+                f"network has {len(self.weights)}")
+        if snap.get("topology_digest") != self.topology_digest():
+            raise SnapshotError(
+                "snapshot topology digest mismatch: snapshot was taken from a "
+                "differently-wired network")
+        mode = snap.get("mode", "full")
+        if exact and mode != "full":
+            raise SnapshotError(
+                f"exact restore requires a full snapshot, got mode={mode!r}")
+        for key in ("potentials", "thresholds", "leaks", "refractory_left",
+                    "spike_counts", "last_spike"):
+            values = snap.get(key)
+            if not isinstance(values, list) or len(values) != self.size:
+                raise SnapshotError(
+                    f"snapshot key {key!r} must be a list of length {self.size}")
+        weights = snap.get("weights")
+        if mode == "full":
+            if not isinstance(weights, list) or len(weights) != len(self.weights):
+                raise SnapshotError("full snapshot needs a weights list matching edge count")
+        queue = snap.get("queue", [])
+        if not isinstance(queue, list):
+            raise SnapshotError("snapshot queue must be a list")
+        parsed_queue: dict[int, list[tuple[int, float]]] = {}
+        for entry in queue:
+            try:
+                arrival, node, current = entry
+                arrival_i, node_i, current_f = int(arrival), int(node), float(current)
+            except (TypeError, ValueError):
+                raise SnapshotError(f"malformed queue entry: {entry!r}")
+            if not 0 <= node_i < self.size:
+                raise SnapshotError(f"queue entry targets unknown node {node_i}")
+            parsed_queue.setdefault(arrival_i, []).append((node_i, current_f))
+
+        stdp_cfg = snap.get("stdp", {"enabled": False})
+        home_cfg = snap.get("homeostasis", {"enabled": False})
+        if exact and bool(stdp_cfg.get("enabled")) and self.stdp is None:
+            raise SnapshotError("snapshot requires STDP but this network has none enabled")
+        if exact and bool(home_cfg.get("enabled")) and self.homeostasis is None:
+            raise SnapshotError(
+                "snapshot requires homeostasis but this network has none enabled")
+
+        # All validation passed: commit the restore.
         self.time = int(snap["time"])
+        self.refractory_steps = int(snap.get("refractory_steps", self.refractory_steps))
         self.potentials = array("d", snap["potentials"])
         self.thresholds = array("d", snap["thresholds"])
+        self.leaks = array("d", snap["leaks"])
         self.refractory_left = array("l", snap["refractory_left"])
         self.spike_counts = array("l", snap["spike_counts"])
-        if "weights" in snap:
-            if len(snap["weights"]) != len(self.weights):
-                raise ValueError("snapshot weight count mismatch")
-            self.weights = array("d", snap["weights"])
-        self._queue.clear()
-        for arrival, node, current in snap.get("queue", []):
-            self._queue.setdefault(int(arrival), []).append((int(node), float(current)))
+        self.last_spike = array("l", snap["last_spike"])
+        if mode == "full" and isinstance(weights, list):
+            self.weights = array("d", weights)
+        self._queue = parsed_queue
+        if self.stdp is not None and bool(stdp_cfg.get("enabled")):
+            for field in ("potentiation", "depression", "window",
+                          "min_weight", "max_weight"):
+                if field in stdp_cfg:
+                    setattr(self.stdp, field, stdp_cfg[field])
+        if self.homeostasis is not None and bool(home_cfg.get("enabled")):
+            for field in ("target_rate", "learning_rate",
+                          "min_threshold", "max_threshold"):
+                if field in home_cfg:
+                    setattr(self.homeostasis, field, home_cfg[field])
+
+class SnapshotError(ValueError):
+    """Raised when a neural snapshot is malformed or incompatible."""
+
+
+SNAPSHOT_VERSION = 1
+
+
+def _digest_topology(row_ptr: list[int], targets: array, delays: array) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    h.update(str(list(row_ptr)).encode())
+    h.update(b"|")
+    h.update(str(list(targets)).encode())
+    h.update(b"|")
+    h.update(str(list(delays)).encode())
+    return h.hexdigest()[:32]
+
+
+def _digest_weights(weights: array) -> str:
+    import hashlib
+    return hashlib.sha256(str(list(weights)).encode()).hexdigest()[:32]

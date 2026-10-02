@@ -25,6 +25,7 @@ class LoopState(str, Enum):
     STOPPING = "stopping"
     STOPPED = "stopped"
     ERROR = "error"
+    TIMEOUT = "timeout"
 
 
 STAGES = (
@@ -102,6 +103,9 @@ class IntelligenceLoop:
         observe: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         learn: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         max_history: int = 200,
+        dry_run: bool = False,
+        neural_checkpoint: Callable[[], Any] | None = None,
+        neural_restore: Callable[[Any], None] | None = None,
     ) -> None:
         self.normalize = normalize
         self.world_update = world_update
@@ -118,6 +122,16 @@ class IntelligenceLoop:
         self.max_history = max_history
         self.total_cycles = 0
         self.total_failures = 0
+        self.total_timeouts = 0
+        self.dry_run = bool(dry_run)
+        if self.dry_run and executor is not None:
+            raise ValueError("dry-run loops must not bind an executor")
+        # Optional neural state preservation for dry-run replay: when both
+        # are set, a dry-run cycle checkpoints the live network before the
+        # first stage and restores it afterwards, so replay never advances
+        # live neural/learning state.
+        self.neural_checkpoint = neural_checkpoint
+        self.neural_restore = neural_restore
 
     # -- lifecycle ------------------------------------------------------
     def start(self) -> None:
@@ -136,47 +150,134 @@ class IntelligenceLoop:
     def stop(self) -> None:
         self.state = LoopState.STOPPED
 
+    def sandbox(self) -> "IntelligenceLoop":
+        """Return a dry-run clone: pure hooks shared, every side-effecting
+        hook replaced by a recording stub, no executor bound.
+
+        The sandbox never touches world state, spatial memory, policy audit,
+        approvals, persistent memory, learning state, devices, network, or
+        filesystem. Used by snapshot replay and dry-run reasoning.
+        """
+        def _stub(_ctx: Any = None) -> dict[str, Any]:
+            return {"dry_run": True, "skipped": "side effects disabled"}
+
+        def _recall_stub(_normalized: dict[str, Any]) -> list[dict[str, Any]]:
+            return []
+
+        return IntelligenceLoop(
+            normalize=self.normalize,
+            world_update=_stub,
+            recall=_recall_stub,
+            neural_step=self.neural_step,
+            reason=self.reason,
+            plan=self.plan,
+            policy_check=None,
+            executor=None,
+            observe=_stub,
+            learn=_stub,
+            max_history=self.max_history,
+            dry_run=True,
+            neural_checkpoint=self.neural_checkpoint,
+            neural_restore=self.neural_restore,
+        )
+
     # -- cycles ---------------------------------------------------------
+    # Timeout contract (honest, no threads):
+    # - deadlines use time.monotonic() and are checked before AND after
+    #   every stage;
+    # - once the boundary is crossed, NO further stage runs: in particular
+    #   the act stage can never execute after a timeout;
+    # - the failure is deterministic (failed_stage + timeout detail) and the
+    #   loop enters TIMEOUT state; run() stops scheduling new cycles.
+    # Residual limitation (documented, not hidden): a synchronous hook that
+    # never returns cannot be preempted without threads. The guarantee is
+    # that nothing else runs afterwards and the timeout is recorded.
     def run(self, events: list[Any], *, max_cycles: int = 10,
             timeout_s: float = 30.0) -> list[CycleRecord]:
-        """Run at most max_cycles over the given events. Bounded always."""
+        """Run at most max_cycles over the given events. Bounded always.
+
+        timeout_s bounds the whole run (monotonic clock). Each cycle also
+        receives the remaining budget so a single slow cycle cannot push the
+        run past its deadline unnoticed.
+        """
         if max_cycles <= 0:
             raise ValueError("max_cycles must be positive")
+        if timeout_s <= 0:
+            raise ValueError("timeout_s must be positive")
         self.start()
         records: list[CycleRecord] = []
-        deadline = time.time() + timeout_s
+        run_deadline = time.monotonic() + timeout_s
         for event in events[:max_cycles]:
             if self.state is not LoopState.RUNNING:
                 break
-            if time.time() > deadline:
-                self.state = LoopState.ERROR
+            remaining = run_deadline - time.monotonic()
+            if remaining <= 0:
+                self.state = LoopState.TIMEOUT
+                self.total_timeouts += 1
                 break
-            records.append(self.cycle_once(event))
+            record = self.cycle_once(event, timeout_s=remaining)
+            records.append(record)
+            if record.failed_stage and "timeout" in record.failed_stage:
+                break
         if self.state is LoopState.RUNNING:
             self.state = LoopState.PAUSED
         return records
 
-    def cycle_once(self, event: Any) -> CycleRecord:
+    def cycle_once(self, event: Any, *, timeout_s: float | None = None,
+                   stage_timeout_s: float | None = None) -> CycleRecord:
+        """Run one bounded cycle. timeout_s bounds the whole cycle;
+        stage_timeout_s bounds any single stage (defaults to timeout_s)."""
+        if timeout_s is not None and timeout_s <= 0:
+            raise ValueError("timeout_s must be positive")
         cycle_id = f"cyc-{uuid.uuid4().hex[:12]}"
         record = CycleRecord(cycle_id=cycle_id, started_at=time.time())
+        deadline = (time.monotonic() + timeout_s) if timeout_s is not None else None
+        stage_budget = stage_timeout_s if stage_timeout_s is not None else timeout_s
         context: dict[str, Any] = {"cycle_id": cycle_id, "raw_event": event}
+        if deadline is not None:
+            # Cooperative hooks may check this themselves.
+            context["deadline_monotonic"] = deadline
 
-        for stage in STAGES:
-            if self.state not in (LoopState.RUNNING, LoopState.START):
-                break
-            started = time.perf_counter()
+        checkpoint: Any = None
+        if self.dry_run and self.neural_checkpoint is not None:
             try:
-                result = self._run_stage(stage, context)
-                elapsed = (time.perf_counter() - started) * 1000.0
-                record.stages.append(StageResult(stage=stage, ok=True,
-                                                detail=result, duration_ms=elapsed))
-            except Exception as exc:  # failure isolation per stage
-                elapsed = (time.perf_counter() - started) * 1000.0
-                record.stages.append(StageResult(stage=stage, ok=False,
-                                                error=f"{type(exc).__name__}: {exc}"[:300],
-                                                duration_ms=elapsed))
-                record.failed_stage = stage
-                break
+                checkpoint = self.neural_checkpoint()
+            except Exception:
+                checkpoint = None
+        try:
+            for stage in STAGES:
+                if self.state not in (LoopState.RUNNING, LoopState.START):
+                    break
+                if deadline is not None and time.monotonic() > deadline:
+                    self._timeout(record, stage, timeout_s or 0.0, "deadline crossed before stage")
+                    break
+                started = time.perf_counter()
+                try:
+                    result = self._run_stage(stage, context)
+                    elapsed = (time.perf_counter() - started) * 1000.0
+                    if stage_budget is not None and elapsed > stage_budget * 1000.0:
+                        self._timeout(record, stage, stage_budget, "stage exceeded budget",
+                                      detail=result)
+                        break
+                    if deadline is not None and time.monotonic() > deadline:
+                        self._timeout(record, stage, timeout_s or 0.0,
+                                      "deadline crossed during stage", detail=result)
+                        break
+                    record.stages.append(StageResult(stage=stage, ok=True,
+                                                    detail=result, duration_ms=elapsed))
+                except Exception as exc:  # failure isolation per stage
+                    elapsed = (time.perf_counter() - started) * 1000.0
+                    record.stages.append(StageResult(stage=stage, ok=False,
+                                                    error=f"{type(exc).__name__}: {exc}"[:300],
+                                                    duration_ms=elapsed))
+                    record.failed_stage = stage
+                    break
+        finally:
+            if checkpoint is not None and self.neural_restore is not None:
+                try:
+                    self.neural_restore(checkpoint)
+                except Exception:
+                    pass
 
         record.ended_at = time.time()
         action = context.get("action") or {}
@@ -190,6 +291,16 @@ class IntelligenceLoop:
         if len(self.history) > self.max_history:
             del self.history[:len(self.history) - self.max_history]
         return record
+
+    def _timeout(self, record: CycleRecord, stage: str, budget_s: float,
+                 reason: str, detail: dict[str, Any] | None = None) -> None:
+        record.stages.append(StageResult(
+            stage=stage, ok=False,
+            error=f"timeout: {reason} (budget_s={budget_s})",
+            detail={"timeout": True, **(detail or {})}))
+        record.failed_stage = f"timeout:{stage}"
+        self.state = LoopState.TIMEOUT
+        self.total_timeouts += 1
 
     def _run_stage(self, stage: str, context: dict[str, Any]) -> dict[str, Any]:
         if stage == "ingest":
@@ -244,6 +355,11 @@ class IntelligenceLoop:
             record_stage = self._current_record_policy(context, bool(allowed))
             return {"allowed": bool(allowed), "reason": reason[:300], **record_stage}
         if stage == "act":
+            if self.dry_run:
+                # Defense in depth: dry-run loops are constructed without an
+                # executor, but even if one were attached, this stage must
+                # never execute it.
+                return {"dry_run": True, "skipped": "dry-run: actions disabled"}
             policy = context.get("policy") or {}
             if not policy.get("allowed"):
                 return {"skipped": "policy denied or absent"}
@@ -276,5 +392,7 @@ class IntelligenceLoop:
             "state": self.state.value,
             "total_cycles": self.total_cycles,
             "total_failures": self.total_failures,
+            "total_timeouts": self.total_timeouts,
             "history": len(self.history),
+            "dry_run": self.dry_run,
         }

@@ -177,17 +177,82 @@ def build_loop(**components: Any) -> IntelligenceLoop:
     """
     from ..planning.planner import MissionPlanner
     planner = components.get("planner") or MissionPlanner()
+    network = components.get("network")
+    reasoner = components.get("reasoner")
+    if reasoner is not None and hasattr(reasoner, "audit") and not callable(reasoner):
+        reason_hook = make_meta_reasoner_adapter(reasoner)
+    else:
+        reason_hook = make_reason_hook(reasoner)
+    checkpoint = restore = None
+    if network is not None and hasattr(network, "snapshot") and hasattr(network, "restore"):
+        checkpoint = lambda: network.snapshot(include_weights=True)  # noqa: E731
+        restore = network.restore
     loop = IntelligenceLoop(
         normalize=normalize_event,
         world_update=make_world_hook(components.get("registry"), components.get("spatial")),
         recall=make_recall_hook(components.get("palace")),
         neural_step=make_neural_hook(components.get("network"),
                                      components.get("encoder"), components.get("decoder")),
-        reason=make_reason_hook(components.get("reasoner")),
+        reason=reason_hook,
         plan=planner.plan,
         policy_check=make_policy_hook(components.get("policy"),
                                       components.get("actor", "intelligence-loop")),
         executor=make_executor_hook(components.get("tools")),
         learn=make_learn_hook(components.get("palace")),
+        neural_checkpoint=checkpoint,
+        neural_restore=restore,
     )
     return loop
+
+
+def make_meta_reasoner_adapter(reasoner: Any = None):
+    """Adapt MetaReasoner.audit() to the loop's reason hook signature."""
+    from ..core.types import Confidence
+
+    def reason(context: dict[str, Any]) -> dict[str, Any]:
+        normalized = context.get("normalized", {}) or {}
+        payload = normalized.get("payload", {}) or {}
+        neural = context.get("neural", {}) or {}
+        memories = context.get("memories", []) or []
+        text = str(payload.get("text", payload.get("name", "")))[:500]
+        if reasoner is None:
+            return {"summary": text, "mode": "passthrough",
+                    "memory_count": len(memories),
+                    "spikes": neural.get("fired", 0)}
+        confidence = Confidence.MEDIUM
+        if neural.get("fired", 0) > 5:
+            confidence = Confidence.HIGH
+        assumptions = [f"memory:{m.get('id', '')}" for m in memories[:3]]
+        try:
+            audit = reasoner.audit(text or "no input text", confidence, assumptions)
+        except Exception:
+            return {"summary": text, "mode": "fallback"}
+        return {"summary": text, "mode": "meta-audit",
+                "confidence": audit.get("confidence"),
+                "biases": audit.get("detected_biases", []),
+                "decision": text,
+                "memory_count": len(memories),
+                "spikes": neural.get("fired", 0)}
+    return reason
+
+
+def default_neural_stack(seed: int = 41, size: int = 64, edges: int = 400):
+    """Build the default small neural stack: network + encoder + decoder.
+
+    A small synthetic net is the production default because the full
+    166k fly schema costs seconds to generate per process; callers that
+    want the full substrate pass an explicit network instead.
+    """
+    import random
+    from ..neural.scale import SparseLIFNetwork
+    from ..neural.codec import ChannelMap, MotorDecoder, SensoryEncoder, default_sensor_features
+
+    rng = random.Random(seed)
+    network = SparseLIFNetwork(size)
+    for _ in range(edges):
+        network.stage_edge(rng.randrange(size), rng.randrange(size),
+                           rng.uniform(0.1, 0.9), rng.randrange(3))
+    network.compile()
+    encoder = SensoryEncoder(ChannelMap(default_sensor_features()))
+    decoder = MotorDecoder({0: ("ATTEND", 0.7), 1: ("FOCUS", 0.6)})
+    return network, encoder, decoder
