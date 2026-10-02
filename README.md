@@ -9,9 +9,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MuntazarAI/jarvis-os/actions"><img src="https://img.shields.io/github/actions/workflow/status/MuntazarAI/jarvis-os/slsa.yml?label=build&style=flat-square" alt="Build"></a>
-  <img src="https://img.shields.io/github/last-commit/MuntazarAI/jarvis-os?style=flat-square" alt="Last commit">
-  <img src="https://img.shields.io/github/repo-size/MuntazarAI/jarvis-os?style=flat-square" alt="Repo size">
+  <a href="https://github.com/MuntazarAI/jarvis-os/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/MuntazarAI/jarvis-os/ci.yml?branch=main&label=CI&style=flat-square" alt="CI"></a>
+  <a href="https://github.com/MuntazarAI/jarvis-os/blob/main/LICENSE"><img src="https://img.shields.io/github/license/MuntazarAI/jarvis-os?style=flat-square" alt="License"></a>
+  <a href="https://github.com/MuntazarAI/jarvis-os"><img src="https://img.shields.io/github/stars/MuntazarAI/jarvis-os?style=flat-square" alt="GitHub stars"></a>
+  <a href="https://github.com/MuntazarAI/jarvis-os/issues"><img src="https://img.shields.io/github/issues/MuntazarAI/jarvis-os?style=flat-square" alt="GitHub issues"></a>
+  <a href="https://github.com/MuntazarAI/jarvis-os/commits/main"><img src="https://img.shields.io/github/last-commit/MuntazarAI/jarvis-os?style=flat-square" alt="Last commit"></a>
 </p>
 
 <p align="center">
@@ -32,6 +34,47 @@ JARVIS-OS is an experimental, modular personal AI platform designed to turn a lo
 It combines **cognition, memory, world modeling, evidence-based reasoning, agents, tools, automation, voice, vision, and security controls** behind one architecture.
 
 > **Status:** Active development · public repository · architecture evolving rapidly
+
+## What is JARVIS-OS?
+
+Think of JARVIS-OS as the **infrastructure around an AI brain**.
+
+A model can answer a question. JARVIS-OS is designed to provide the larger operating loop:
+
+**observe → remember → understand → reason → plan → act → verify → reflect**
+
+It is not currently a finished consumer operating system or a claim of human-level intelligence. It is an evolving, testable architecture for building a persistent personal AI system.
+
+## JARVIS in one minute
+
+```text
+User
+ │
+ ▼
+Perception
+ │
+ ├──► Memory
+ ├──► World Model
+ └──► Evidence
+          │
+          ▼
+       Reasoning
+          │
+          ▼
+     Agents / Tasks
+          │
+          ▼
+   Policy + Security
+          │
+          ▼
+    Tools / Devices
+          │
+          ▼
+    Verify → Reflect
+          │
+          ▼
+       Memory
+```
 
 ## ◈ System Overview
 
@@ -228,19 +271,22 @@ System backends are detected automatically when available, including Ollama, esp
 
 ---
 
-## Current verification
+## Current status
 
-The repository is developed verification-first.
+The repository is actively evolving through milestone-based development. The code and automated tests are the source of truth for what is currently implemented.
 
-The current project documentation records:
+| Area | Status |
+|---|---|
+| Core cognitive architecture | ✅ Foundation |
+| Memory / provenance | ✅ Implemented |
+| World model | ✅ Implemented |
+| Device fabric | ✅ Implemented |
+| Android node | ✅ 3.9 foundation |
+| Neural Nervous System | 🧪 4.0 foundation |
+| Real Android network transport | 🚧 In development |
+| Connectome-scale neural experiments | 🔬 Future research |
 
-- Full test suite: **143 passed, 2 skipped** after World Model 2.0
-- World Model 2.0 focused tests: **13 passed**
-- `jarvis doctor`: hardware/dependency checks verified on the development machine
-- Benchmarking includes cognitive-cycle and memory-search timing
-- Resource-heavy model paths are explicitly treated as constrained on CPU-only hardware
-
-The exact verification state can change as development continues; run the commands above for the current state.
+> This table intentionally distinguishes implemented foundations from experiments and future work.
 
 ---
 
@@ -297,6 +343,30 @@ JARVIS-OS includes application-level safeguards such as:
 These are software safeguards, not a guarantee of security. Review the code and your local environment before using JARVIS with sensitive systems.
 
 See [SECURITY.md](SECURITY.md) for the project's security-reporting process.
+
+---
+
+## Neural Nervous System 4.0
+
+JARVIS-OS includes a specialized bio-inspired spiking neural subsystem. It does **not** replace the language-model/cognitive stack.
+
+The current foundation provides LIF neurons, recurrent weighted synapses, delayed spike delivery, bounded STDP, homeostatic plasticity, serializable snapshots, and typed sensory/motor boundaries.
+
+A future fruit-fly/connectome-inspired model is a **research direction**, not a claim that the current repository contains a 166,000-neuron biological brain model.
+
+Read [NEURAL_NERVOUS_SYSTEM.md](docs/NEURAL_NERVOUS_SYSTEM.md).
+
+---
+
+## Android node
+
+Android is treated as a normal typed device-fabric node rather than a privileged special case.
+
+The 3.9 foundation includes explicit pairing/trust, typed capabilities, bounded telemetry, heartbeat/presence, safe commands, typed events/results, policy-gated routing, and bounded offline queueing.
+
+The real network transport is being developed as the next milestone and should not be described as complete until it is merged and verified.
+
+Read [ANDROID_NODE.md](docs/ANDROID_NODE.md).
 
 ---
 
@@ -401,4 +471,8 @@ while remaining transparent about uncertainty and limitations.
 
 ## License
 
-No open-source license has been declared yet. Until a license is added to this repository, reuse rights should not be assumed.
+JARVIS-OS is licensed under the [Apache License 2.0](LICENSE).
+
+Copyright 2026 Muntazar Al-Zaidi.
+
+The software license does not automatically grant rights to use project branding or trademarks. See [NOTICE](NOTICE).
