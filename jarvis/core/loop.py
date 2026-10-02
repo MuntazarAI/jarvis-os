@@ -85,6 +85,11 @@ class Jarvis:
         # world / models / policy / tools / agents / tasks
         self.world = WorldModel()
         self.state = StateTracker()
+        from ..world.registry import JsonFileWorldStore, WorldRegistry
+        self.world_store = JsonFileWorldStore(
+            str(self.config.paths.resolve("home") / "world.json"))
+        self.world_registry = WorldRegistry()
+        self.world_registry.load(self.world_store)
         self.models = default_models(self.config)
         self.router = ModelRouter(self.models, self.config)
         self.policy = PolicyEngine(self.config)
@@ -626,6 +631,7 @@ class Jarvis:
             tracker=getattr(self, "state", None),
             computer=getattr(self, "computer", None),
             home=home,
+            world_registry=getattr(self, "world_registry", None),
         ), Budgets(max_agents=6, max_tool_calls=10, max_runtime_s=120.0))
 
     def status(self) -> dict[str, Any]:
@@ -646,3 +652,7 @@ class Jarvis:
         self.events.close()
         self.palace.close()
         self.graph.close()
+        try:
+            self.world_registry.save(self.world_store)
+        except Exception:
+            pass

@@ -131,6 +131,7 @@ class OrchestratorContext:
     bus: MessageBus | None = None
     skills: Any = None
     home: str | None = None  # state dir; enables trace persistence
+    world_registry: Any = None  # WorldRegistry 2.2; handlers degrade if None
 
 
 # role → fallback role when the primary handler fails
@@ -634,14 +635,73 @@ class Orchestrator:
 
     def _h_world(self, card, goal, board, task_id, *a) -> AgentResult:
         tracker = self._need("tracker")
-        if tracker is None:
+        registry = self._need("world_registry")
+        if tracker is None and registry is None:
             return AgentResult.failure("world", "no World Model bound")
-        changes = tracker.latest_changes()
-        board.write("state", {"changes": [c.describe() for c in changes]},
-                    author="world", provenance="world-2.0", confidence=0.8)
-        return self._ok("world", task_id,
-                        {"changes": [c.to_dict() for c in changes]},
-                        evidence=[c.describe() for c in changes])
+        output: dict[str, Any] = {}
+        evidence: list[str] = []
+        if tracker is not None:
+            changes = tracker.latest_changes()
+            board.write("state", {"changes": [c.describe() for c in changes]},
+                        author="world", provenance="world-2.0", confidence=0.8)
+            output["changes"] = [c.to_dict() for c in changes]
+            evidence.extend(c.describe() for c in changes)
+        # World registry 2.2: typed entities enrich the same answer.
+        # Absent tracker degrades to registry-only (and vice versa).
+        if registry is not None:
+            try:
+                stats = registry.stats()
+                uncertain = [e.name for e in registry.find_uncertain()[:5]]
+                output["registry"] = stats
+                output["uncertain"] = uncertain
+                board.write("state",
+                            {"entities": stats["entities"],
+                             "uncertain": uncertain},
+                            author="world", provenance="world-registry-2.2",
+                            confidence=0.8)
+                evidence.append(f"world registry: {stats['entities']} entities, "
+                                f"{stats['relations']} relations")
+                # Entity-level answers: match goal text against known names,
+                # plus type-level questions ("what devices do I have?").
+                matched = [e for e in registry.find_entities()
+                           if e.name.lower() in goal.lower()]
+                type_words = {"device": "device", "devices": "device",
+                              "application": "application", "applications": "application",
+                              "app": "application", "apps": "application",
+                              "person": "person", "people": "person",
+                              "project": "project", "projects": "project",
+                              "service": "service", "services": "service",
+                              "file": "file", "files": "file",
+                              "task": "task", "tasks": "task",
+                              "computer": "computer", "computers": "computer",
+                              "network": "network", "location": "location",
+                              "goal": "goal", "goals": "goal",
+                              "agent": "agent", "agents": "agent"}
+                for word in goal.lower().split():
+                    cleaned = word.strip("?,.")
+                    if cleaned in type_words:
+                        for entity in registry.find_entities(
+                                entity_type=type_words[cleaned]):
+                            if entity not in matched:
+                                matched.append(entity)
+                for entity in matched[:5]:
+                    relations = [r.to_dict() for r in
+                                 registry.get_relationships(entity.id)]
+                    detail = {
+                        "id": entity.id, "type": entity.type,
+                        "name": entity.name, "state": entity.state,
+                        "confidence": entity.confidence,
+                        "relations": relations,
+                        "evidence": registry.get_evidence(entity.id)}
+                    output.setdefault("entities", []).append(detail)
+                    board.write("evidence", detail, author="world",
+                                provenance="world-registry-2.2",
+                                confidence=entity.confidence)
+                    evidence.append(
+                        f"{entity.name} ({entity.type}): {entity.state}")
+            except Exception as exc:
+                evidence.append(f"registry read failed: {type(exc).__name__}")
+        return self._ok("world", task_id, output, evidence=evidence)
 
     def _h_memory(self, card, goal, board, task_id, *a) -> AgentResult:
         palace = self._need("palace")

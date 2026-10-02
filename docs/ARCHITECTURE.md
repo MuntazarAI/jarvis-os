@@ -61,7 +61,7 @@ The loop is intentionally closed: actions produce observations, observations upd
 
 ### World
 
-`jarvis/world/` represents external state. World Model 2.0 adds explicit snapshots and state changes without replacing the existing world model.
+`jarvis/world/` represents external state. World Model 2.0 adds explicit snapshots and state changes without replacing the existing world model. World Model 2.2 (`registry.py`) adds a typed entity/relationship registry (15 types, 13 relations) with versioned temporal state, CAS updates, structured observations, auditable memory promotion preserving Memory 3.0 origins, and a repository abstraction (in-memory default, JSON file store). Unknown stays unknown; conflicts stay visible; external content stays untrusted.
 
 ### Knowledge
 

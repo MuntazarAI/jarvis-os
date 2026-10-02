@@ -57,7 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     ag = sub.add_parser("agents", help="multi-agent organization")
     ag.add_argument("action", nargs="?", default="list",
-                    choices=["list", "status", "run", "explain", "teams"])
+                    choices=["list", "status", "run", "explain", "teams",
+                             "world"])
     ag.add_argument("text", nargs="*", help="goal text for run")
     ag.add_argument("--team", default="",
                     help="team strategy: research/coding/debugging/computer/decision/daily")
@@ -215,6 +216,56 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.dumps(out["result"], indent=2, default=str))
                     print("--- trace ---")
                     print(orch.explain(out["task_id"]))
+        elif args.action == "world":
+            reg = jarvis.world_registry
+            parts = list(args.text)
+            sub = parts[0].lower() if parts else "entities"
+            rest = parts[1:]
+            as_json = args.json
+            if sub == "entities":
+                payload = {"entities": [
+                    {"id": e.id, "type": e.type, "name": e.name,
+                     "confidence": e.confidence, "version": e.version}
+                    for e in sorted(reg.entities.values(),
+                                    key=lambda x: x.name)[:50]]}
+            elif sub == "get" and rest:
+                entity = reg.get_entity(rest[0])
+                payload = entity.to_dict() if entity is not None else {
+                    "status": "unknown",
+                    "note": f"never observed: {rest[0]}"}
+            elif sub == "relations" and rest:
+                if reg.get_entity(rest[0]) is None:
+                    payload = {"status": "unknown",
+                               "note": f"never observed: {rest[0]}"}
+                else:
+                    payload = {"relations": [
+                        r.to_dict() for r in reg.get_relationships(rest[0])]}
+            elif sub == "history" and rest:
+                payload = {"history": reg.get_history(rest[0])}
+            elif sub == "conflicts":
+                payload = {"conflicts": reg.find_conflicts(rest[0] if rest else "")}
+            elif sub == "uncertain":
+                payload = {"uncertain": [
+                    {"id": e.id, "name": e.name, "confidence": e.confidence}
+                    for e in reg.find_uncertain()]}
+            elif sub == "changes":
+                payload = {"changes": reg.changes_since(0.0)[-20:]}
+            else:
+                print("usage: agents world "
+                      "entities|get <id>|relations <id>|history <id>|"
+                      "conflicts|uncertain|changes [--json]")
+                jarvis.close()
+                return 2
+            if as_json:
+                print(json.dumps(payload, indent=2, default=str))
+            elif sub == "entities":
+                for entry in payload["entities"]:
+                    print(f"{entry['id']:40} {entry['type']:12} "
+                          f"conf={entry['confidence']}")
+                if not payload["entities"]:
+                    print("(no entities observed yet)")
+            else:
+                print(json.dumps(payload, indent=2, default=str))
         jarvis.close()
         return 0
 

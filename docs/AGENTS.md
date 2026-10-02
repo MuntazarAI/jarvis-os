@@ -162,3 +162,21 @@ Depth 5 is explicit-only. Deterministic: same input, same depth.
 [--json]`, `agents explain <task-id>` (cross-session via persisted
 traces), `agents list`, `agents teams`. Human-readable by default,
 `--json` for machines.
+
+## World Model 2.2 — typed registry
+
+`jarvis/world/registry.py` adds a typed entity/relationship layer beside
+World Model 2.0 snapshots (both kept; neither replaced):
+
+- 15 entity types, 13 validated relations, stable `type:slug` IDs
+- Per-entity state with versioned history, CAS updates, provenance,
+  confidence, explicit uncertainty lists, evidence refs
+- Observations recorded first, applied explicitly; conflicts stay visible
+- Memory promotion preserves origin/confidence, refuses speculation and
+  unknown origins without override, dedupes, audits every decision
+- `WorldRegistry` + `WorldRepository` protocol + `JsonFileWorldStore`
+- World agent answers entity/type questions with per-entity evidence on
+  the blackboard; degrades cleanly when tracker or registry is absent
+- CLI: `agents world entities|get|relations|history|conflicts|uncertain|changes`
+- Loop persists `world.json` on close; orchestrator receives the registry
+- No auto-approvals, no standing permissions, external content stays untrusted
