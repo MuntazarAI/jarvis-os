@@ -373,6 +373,13 @@ Read [ANDROID_NODE.md](docs/ANDROID_NODE.md).
 
 ---
 
+## Engineering platform
+
+- [Architecture Decision Records](docs/adr/README.md) — why foundational design choices were made.
+- [Plugin SDK](docs/PLUGIN_SDK.md) — bounded extension contract and example.
+- [Benchmark Lab](docs/BENCHMARKS.md) — reproducible performance measurements.
+- [Release workflow](.github/workflows/release.yml) — source archives, checksums, SBOM and provenance.
+
 ## Developer environment
 
 Open this repository in **GitHub Codespaces** or any Dev Container-compatible VS Code setup to get a ready-to-use Python environment. The configuration lives in `.devcontainer/devcontainer.json`.
