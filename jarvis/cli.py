@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import subprocess
 from typing import Any
 from pathlib import Path
 
@@ -28,6 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--token", default="")
 
     sub.add_parser("status", help="print system status JSON")
+
+    gev = sub.add_parser("gods-eye", help="manage the local God's Eye View application")
+    gev.add_argument("action", nargs="?", default="status",
+                     choices=["status", "install", "start", "stop", "open"])
 
     men = sub.add_parser("mentalist", help="evidence-gated analysis of a situation")
     men.add_argument("text", nargs="+")
@@ -206,6 +211,28 @@ def main(argv: list[str] | None = None) -> int:
             api.shutdown()
             jarvis.close()
         return 0
+
+    if args.command == "gods-eye":
+        from .geospatial.application import GodsEyeApplication
+        app = GodsEyeApplication(home=jarvis.config.paths.home)
+        try:
+            if args.action == "install":
+                result = app.install()
+            elif args.action == "start":
+                result = app.start()
+            elif args.action == "stop":
+                result = app.stop()
+            elif args.action == "open":
+                result = {"url": app.open()}
+            else:
+                result = app.status()
+            print(json.dumps(result, indent=2, default=str))
+            return 0
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            print(f"God's Eye View: {exc}")
+            return 1
+        finally:
+            jarvis.close()
 
     if args.command == "status":
         print(json.dumps(jarvis.status(), indent=2, default=str))
