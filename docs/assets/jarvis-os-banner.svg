@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" role="img" aria-labelledby="title desc">
+<title id="title">JARVIS-OS</title>
+<desc id="desc">JARVIS-OS futuristic system identity graphic</desc>
+<defs>
+  <linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#00e5ff"/><stop offset="1" stop-color="#7c4dff"/></linearGradient>
+  <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<rect width="1200" height="320" rx="28" fill="#070b14"/>
+<g opacity=".22" stroke="#00e5ff"><path d="M40 70H1160M40 250H1160M110 30V290M1090 30V290"/></g>
+<g transform="translate(95 65)" filter="url(#glow)">
+  <circle cx="95" cy="95" r="72" fill="none" stroke="url(#g)" stroke-width="8"/>
+  <circle cx="95" cy="95" r="28" fill="none" stroke="#00e5ff" stroke-width="6"/>
+  <path d="M95 15V45M95 145V175M15 95H45M145 95H175M39 39L60 60M130 130L151 151M151 39L130 60M60 130L39 151" stroke="#00e5ff" stroke-width="5" stroke-linecap="round"/>
+</g>
+<text x="330" y="138" fill="white" font-family="Arial,Helvetica,sans-serif" font-size="64" font-weight="700" letter-spacing="8">JARVIS-OS</text>
+<text x="334" y="184" fill="#00e5ff" font-family="monospace" font-size="20" letter-spacing="4">LOCAL INTELLIGENCE // SYSTEM CORE</text>
+<text x="334" y="224" fill="#7f8da3" font-family="monospace" font-size="16">MEMORY · WORLD MODEL · AGENTS · EVIDENCE · ACTION · VERIFY</text>
+</svg>
