@@ -49,6 +49,39 @@ class JarvisAPI:
             if method == "GET" and path == "/events":
                 return 200, {"types": self.jarvis.events.types(),
                              "count": self.jarvis.events.count()}
+            # NOTE: query strings are stripped for API routes only;
+            # legacy routes above keep exact-match behavior.
+            api_path = path.split("?", 1)[0].rstrip("/") or "/"
+            if method == "GET" and api_path == "/api/missions/control":
+                from ..missions.hud import HudContext, build_snapshot
+                snapshot = build_snapshot(HudContext(
+                    missions=self.jarvis.missions,
+                    dots=self.jarvis.dots,
+                    tasks=self.jarvis.tasks,
+                    notifier=getattr(self.jarvis, "notifier", None),
+                    policy=self.jarvis.policy,
+                    system_state=self.jarvis.world.system_state
+                    if hasattr(self.jarvis.world, "system_state") else None,
+                    emergency_engaged=lambda: self.jarvis.policy._emergency_stop()
+                    if hasattr(self.jarvis.policy, "_emergency_stop") else False,
+                    proposals=self.jarvis.missions))
+                return 200, snapshot
+            if method == "GET" and api_path == "/api/missions/proposals":
+                manager = self.jarvis.missions
+                return 200, {"proposals": [
+                    p.to_dict() for p in manager.list_proposals()]}
+            if method == "GET" and api_path.startswith("/api/missions/proposals/"):
+                pid = api_path.rsplit("/", 1)[-1]
+                proposal = self.jarvis.missions.get_proposal(pid)
+                if proposal is None:
+                    return 404, {"error": f"unknown proposal: {pid}"}
+                return 200, proposal.to_dict()
+            if method == "GET" and api_path.startswith("/api/missions/"):
+                mid = api_path.rsplit("/", 1)[-1]
+                info = self.jarvis.missions.inspect(mid)
+                if info is None:
+                    return 404, {"error": f"unknown mission: {mid}"}
+                return 200, info
             if method == "POST" and path == "/mentalist":
                 payload = json.loads(body.decode() or "{}")
                 text = str(payload.get("input", ""))

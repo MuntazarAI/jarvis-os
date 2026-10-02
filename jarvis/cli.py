@@ -101,7 +101,8 @@ def build_parser() -> argparse.ArgumentParser:
                      choices=["list", "create", "inspect", "start",
                               "pause", "resume", "stop", "cancel",
                               "status", "explain", "objectives", "verify",
-                              "checkpoint", "recover", "advance"])
+                              "checkpoint", "recover", "advance",
+                              "proposals", "control"])
     msn.add_argument("text", nargs="*", help="id, name/goal, or objective spec")
     msn.add_argument("--priority", type=int, default=5)
     msn.add_argument("--depends", default="",
@@ -789,9 +790,132 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             return _out(report.to_dict(),
                         f"{report.outcome}: {report.reason[:160]}")
+        if action == "proposals":
+            from .missions import detectors as _detectors
+            parts = list(args.text)
+            sub = parts[0].lower() if parts else "list"
+            rest = parts[1:]
+            if sub == "list":
+                items = manager.list_proposals(
+                    rest[0] if rest and rest[0] in (
+                        "draft", "proposed", "approved", "rejected",
+                        "ignored", "expired", "converted", "cancelled")
+                    else "")
+                payload = {"proposals": [p.to_dict() for p in items]}
+                text = "\n".join(
+                    f"{p.proposal_id[:13]:15} {p.status.value:10} "
+                    f"score={p.score:.2f} {p.title[:60]}" for p in items) \
+                    or "(no proposals yet)"
+                return _out(payload, text)
+            if sub == "scan":
+                found = _detectors.scan_all(
+                    manager, palace=jarvis.palace, tasks=jarvis.tasks,
+                    tools=jarvis.tools, tracker=jarvis.state)
+                payload = {"proposals": [p.to_dict() for p in found]}
+                text = "\n".join(
+                    f"{p.proposal_id[:13]:15} score={p.score:.2f} "
+                    f"{p.title[:60]}" for p in found) or "(nothing detected)"
+                return _out(payload, text)
+            if sub in ("inspect", "explain", "approve", "reject", "ignore"):
+                if not rest:
+                    print(f"usage: jarvis missions proposals {sub} <proposal-id>")
+                    jarvis.close()
+                    return 2
+                pid = rest[0]
+                try:
+                    if sub == "inspect":
+                        proposal = manager.get_proposal(pid)
+                        if proposal is None:
+                            print(f"unknown proposal: {pid}")
+                            jarvis.close()
+                            return 2
+                        return _out(
+                            {"proposal": proposal.to_dict()},
+                            json.dumps(proposal.to_dict(), indent=2,
+                                       default=str))
+                    if sub == "explain":
+                        proposal = manager.get_proposal(pid)
+                        if proposal is None:
+                            print(f"unknown proposal: {pid}")
+                            jarvis.close()
+                            return 2
+                        lines = [
+                            f"proposal {proposal.proposal_id} "
+                            f"({proposal.status.value}, score={proposal.score:.2f})",
+                            f"  why: {proposal.reason[:200]}",
+                            f"  evidence: {len(proposal.evidence_refs)} refs",
+                            f"  confidence={proposal.confidence:.2f} "
+                            f"uncertainty: {proposal.uncertainty[:3]}",
+                            f"  factors: {proposal.score_factors}",
+                            f"  would create: "
+                            f"{len(proposal.suggested_objectives)} objectives",
+                            f"  expires: "
+                            f"{proposal.expires_at or 'never'}",
+                        ]
+                        return _out({"proposal": proposal.to_dict()},
+                                    "\n".join(lines))
+                    if sub == "approve":
+                        proposal = manager.approve_proposal(pid)
+                    elif sub == "reject":
+                        proposal = manager.reject_proposal(
+                            pid, reason=args.reason)
+                    else:
+                        proposal = manager.ignore_proposal(pid)
+                except (KeyError, ValueError, Exception) as exc:
+                    print(f"cannot {sub} {pid}: {exc}")
+                    jarvis.close()
+                    return 1
+                return _out({"proposal": proposal.to_dict()},
+                            f"{pid}: {proposal.status.value}")
+            if sub == "convert":
+                if not rest:
+                    print("usage: jarvis missions proposals convert "
+                          "<proposal-id>")
+                    jarvis.close()
+                    return 2
+                try:
+                    mission = manager.convert_proposal(rest[0])
+                except (KeyError, ValueError, Exception) as exc:
+                    print(f"cannot convert: {exc}")
+                    jarvis.close()
+                    return 1
+                return _out({"mission": mission.to_dict()},
+                            f"converted → mission {mission.mission_id}")
+            print("usage: jarvis missions proposals "
+                  "list|scan|inspect|explain|approve|reject|ignore|convert "
+                  "[--json]")
+            jarvis.close()
+            return 2
+        if action == "control":
+            from .missions.hud import HudContext, build_snapshot
+            snapshot = build_snapshot(HudContext(
+                missions=manager, dots=jarvis.dots, tasks=jarvis.tasks,
+                notifier=getattr(jarvis, "notifier", None),
+                policy=jarvis.policy,
+                system_state=jarvis.world.system_state
+                if hasattr(jarvis.world, "system_state") else None,
+                emergency_engaged=lambda: jarvis.policy._emergency_stop()
+                if hasattr(jarvis.policy, "_emergency_stop") else False,
+                proposals=manager))
+            if as_json:
+                print(json.dumps(snapshot, indent=2, default=str))
+            else:
+                missions = snapshot["missions"]
+                print(f"missions: {len(missions)}  "
+                      f"dots: {len(snapshot['dots'])}  "
+                      f"blockers: {len(snapshot['blockers'])}  "
+                      f"approvals: {len(snapshot['approvals'])}  "
+                      f"emergency_stop={snapshot['emergency_stop']}")
+                for row in missions[:10]:
+                    print(f"  {row['mission_id'][:13]:15} {row['name'][:30]:30} "
+                          f"{row['status']:12} {row['progress']:.0%}")
+                for blocker in snapshot["blockers"][:5]:
+                    print(f"  ! blocked: {blocker.get('reason', '')[:80]}")
+            jarvis.close()
+            return 0
         print("usage: jarvis missions list|create|inspect|start|pause|resume|"
               "stop|cancel|status|explain|objectives|verify|checkpoint|"
-              "recover|advance [--json]")
+              "recover|advance|proposals|control [--json]")
         jarvis.close()
         return 2
 

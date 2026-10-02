@@ -95,3 +95,29 @@ PENDING. Interrupted work is never reported complete.
 One runtime per mission advance call; TaskEngine owns task state;
 objective activation is serialized by ready-resolution (a RUNNING
 objective is never re-selected). Version counters detect stale writes.
+
+## Proposals 3.4 — evidence-backed mission suggestions
+
+`jarvis/missions/proposals.py` defines `MissionProposal` (statuses
+DRAFT→PROPOSED→APPROVED→CONVERTED, plus REJECTED/IGNORED/EXPIRED/
+CANCELLED; all transitions validated). `jarvis/missions/detectors.py`
+finds candidates from blocked missions/objectives, unfinished goals,
+repeated failures (≥3, cooled down), capability gaps, and world
+changes. Scoring is a bounded deterministic mean of urgency, relevance,
+novelty, and confidence with exposed factors — no ML.
+
+Deduplication is by deterministic key (source+goal+blocker+kind);
+approved proposals never reduplicate. Approval records the approver and
+executes nothing. Conversion re-checks emergency stop, expiry, and a
+freshness callback, then reuses `MissionManager.create` — idempotent
+via `converted_mission_id`. Stale proposals cancel instead of
+converting. Events `mission.proposal.*` publish on the EventBus.
+
+## HUD 3.4 — Mission Control surface
+
+`jarvis/missions/hud.py` builds a deterministic read-only snapshot
+(missions, objectives, dots, tasks, blockers, approvals, notifications,
+evidence, proposals, system, emergency-stop). CLI: `missions control`.
+API: `GET /api/missions/control`, `/api/missions/{id}`,
+`/api/missions/proposals`, `/api/missions/proposals/{id}`. Approval
+tokens are counted, never exposed; secrets never included.

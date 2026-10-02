@@ -282,3 +282,15 @@ See `docs/MISSIONS.md` for the full contract. Summary for agents:
   no auto-approvals; stale tokens authorize nothing; secrets scrubbed.
 - CLI: `missions list|create|inspect|start|pause|resume|stop|cancel|`
   `status|explain|objectives|verify|checkpoint|recover|advance [--json]`.
+
+## Proposals & HUD 3.4 — proactive mission intelligence
+
+- Detectors (`missions/detectors.py`) propose missions from blocked
+  work, unfinished goals, repeated failures, capability gaps, and world
+  changes — all through deterministic scoring with exposed factors.
+- Approval only permits creation; execution still requires
+  Orchestrator → PolicyEngine → approval → tool.
+- `missions proposals list|scan|inspect|explain|approve|reject|ignore|`
+  `convert [--json]`; `missions control` for the HUD snapshot.
+- API: `GET /api/missions/control`, `/api/missions/{id}`,
+  `/api/missions/proposals`, `/api/missions/proposals/{id}`.

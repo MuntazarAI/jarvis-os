@@ -61,6 +61,7 @@ class MissionManager:
     def __init__(self, deps: MissionDependencies | None = None) -> None:
         self.deps = deps or MissionDependencies()
         self.missions: dict[str, Mission] = {}
+        self.proposals: dict[str, Any] = {}
         if self.deps.store is not None:
             self.load()
 
@@ -73,6 +74,8 @@ class MissionManager:
             "saved_at": now(),
             "missions": {mid: _scrub(m.to_dict())
                          for mid, m in self.missions.items()},
+            "proposals": {pid: _scrub(p.to_dict())
+                          for pid, p in self.proposals.items()},
         })
 
     def load(self) -> int:
@@ -84,6 +87,7 @@ class MissionManager:
             return 0
         if not isinstance(data, dict):
             return 0
+        from .proposals import MissionProposal
         count = 0
         for mid, raw in (data.get("missions") or {}).items():
             try:
@@ -93,6 +97,13 @@ class MissionManager:
             mission.mission_id = mid
             self.missions[mid] = mission
             count += 1
+        for pid, raw in (data.get("proposals") or {}).items():
+            try:
+                proposal = MissionProposal.from_dict(raw)
+            except Exception:
+                continue
+            proposal.proposal_id = pid
+            self.proposals[pid] = proposal
         return count
 
     # -- lifecycle ---------------------------------------------------
@@ -349,3 +360,163 @@ class MissionManager:
                     pass
         except Exception:
             pass
+
+    # -- proposals (3.4) ---------------------------------------------
+    def save_proposal(self, proposal: Any) -> Any:
+        """Persist a proposal. Idempotent on proposal_id."""
+        self.proposals[proposal.proposal_id] = proposal
+        self.persist()
+        return proposal
+
+    def get_proposal(self, proposal_id: str) -> Any | None:
+        return self.proposals.get(proposal_id)
+
+    def list_proposals(self, status: str = "") -> list[Any]:
+        items = list(self.proposals.values())
+        if status:
+            items = [p for p in items if p.status.value == status]
+        return sorted(items, key=lambda p: (-p.score, p.created_at))
+
+    def _require_proposal(self, proposal_id: str) -> Any:
+        proposal = self.proposals.get(proposal_id)
+        if proposal is None:
+            raise KeyError(f"unknown proposal: {proposal_id}")
+        return proposal
+
+    def _proposal_event(self, event_type: str, proposal: Any,
+                        extra: dict[str, Any] | None = None) -> None:
+        bus = getattr(self.deps, "bus", None)
+        if bus is None:
+            return
+        try:
+            from ..events.store import Event as BusEvent
+            payload = {"proposal_id": proposal.proposal_id,
+                       "title": proposal.title,
+                       "status": proposal.status.value,
+                       "score": proposal.score}
+            if extra:
+                payload.update(extra)
+            bus.publish(BusEvent(type=event_type, payload=payload))
+        except Exception:
+            pass
+
+    def _emergency_engaged(self) -> bool:
+        policy = getattr(self.deps, "policy", None)
+        if policy is None:
+            return False
+        try:
+            return bool(policy._emergency_stop())
+        except Exception:
+            return False
+
+    def approve_proposal(self, proposal_id: str,
+                         by: str = "user") -> Any:
+        """PROPOSED → APPROVED. Records approver; executes nothing."""
+        from .proposals import ProposalStatus
+        proposal = self._require_proposal(proposal_id)
+        proposal.transition(ProposalStatus.APPROVED)
+        proposal.provenance["approved_by"] = by
+        proposal.provenance["approved_at"] = now()
+        self._proposal_event("mission.proposal.approved", proposal,
+                             {"by": by})
+        self.persist()
+        return proposal
+
+    def reject_proposal(self, proposal_id: str, reason: str = "") -> Any:
+        from .proposals import ProposalStatus
+        proposal = self._require_proposal(proposal_id)
+        proposal.transition(ProposalStatus.REJECTED)
+        if reason:
+            proposal.uncertainty.append(f"rejected: {reason}")
+        self._proposal_event("mission.proposal.rejected", proposal,
+                             {"reason": reason})
+        self.persist()
+        return proposal
+
+    def ignore_proposal(self, proposal_id: str) -> Any:
+        from .proposals import ProposalStatus
+        proposal = self._require_proposal(proposal_id)
+        proposal.transition(ProposalStatus.IGNORED)
+        self._proposal_event("mission.proposal.ignored", proposal)
+        self.persist()
+        return proposal
+
+    def expire_proposals(self) -> list[str]:
+        """Mark past-expiry PROPOSED proposals EXPIRED. Returns IDs."""
+        from .proposals import ProposalStatus
+        expired = []
+        for proposal in self.proposals.values():
+            if proposal.status == ProposalStatus.PROPOSED and proposal.expired:
+                proposal.transition(ProposalStatus.EXPIRED)
+                self._proposal_event("mission.proposal.expired", proposal)
+                expired.append(proposal.proposal_id)
+        if expired:
+            self.persist()
+        return expired
+
+    def convert_proposal(self, proposal_id: str,
+                         still_valid: Any = None) -> Any:
+        """APPROVED → Mission via MissionManager.create. Re-checks e-stop,
+        expiry, and current conditions first. Idempotent: a second call
+        returns the already-created mission instead of duplicating it.
+        """
+        from .proposals import ProposalStatus
+        proposal = self._require_proposal(proposal_id)
+        if proposal.converted_mission_id:
+            existing = self.missions.get(proposal.converted_mission_id)
+            if existing is not None:
+                return existing
+        if proposal.status != ProposalStatus.APPROVED:
+            raise InvalidProposalState(
+                f"proposal {proposal_id} is {proposal.status.value}; "
+                f"only APPROVED proposals convert")
+        if proposal.expired:
+            proposal.transition(ProposalStatus.EXPIRED)
+            self.persist()
+            raise InvalidProposalState(
+                f"proposal {proposal_id} expired before conversion")
+        if self._emergency_engaged():
+            raise InvalidProposalState("emergency stop engaged: no conversion")
+        if still_valid is not None:
+            valid, note = still_valid()
+            if not valid:
+                proposal.transition(ProposalStatus.CANCELLED)
+                proposal.uncertainty.append(f"stale at conversion: {note}")
+                self._proposal_event("mission.proposal.cancelled", proposal,
+                                     {"reason": f"stale: {note}"})
+                self.persist()
+                raise InvalidProposalState(
+                    f"proposal {proposal_id} no longer necessary: {note}")
+        template = proposal.mission_template or {}
+        mission = self.create(
+            name=template.get("name", proposal.title),
+            goal=template.get("goal", proposal.title),
+            description=proposal.description,
+            priority=proposal.priority,
+            budget=dict(template.get("budget", {})),
+            workspace=dict(template.get("workspace", {})),
+            owner=proposal.provenance.get("approved_by", "user"))
+        for spec in proposal.suggested_objectives:
+            try:
+                self.add_objective(
+                    mission.mission_id,
+                    name=str(spec.get("name", "objective")),
+                    description=str(spec.get("description", "")),
+                    priority=int(spec.get("priority", 5)),
+                    weight=float(spec.get("weight", 1.0)),
+                    depends_on=list(spec.get("depends_on", [])),
+                    dot_id=str(spec.get("dot_id", "")),
+                    success_criteria=list(spec.get("success_criteria", [])))
+            except (KeyError, ValueError):
+                continue  # bad suggestion skipped, rest convert
+        mission.metadata["proposal_id"] = proposal.proposal_id
+        proposal.converted_mission_id = mission.mission_id
+        proposal.transition(ProposalStatus.CONVERTED)
+        self._proposal_event("mission.proposal.converted", proposal,
+                             {"mission_id": mission.mission_id})
+        self.persist()
+        return mission
+
+
+class InvalidProposalState(Exception):
+    """Proposal not in a state allowing the requested operation."""
