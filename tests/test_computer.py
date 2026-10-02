@@ -44,9 +44,11 @@ def test_declared_risk_floors_assessment():
 def test_gated_screenshot_runs_input_blocked(jarvis, tmp_path):
     computer = jarvis.supervisor.registry.by_name("computer")
     dest = str(tmp_path / "gated.png")
-    out = jarvis._execute_step(PlanStep(step_id="s1", description="capture screen",
-                                        agent="computer", tool="screen_capture",
-                                        args={"dest": dest}), computer)
+    with patch.object(jarvis.computer.screen, "capture",
+                      return_value={"ok": True, "path": dest, "bytes": 1234}):
+        out = jarvis._execute_step(PlanStep(step_id="s1", description="capture screen",
+                                            agent="computer", tool="screen_capture",
+                                            args={"dest": dest}), computer)
     assert out["ok"], out
     out2 = jarvis._execute_step(PlanStep(step_id="s2", description="click",
                                          agent="computer", tool="mouse_click",

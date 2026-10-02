@@ -8,6 +8,7 @@ keyboard protocol) is reported honestly instead of faked.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -24,8 +25,10 @@ def _run(cmd: list[str], timeout: float = 15.0) -> subprocess.CompletedProcess:
 
 # -- screenshot -------------------------------------------------------------------
 class ScreenController:
-    def __init__(self, display: str = ":0") -> None:
-        self.display = display
+    def __init__(self, display: str | None = None) -> None:
+        # Respect the active X display (including CI/Xvfb); fall back to :0
+        # for the normal desktop session.
+        self.display = display or os.environ.get("DISPLAY", ":0")
 
     def available(self) -> bool:
         return shutil.which("ffmpeg") is not None
