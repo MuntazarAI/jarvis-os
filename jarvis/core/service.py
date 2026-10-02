@@ -83,6 +83,20 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
         checks.append(HealthCheck("device-fabric", False, str(exc)[:120],
                                   required=False))
     try:
+        from ..device.android import AndroidNodeAdapter
+        from ..device.fabric import DeviceFabric
+        from ..policy.policy import PolicyEngine
+        home = str(config.paths.home) if config else ""
+        adapter = AndroidNodeAdapter(DeviceFabric(
+            home=home or ".", policy=PolicyEngine(config)))
+        for item in adapter.doctor():
+            checks.append(HealthCheck(
+                f"android-node:{item['name']}", bool(item["ok"]),
+                str(item.get("detail", "")), required=False))
+    except Exception as exc:
+        checks.append(HealthCheck("android-node", False, str(exc)[:120],
+                                  required=False))
+    try:
         from ..computer.computer import ComputerController
         ctrl = ComputerController()
         checks.append(HealthCheck("computer:screenshot", ctrl.screen.available(),
