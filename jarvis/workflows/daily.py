@@ -2,18 +2,98 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ..memory.consolidation import summarize_text
 
 
+#: Internal action labels that must never reach the user. Episodes are
+#: written as "<intent>: <input> → <outcome>"; the outcome half is for
+#: JARVIS's own retrieval, not for display.
+_ACTION_NOISE = re.compile(
+    r"(→|\bplanned\b|\bconversed\b|\bstored fact\b|\bgreeted\b|\bidentified\b|"
+    r"\bdaily_[a-z_]+\b|\bllm_answer\b|\bmemory_recall\b|\bllm\b|"
+    r"\bgap_identified\b|\bprojected\b|\bcomputed\b)", re.I)
+
+
+def readable(text: str) -> str:
+    """Strip internal action bookkeeping from an episode for display."""
+    cleaned = _ACTION_NOISE.sub("", text)
+    cleaned = re.sub(r"^(command|statement|question|greeting|identity|"
+                     r"confirmation|farewell)\s*:\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" .;,-")
+    return cleaned
+
+
+def _significant_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]{3,}", text.lower())
+            if w not in {"the", "and", "for", "with", "that", "this",
+                         "from", "have", "has", "had", "was", "were",
+                         "are", "you", "your", "what", "when", "how"}}
+
+
+def _overlaps(text: str, others: list[str], threshold: float = 0.5) -> bool:
+    """True when text shares most of its significant words with any item.
+
+    Used to dedupe facts against episodes that record the same event.
+    """
+    words = _significant_words(text)
+    if not words:
+        return False
+    for other in others:
+        theirs = _significant_words(other)
+        if not theirs:
+            continue
+        shared = len(words & theirs)
+        if shared / min(len(words), len(theirs)) >= threshold:
+            return True
+    return False
+
+
+def displayable(text: str, minimum: int = 12) -> bool:
+    """True when an episode reads like human content, not a trace."""
+    out = readable(text)
+    if len(out) < minimum:
+        return False
+    return not re.search(r"\b(cycle \d+)\b", out, re.I)
+
+
+def user_episodes(palace: Any, query: str = "", limit: int = 12) -> list[str]:
+    """Episodes worth showing a human: readable, non-empty, deduplicated."""
+    if query:
+        found = [m.content for m, _ in palace.search(query, limit=limit * 3)]
+    else:
+        found = [m.content for m in palace.all(tier="episodic", limit=limit * 3)]
+    out: list[str] = []
+    for raw in found:
+        clean = readable(raw)
+        if not displayable(clean) or clean.lower() in {o.lower() for o in out}:
+            continue
+        out.append(clean)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def what_am_i_working_on(jarvis: Any, limit: int = 8) -> dict[str, Any]:
-    """Recent episodes + open tasks, summarized."""
-    episodes = jarvis.palace.all(tier="episodic", limit=limit)
-    texts = [m.content for m in episodes]
+    """Recent work, summarized. Facts first; episodes only as a fallback."""
+    facts: list[str] = []
+    for m in jarvis.palace.all(tier="semantic", limit=40):
+        if m.kind not in ("fact", "note"):
+            continue
+        text = readable(m.content)
+        if displayable(text) and not _overlaps(text, facts):
+            facts.append(text)
+        if len(facts) >= 5:
+            break
+    episodes = [e for e in user_episodes(jarvis.palace, limit=limit * 2)
+                if not _overlaps(e, facts)]
+    texts = facts + episodes[:5]
     open_tasks = [t for t in jarvis.tasks.tasks.values()
                   if t.state.value in ("queued", "running", "waiting", "planning")]
-    return {"summary": summarize_text(texts) if texts else "nothing recorded yet",
+    summary = "; ".join(texts[:4]) if texts else "nothing recorded yet"
+    return {"summary": summary,
             "recent": texts[:5],
             "open_tasks": [(t.task_id, t.goal) for t in open_tasks[:5]]}
 
@@ -22,8 +102,10 @@ def continue_project(jarvis: Any, name: str = "") -> dict[str, Any]:
     """Reconstruct project state: episodes, facts, open tasks, recent errors."""
     query = name or "project"
     recalled = jarvis.palace.search(query, limit=12)
-    episodes = [m.content for m, _ in recalled if m.tier == "episodic"][:5]
-    facts = [m.content for m, _ in recalled if m.tier in ("semantic", "fact")] [:5]
+    episodes = [readable(m.content) for m, _ in recalled
+                if m.tier == "episodic" and displayable(readable(m.content))][:5]
+    facts = [m.content for m, _ in recalled
+             if m.tier in ("semantic", "fact")][:5]
     if not facts:
         facts = [m.content for m, _ in
                  jarvis.palace.search(f"{query} decision", limit=6)

@@ -7,6 +7,7 @@ from typing import Any
 
 from ..agents.agents import Supervisor
 from ..cognition.cognition import AttentionController, ExecutiveFunction, Perception, Reflector, Understander
+from ..cognition.dialogue import NON_ACTING, DialogueAct, DialogueContext, DialogueRouter
 from ..cognition.mentalist import MentalistMode
 from ..core.config import JarvisConfig
 from ..core.types import ActionPlan, CognitiveReport, Confidence, Observation, RiskLevel, TaskState, now
@@ -71,6 +72,7 @@ class Jarvis:
         # cognition
         self.perception = Perception()
         self.understander = Understander()
+        self.dialogue = DialogueRouter()
         self.attention = AttentionController(budget=self.config.cognitive.attention_budget)
         self.executive = ExecutiveFunction()
         self.reflector = Reflector()
@@ -187,17 +189,28 @@ class Jarvis:
         for name in extract_entities(text)[:8]:
             self.graph.upsert_node(name, attributes={"seen_in_cycle": self.cycle})
 
+        # 3b. dialogue routing + context resolution (Conversational Intel 2.0).
+        # Resolves pronouns, refines coarse intents, and short-circuits
+        # clarification / cancellation / capability responses.
+        route = self.dialogue.route(
+            text, understanding.intent, self._dialogue_context())
+        reason_text = route.resolved_text or text
+        special = self._handle_special_act(route, text, started, corr)
+        if special is not None:
+            return special
+
         # 4. memory retrieval — facts and episodes first; raw
         # conversation turns only as a fallback so chatter never
-        # outranks knowledge.
+        # outranks knowledge. A relevance floor keeps irrelevant recalls
+        # (e.g. episode echoes) out of knowledge answers entirely.
         recalled = self.palace.search(text, limit=self.config.cognitive.memory_budget)
-        knowledge = [m.content for m, _ in recalled if m.tier != "conversation"][:5]
-        mem_context = knowledge or [m.content for m, _ in recalled[:3]]
+        mem_context = self._relevant_recall(text, recalled)
 
         # 5. reasoning → hypotheses
-        self.hypotheses.propose(f"user wants: {understanding.intent} — {text[:80]}",
-                                prior=understanding.intent_confidence)
-        alternatives = [f"alternative reading {i}: {text[:40]}"
+        self.hypotheses.propose(
+            f"user wants: {understanding.intent}/{route.act.value} — "
+            f"{reason_text[:80]}", prior=understanding.intent_confidence)
+        alternatives = [f"alternative reading {i}: {reason_text[:40]}"
                         for i in range(1, 3)]
         for alt in alternatives:
             self.hypotheses.propose(alt, prior=0.25)
@@ -206,9 +219,9 @@ class Jarvis:
         risk_max = 0.0
         blocked = False
         response, actions, tools_used = self._respond(
-            text, understanding.intent, mem_context)
+            reason_text, understanding.intent, mem_context)
         if understanding.intent == "command" or understanding.task_hints:
-            assessment = self.policy.risk.assess(text)
+            assessment = self.policy.risk.assess(reason_text)
             risk_max = assessment.risk
             if not assessment.allow:
                 blocked = True
@@ -228,10 +241,13 @@ class Jarvis:
                                "daily_memory", "identified", "greeted",
                                "conversed",
                                "error_explained") for a in actions)
+        # NON_ACTING dialogue acts never reach tool execution, even when
+        # the coarse classifier said "command" (e.g. a question misread).
         if (understanding.intent == "command" and not blocked
                 and not assessment.requires_approval and not handled
+                and route.act not in NON_ACTING
                 and len(self.tools.history) < self.config.cognitive.tool_budget):
-            actions, tools_used = self._act(text, actions, tools_used)
+            actions, tools_used = self._act(reason_text, actions, tools_used)
             response += self._summarize_actions(actions)
 
         # 8. verify + reflect
@@ -280,6 +296,99 @@ class Jarvis:
                                          next_test="none pending"),
         )
         return result
+
+    #: Question words carry no topical signal, so overlap is computed on the
+    #: topic words only. Without this, "what is the capital of France?" would
+    #: "match" any stored fact that happens to contain "is" or "the".
+    STOPWORDS = frozenset({
+        "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
+        "is", "are", "was", "were", "do", "does", "did", "can", "could", "will",
+        "would", "should", "shall", "may", "might", "must", "the", "a", "an",
+        "of", "to", "in", "on", "at", "for", "with", "and", "or", "but", "if",
+        "then", "that", "this", "these", "those", "it", "its", "me", "my", "i",
+        "you", "your", "about", "tell", "know", "do", "please", "there", "here",
+    })
+
+    def _relevant_recall(self, text: str,
+                         recalled: list[tuple[Any, float]]) -> list[str]:
+        """Return memory text only when the query genuinely shares a topic.
+
+        Two guards: a score floor, and a required overlap of at least one
+        non-stopword topic token. Stopwords are stripped from both sides so
+        grammatical filler cannot create a false match.
+        """
+        from ..memory.palace import tokenize
+        query_words = {t for t in tokenize(text) if t not in self.STOPWORDS}
+        if not query_words:
+            return []
+        scored: list[tuple[float, str]] = []
+        for memory, score in recalled:
+            if memory.tier == "conversation":
+                continue
+            overlap = query_words & {t for t in tokenize(memory.content)
+                                     if t not in self.STOPWORDS}
+            if not overlap or score < 0.25:
+                continue
+            scored.append((score, memory.content))
+        if not scored:
+            return []
+        scored.sort(key=lambda pair: -pair[0])
+        return [content for _, content in scored[:5]]
+
+    def _open_tasks(self) -> list[Any]:
+        """Tasks that could still be acted on or cancelled."""
+        return [t for t in self.tasks.tasks.values()
+                if t.state.value in ("queued", "planning", "running",
+                                     "waiting", "verifying")]
+
+    def _dialogue_context(self) -> "DialogueContext":
+        recent = [m.content for m in
+                  self.palace.all(tier="conversation", limit=4)]
+        turns = [{"input": c} for c in recent]
+        return DialogueRouter.build_context(
+            recent_turns=turns,
+            open_tasks=[t.goal for t in self._open_tasks()])
+
+    def _handle_special_act(self, route: Any, text: str,
+                            started: float, corr: str) -> Any:
+        """Short-circuit clarification / cancellation / capability acts."""
+        if route.act == DialogueAct.CLARIFICATION:
+            return self._finish(
+                text, "Could you clarify that? " + route.reason
+                if route.reason != "empty input"
+                else "I didn't catch anything — could you repeat that?",
+                "clarification", started, corr)
+        if route.act == DialogueAct.CANCELLATION:
+            open_tasks = self._open_tasks()
+            if len(open_tasks) == 1:
+                task = open_tasks[0]
+                self.tasks.cancel(task.task_id)
+                return self._finish(text, f"Cancelled: {task.goal[:120]}",
+                                    "cancellation", started, corr)
+            if not open_tasks:
+                return self._finish(text, "Acknowledged — nothing running "
+                                          "to cancel.", "cancellation",
+                                    started, corr)
+            return self._finish(
+                text, "Several tasks are open: "
+                + "; ".join(t.goal[:60] for t in open_tasks[:3])
+                + ". Which one should I cancel?", "cancellation",
+                started, corr)
+        if route.act == DialogueAct.CAPABILITY:
+            return self._finish(text, self._capabilities(),
+                                "capability", started, corr)
+        return None
+
+    @staticmethod
+    def _capabilities() -> str:
+        return ("I'm JARVIS. I can: remember things you tell me and recall "
+                "them later; answer questions from memory or the local model; "
+                "run calculations, tests and shell tasks; control this computer "
+                "(screenshot, windows, clipboard, mouse/keyboard) with your "
+                "approval; see through the camera and read screens; research "
+                "the web with cited sources; track tasks and projects; and "
+                "explain my reasoning on request. Dangerous actions always "
+                "need your approval first.")
 
     def _respond(self, text: str, intent: str,
                  mem_context: list[str]) -> tuple[str, list[str], list[str]]:
