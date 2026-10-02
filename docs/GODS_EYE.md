@@ -41,9 +41,30 @@ while observations with coordinates can also populate the Spatial Memory Palace.
 
 ## Local setup
 
-The upstream project can be run separately using its documented Node.js setup.
-The bridge records its upstream repository and local URL but does not execute
-shell commands or download code automatically.
+JARVIS 3.6 includes a lifecycle manager for the actual God's Eye View browser
+application. The upstream checkout stays separate from the JARVIS Python core,
+while JARVIS can explicitly install, start, stop, inspect, and open it.
+
+    jarvis gods-eye status
+    jarvis gods-eye install
+    jarvis gods-eye start
+    jarvis gods-eye open
+    jarvis gods-eye stop
+
+The default checkout is:
+
+    ~/.jarvis-os/apps/gods-eye-view
+
+The local app is bound to 127.0.0.1:4173 by default. Starting it does not
+automatically open a browser; `open` is an explicit action.
+
+The upstream package currently declares Node.js 24.14+ on the 24.x line or
+26.x. JARVIS checks that requirement before installing or starting the app.
+
+
+Before 3.6, the bridge only recorded the upstream repository and local URL.
+3.6 adds the lifecycle manager above; installation remains an explicit user
+command and the upstream application remains a separate checkout.
 
 This separation is intentional: the upstream source code is MIT-licensed, but
 its third-party live/bundled datasets and 3D assets have their own terms.
