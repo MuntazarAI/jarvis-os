@@ -1,50 +1,29 @@
 # Security Policy
 
-## Reporting a vulnerability
-
-Please do **not** publish exploitable security details in a public issue.
-
-For a vulnerability involving JARVIS-OS, contact the repository owner privately through an appropriate GitHub contact method and include:
-
-- affected component
-- impact
-- reproduction steps
-- relevant logs or minimal proof of concept
-- suggested mitigation, if known
-
-Do not include passwords, API keys, session tokens, private keys, or other secrets.
-
-## Security-sensitive areas
-
-Particular care is required around:
-
-- tool execution
-- computer control
-- browser automation
-- prompt injection
-- memory poisoning
-- secret handling
-- policy/permission checks
-- network access
-- file access
-- agent delegation
-- model/tool output treated as trusted input
-
-## Security principles
-
-JARVIS-OS is designed around:
-
-- explicit policy gates
-- approval boundaries
-- least privilege
-- provenance tracking
-- input validation
-- bounded automation
-- failure isolation
-- emergency stop controls
-
-These are design goals and application-level safeguards, not a guarantee that the system is secure in every environment.
+Security is a core design requirement of JARVIS-OS.
 
 ## Supported versions
 
-The project is under active development and does not currently promise a long-term security-support window for older versions. When reporting an issue, identify the commit or release you tested.
+The default branch is the actively developed version. Older releases may not
+receive security fixes.
+
+## Reporting a vulnerability
+
+Do not disclose an unpatched vulnerability in a public issue, discussion, or
+pull request.
+
+Use GitHub's private vulnerability reporting/security advisory mechanism for
+this repository when available. Include a concise description, affected
+component/version or commit, reproduction steps, security impact, and any
+known mitigation.
+
+If private reporting is unavailable, contact the repository owner privately
+through GitHub rather than posting sensitive details publicly.
+
+## Security boundaries
+
+JARVIS-OS should preserve least-privilege execution, policy-gated actions,
+authentication and authorization for device connections, bounded resource use,
+auditability of consequential actions, and safe credential handling.
+
+Security-sensitive changes should include regression tests where practical.

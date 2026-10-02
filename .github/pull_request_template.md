@@ -1,37 +1,15 @@
 ## Summary
 
-<!-- What does this PR change? -->
+<!-- What changed and why? -->
 
-## Motivation
+## Validation
 
-<!-- Why is this change needed? -->
-
-## Scope
-
-- [ ] Focused change
-- [ ] No unrelated refactor
-- [ ] Backward compatibility considered
-
-## Verification
-
-- [ ] Focused tests pass
-- [ ] Full test suite passes
-- [ ] `jarvis doctor` checked where relevant
-- [ ] `jarvis status` checked where relevant
-- [ ] `jarvis benchmark` checked where relevant
-
-## Safety / security
-
-- [ ] Policy boundaries preserved
-- [ ] No secrets or credentials added
-- [ ] External/untrusted input remains treated as untrusted
-- [ ] Destructive actions remain approval-gated
-
-## Documentation
-
-- [ ] Documentation updated where behavior changed
-- [ ] Known limitations documented
+- [ ] Tests added or updated where appropriate
+- [ ] Relevant tests pass locally
+- [ ] Documentation updated if needed
+- [ ] Security/privacy implications considered
+- [ ] No unrelated changes included
 
 ## Notes
 
-<!-- Anything reviewers should know? -->
+<!-- Limitations or checks that could not be run. -->
