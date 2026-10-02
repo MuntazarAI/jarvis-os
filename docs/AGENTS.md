@@ -102,3 +102,63 @@ CLI: `jarvis agents`, `jarvis agents status`,
 Per-role try/except isolation, single fallback attempt, partial results
 preserved on the blackboard, escalation records, degraded mode
 (honest "subsystem not bound" failures), timeout + cancellation.
+
+## Agent Intelligence 2.1 — verification, explainability & resilience
+
+### Run traces
+
+Every run builds a `RunRecord`: run_id, task_id, parent_id, goal,
+depth/team, status (running/ok/failed/cancelled/timeout), timestamps,
+duration, roles, tools, tool-call count, budget snapshot, evidence
+references, fallbacks, policy decisions, outcome, failure reason, board
+summary. Records persist as JSONL-adjacent files (`<home>/traces/`) so
+`agents explain` works across sessions. Trace events carry the same
+fields for machine-readable replay.
+
+### Explainability
+
+`agents explain <task-id>` reconstructs request → orchestration decision
+→ roles → evidence → actions → verification → result from the stored
+record, trace, and board. Secrets are redacted (`password/token/key`
+assignments and long tokens). Unknown tasks report "no trace" —
+never invented.
+
+### Evidence pipeline
+
+Memory promotion carries per-item `{id, origin, confidence, tier,
+score}` (Memory 3.0 origins preserved). Blackboard entries link via
+`supports` / `refutes` / `derives`; `evidence_for(subject)` returns
+supporting and conflicting evidence side by side — conflicts stay
+visible. `why_believe` semantics unchanged (chain + memory, verdict
+supported/unsupported).
+
+### Blackboard robustness
+
+Entries carry a monotonic `version`. `correct()` accepts
+`expected_version` and raises `VersionConflict` on stale or
+non-active targets; `current()` follows the supersession chain
+forward. Serialization round-trips version, links, and state,
+including legacy entries that lack the new fields. Corrections never
+delete: superseded entries remain readable.
+
+### Orchestrator resilience
+
+Cancellation (bus + pre-stage checks), cooperative deadlines, spawn
+depth caps with budget-scaled timeouts, tool-call budgets, single
+fallback per role, verifier/critic failures recorded on the board with
+an honest `failed` outcome, partial results preserved. `_finish`
+always reports a failure reason instead of silent `ok: false`.
+
+### Depth heuristic
+
+Act-based via `DialogueRouter` (greeting/identity/conversation → 0;
+memory/task/tool/computer → 1; project/system → 2; research/coding →
+3), plus a verification bump (→ min 2) and a multi-step bump (cap 4).
+Depth 5 is explicit-only. Deterministic: same input, same depth.
+
+### CLI
+
+`agents status [--json]`, `agents run <goal> [--team T] [--depth N]
+[--json]`, `agents explain <task-id>` (cross-session via persisted
+traces), `agents list`, `agents teams`. Human-readable by default,
+`--json` for machines.

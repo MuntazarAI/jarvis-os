@@ -35,11 +35,17 @@ class BoardEntry:
     supersedes: str = ""
     entry_id: str = field(default_factory=lambda: new_id("bb"))
     timestamp: float = field(default_factory=now)
+    version: int = 1
+    links: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         data = dict(self.__dict__)
         data["state"] = self.state.value
         return data
+
+
+class VersionConflict(Exception):
+    """Raised when a correction targets a stale entry version."""
 
 
 class Blackboard:
@@ -59,15 +65,74 @@ class Blackboard:
         return entry
 
     def correct(self, entry_id: str, content: Any, author: str,
-                provenance: str = "") -> BoardEntry:
+                provenance: str = "",
+                expected_version: int | None = None) -> BoardEntry:
         old = self._entries.get(entry_id)
         if old is None:
             raise KeyError(f"unknown entry: {entry_id}")
+        if old.state != EntryState.ACTIVE:
+            raise VersionConflict(
+                f"entry {entry_id} is {old.state.value}, not active")
+        if expected_version is not None and old.version != expected_version:
+            raise VersionConflict(
+                f"entry {entry_id} is at version {old.version}, "
+                f"caller expected {expected_version}")
         old.state = EntryState.SUPERSEDED
         new = self.write(old.section, content, author, provenance,
                          confidence=old.confidence)
         new.supersedes = entry_id
+        new.version = old.version + 1
         return new
+
+    def current(self, entry_id: str) -> BoardEntry | None:
+        """Follow the supersession chain forward to the live entry.
+
+        History is never deleted: superseded entries remain readable.
+        """
+        entry = self._entries.get(entry_id)
+        if entry is None:
+            return None
+        seen = {entry_id}
+        while True:
+            child = next((e for e in self._entries.values()
+                          if e.supersedes == entry.entry_id
+                          and e.entry_id not in seen), None)
+            if child is None:
+                return entry
+            seen.add(child.entry_id)
+            entry = child
+        return entry
+
+    def link_evidence(self, entry_id: str, relation: str, target: str,
+                      author: str) -> BoardEntry:
+        """Link entries: supports / refutes / derives. Conflicts stay visible."""
+        if relation not in ("supports", "refutes", "derives"):
+            raise ValueError(f"unknown relation: {relation}")
+        entry = self._entries.get(entry_id)
+        if entry is None:
+            raise KeyError(f"unknown entry: {entry_id}")
+        entry.links.append({"relation": relation, "target": target,
+                            "author": author, "at": now()})
+        return entry
+
+    def evidence_for(self, subject: str) -> dict[str, list[dict[str, Any]]]:
+        """Supporting vs conflicting evidence for a subject. Both stay visible."""
+        supporting, conflicting = [], []
+        for entry in self.read(active_only=False):
+            text = str(entry.content)
+            if subject.lower() not in text.lower():
+                continue
+            record = entry.to_dict()
+            if entry.state != EntryState.ACTIVE:
+                record["note"] = f"superseded/retracted but preserved"
+            refs = [l for l in entry.links if l["relation"] == "refutes"]
+            (conflicting if refs else supporting).append(record)
+        for entry in self.read(active_only=False):
+            for link in entry.links:
+                if link["relation"] == "refutes" and subject.lower() in str(
+                        self._entries.get(link["target"], "")).lower():
+                    conflicting.append(entry.to_dict())
+        return {"supporting": supporting, "conflicting": conflicting}
 
     def retract(self, entry_id: str) -> bool:
         entry = self._entries.get(entry_id)
@@ -118,7 +183,9 @@ class Blackboard:
                 state=EntryState(raw.get("state", "active")),
                 supersedes=raw.get("supersedes", ""),
                 entry_id=raw.get("entry_id", new_id("bb")),
-                timestamp=raw.get("timestamp", now()))
+                timestamp=raw.get("timestamp", now()),
+                version=int(raw.get("version", 1)),
+                links=[dict(link) for link in raw.get("links", [])])
             board._entries[entry.entry_id] = entry
             board._order.append(entry.entry_id)
         return board

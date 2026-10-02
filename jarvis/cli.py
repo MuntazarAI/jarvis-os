@@ -64,6 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
     ag.add_argument("--depth", type=int, default=None,
                     help="adaptive depth 0-5 (default: auto)")
     ag.add_argument("--task", default="", help="task id for explain")
+    ag.add_argument("--json", action="store_true",
+                    help="machine-readable output")
 
     say = sub.add_parser("say", help="speak text aloud via TTS")
     say.add_argument("text", nargs="+")
@@ -168,13 +170,26 @@ def main(argv: list[str] | None = None) -> int:
             for name, stages in TEAMS.items():
                 print(f"{name}: {' → '.join(r for r, _ in stages)}")
         elif args.action == "status":
-            print(json.dumps({
+            info = {
                 "roles": len(role_cards()),
                 "executors": [a.name for a in
                               jarvis.supervisor.registry.list_agents()],
                 "budgets": orch.budgets.to_dict(),
                 "traced_tasks": len(orch.traces),
-            }, indent=2))
+                "runs": len(orch.runs),
+                "recent_runs": orch.recent_runs(5),
+            }
+            if args.json:
+                print(json.dumps(info, indent=2, default=str))
+                jarvis.close()
+                return 0
+            print(json.dumps(info, indent=2) if args.json else
+                  f"roles: {info['roles']}  executors: {len(info['executors'])}  "
+                  f"runs this session: {info['runs']}\n"
+                  + "\n".join(f"  {r['status']:9} {r['goal'][:60]} "
+                              f"({r['duration_ms']}ms)"
+                              for r in info["recent_runs"])
+                  or "  (no runs yet)")
         elif args.action in ("run", "explain"):
             goal = " ".join(args.text)
             if not goal and not args.task:
@@ -182,13 +197,24 @@ def main(argv: list[str] | None = None) -> int:
                 jarvis.close()
                 return 2
             if args.action == "explain" and args.task and not goal:
-                print(orch.explain(args.task) if args.task in orch.traces
-                      else f"no trace for task {args.task} in this session")
+                # Cross-session: fall back to persisted traces on disk.
+                if args.task not in orch.traces and orch.load_trace(args.task) is None:
+                    print(f"no trace for task {args.task}")
+                else:
+                    print(orch.explain(args.task))
             else:
                 out = orch.run(goal, team=args.team or None, depth=args.depth)
-                print(json.dumps(out["result"], indent=2, default=str))
-                print("--- trace ---")
-                print(orch.explain(out["task_id"]))
+                if args.json:
+                    print(json.dumps({
+                        "task_id": out["task_id"], "run_id": out.get("run_id", ""),
+                        "ok": out["ok"], "failure": out.get("failure", ""),
+                        "result": out["result"],
+                        "conflicts": out["conflicts"],
+                        "state": out["state"]}, indent=2, default=str))
+                else:
+                    print(json.dumps(out["result"], indent=2, default=str))
+                    print("--- trace ---")
+                    print(orch.explain(out["task_id"]))
         jarvis.close()
         return 0
 

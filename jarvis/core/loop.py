@@ -611,6 +611,10 @@ class Jarvis:
     def _build_orchestrator(self) -> Any:
         """Agent Intelligence 2.0 bound to this loop's live subsystems."""
         from ..agents.orchestrator import Budgets, Orchestrator, OrchestratorContext
+        try:
+            home = str(self.config.paths.home)
+        except Exception:
+            home = None
         return Orchestrator(OrchestratorContext(
             registry=self.supervisor.registry,
             planner=self.supervisor.planner,
@@ -621,6 +625,7 @@ class Jarvis:
             graph=self.graph,
             tracker=getattr(self, "state", None),
             computer=getattr(self, "computer", None),
+            home=home,
         ), Budgets(max_agents=6, max_tool_calls=10, max_runtime_s=120.0))
 
     def status(self) -> dict[str, Any]:
