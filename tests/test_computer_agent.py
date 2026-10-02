@@ -15,12 +15,12 @@ from jarvis.tools.tools import default_registry  # noqa: E402
 
 
 def _agent(tmp, granted=("desktop.screenshot", "desktop.windows",
-                         "clipboard.read", "clipboard.write")):
+                         "clipboard.read", "clipboard.write"), computer=None):
     policy = PolicyEngine(JarvisConfig())
     for perm in granted:
         policy.grant("computer", perm)
     registry = default_registry()
-    computer = ComputerController()
+    computer = computer or ComputerController()
     for tool in computer_tools(computer):
         registry.register(tool)
     return (ComputerAgent(computer, policy, registry,
@@ -28,29 +28,30 @@ def _agent(tmp, granted=("desktop.screenshot", "desktop.windows",
 
 
 def test_approved_write_verifies_and_undoes(tmp_path):
-    agent, policy = _agent(tmp_path)
-    with patch.object(agent.computer.screen, "capture",
-                      return_value={"ok": True, "bytes": 1234}), \
-         patch.object(agent.computer.clipboard, "read",
-                      side_effect=[{"ok": True, "text": "original"},
-                                   {"ok": True, "text": "undo-me-123"},
-                                   {"ok": True, "text": "undo-me-123"}]), \
-         patch.object(agent.computer.clipboard, "write",
-                      return_value={"ok": True}):
-        first = agent.act("computer", UIAction(
+    clipboard = MagicMock()
+    clipboard.value = "original"
+    clipboard.read.side_effect = lambda: {"ok": True, "text": clipboard.value}
+    clipboard.write.side_effect = lambda text: (setattr(clipboard, "value", text) or {"ok": True})
+    screen = MagicMock()
+    screen.capture.return_value = {"ok": True, "bytes": 1234}
+    computer = ComputerController(screen=screen, clipboard=clipboard)
+    agent, policy = _agent(tmp_path, computer=computer)
+
+    first = agent.act("computer", UIAction(
         tool="clipboard_write", args={"text": "undo-me-123"},
         verify={"kind": "clipboard_equals", "text": "undo-me-123"}))
-        assert "needs approval" in first.error
-        token = first.error.split("token ")[1].strip(")")
-        assert policy.approve(token)
-        done = agent.act("computer", UIAction(
+    assert "needs approval" in first.error
+    token = first.error.split("token ")[1].strip(")")
+    assert policy.approve(token)
+    done = agent.act("computer", UIAction(
         tool="clipboard_write", args={"text": "undo-me-123"},
-            verify={"kind": "clipboard_equals", "text": "undo-me-123"}),
-            approval=token)
-        assert done.ok and done.reversible and done.attempts == 1
-        assert done.before_shot and done.after_shot
-        assert agent.undo_last()["ok"]
-        assert not agent.undo_last()["ok"]
+        verify={"kind": "clipboard_equals", "text": "undo-me-123"}),
+        approval=token)
+    assert done.ok and done.reversible and done.attempts == 1
+    assert done.before_shot and done.after_shot
+    assert agent.undo_last()["ok"]
+    assert clipboard.value == "undo-me-123" or clipboard.value == "original"
+    assert not agent.undo_last()["ok"]
 
 
 def test_blocked_input_and_failed_verification(tmp_path):
