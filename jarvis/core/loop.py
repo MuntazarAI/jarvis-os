@@ -24,6 +24,7 @@ from ..policy.policy import PolicyEngine
 from ..tasks.engine import TaskEngine, TriggerEngine
 from ..tools.tools import ToolRegistry, default_registry as default_tools
 from ..world.model import WorldModel
+from ..world.state import StateTracker
 
 
 @dataclass
@@ -83,6 +84,7 @@ class Jarvis:
         self.hypotheses = HypothesisEngine(limit=self.config.cognitive.hypothesis_limit)
         # world / models / policy / tools / agents / tasks
         self.world = WorldModel()
+        self.state = StateTracker()
         self.models = default_models(self.config)
         self.router = ModelRouter(self.models, self.config)
         self.policy = PolicyEngine(self.config)
@@ -269,6 +271,18 @@ class Jarvis:
         )
 
         # 10. world + event store + consolidation schedule
+        # World Model 2.0: cheap state capture every cycle. Fully isolated:
+        # a state failure must never break the cognitive cycle.
+        try:
+            fresh = self.state.capture(self.world, source=f"cycle-{self.cycle}")
+            new_changes = [c for c in self.state.changes
+                           if c.timestamp >= fresh.timestamp]
+            for change in new_changes[:5]:
+                self.world.record_event(f"world change: {change.describe()}",
+                                        source="world-2.0",
+                                        confidence=change.confidence)
+        except Exception:  # noqa: BLE001 — state tracking is advisory
+            pass
         self.world.record_event(f"cycle {self.cycle} completed", source="jarvis",
                                 confidence=0.9)
         self.bus.publish(Event(type="cycle.completed",
