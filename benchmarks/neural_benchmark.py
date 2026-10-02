@@ -6,6 +6,7 @@ import argparse
 import json
 import statistics
 import time
+from pathlib import Path
 
 from jarvis.neural.core import SpikingNetwork
 
@@ -38,6 +39,7 @@ def main() -> None:
     parser.add_argument("--output", default="benchmark-results/neural.json")
     args = parser.parse_args()
     result = run(args.size, args.steps, args.repeats)
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as handle:
         json.dump(result, handle, indent=2)
     print(json.dumps(result, indent=2))
