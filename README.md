@@ -1,5 +1,31 @@
 # JARVIS-OS
 
+<p align="center">
+  <img src="docs/assets/jarvis-os-banner.svg" alt="JARVIS-OS — Local Intelligence System Core" width="100%">
+</p>
+
+<p align="center">
+  <strong>LOCAL-FIRST · EVIDENCE-DRIVEN · MODULAR · BOUNDED AUTONOMY</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/MuntazarAI/jarvis-os/actions"><img src="https://img.shields.io/github/actions/workflow/status/MuntazarAI/jarvis-os/slsa.yml?label=build&style=flat-square" alt="Build"></a>
+  <img src="https://img.shields.io/github/last-commit/MuntazarAI/jarvis-os?style=flat-square" alt="Last commit">
+  <img src="https://img.shields.io/github/repo-size/MuntazarAI/jarvis-os?style=flat-square" alt="Repo size">
+  <img src="https://img.shields.io/github/license/MuntazarAI/jarvis-os?style=flat-square&label=license" alt="License status">
+</p>
+
+<p align="center">
+  <a href="#-system-overview">System Overview</a> ·
+  <a href="#-core-capabilities">Capabilities</a> ·
+  <a href="#-architecture">Architecture</a> ·
+  <a href="#-quick-start">Quick Start</a> ·
+  <a href="docs/README.md">Docs</a>
+</p>
+
+---
+
+
 > **A local-first personal AI operating system for memory, reasoning, perception, automation, and computer control.**
 
 JARVIS-OS is an experimental, modular personal AI platform designed to turn a local computer into a persistent, context-aware assistant.
