@@ -94,7 +94,9 @@ class Jarvis:
         self.spatial = SpatialMemoryPalace(
             str(self.config.paths.resolve("home") / "spatial.json"),
             world_registry=self.world_registry, memory_palace=self.palace)
+        from ..geospatial.application import GodsEyeApplication
         from ..geospatial.gods_eye import GodsEyeBridge
+        self.gods_eye_app = GodsEyeApplication(home=self.config.paths.home)
         self.gods_eye = GodsEyeBridge(
             str(self.config.paths.resolve("home") / "gods-eye-observations.json"),
             world_registry=self.world_registry, spatial=self.spatial)
@@ -684,6 +686,7 @@ class Jarvis:
             "audit_entries": len(self.policy.audit),
             "proactive": self.proactive.status(),
             "gods_eye": self.gods_eye.status(),
+            "gods_eye_app": self.gods_eye_app.status(),
         }
 
     def poll_proactive(self) -> list[str]:
