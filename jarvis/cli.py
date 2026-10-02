@@ -128,6 +128,21 @@ def build_parser() -> argparse.ArgumentParser:
     bench = sub.add_parser("benchmark", help="latency + resource benchmark")
     bench.add_argument("--samples", type=int, default=3)
 
+    intel = sub.add_parser("intelligence", help="unified cognitive loop")
+    intel.add_argument("action", nargs="?", default="status",
+                       choices=["status", "cycle"])
+    intel.add_argument("text", nargs="*", help="input text for cycle")
+    intel.add_argument("--json", action="store_true",
+                       help="machine-readable output")
+
+    neu = sub.add_parser("neural", help="fly-brain neural substrate")
+    neu.add_argument("action", nargs="?", default="status",
+                     choices=["status", "benchmark", "snapshot"])
+    neu.add_argument("--neurons", type=int, default=2000,
+                     help="neurons for benchmark/snapshot")
+    neu.add_argument("--json", action="store_true",
+                     help="machine-readable output")
+
     sub.add_parser("start", help="start the JARVIS service (API server, supervised)")
     sub.add_parser("stop", help="stop the JARVIS service")
     sub.add_parser("restart", help="restart the JARVIS service")
@@ -1171,6 +1186,102 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(snapshot, indent=2, default=str))
         jarvis.close()
         return 0
+
+    if args.command == "intelligence":
+        from .intelligence import wiring as intel_wiring
+        from .intelligence.sensory import event_from_user
+        from .inference.reasoning import MetaReasoner
+        network, encoder, decoder = intel_wiring.default_neural_stack()
+        loop = intel_wiring.build_loop(
+            registry=jarvis.world_registry, spatial=jarvis.spatial,
+            palace=jarvis.palace, network=network, encoder=encoder,
+            decoder=decoder, reasoner=MetaReasoner(),
+            policy=jarvis.policy, tools=jarvis.tools)
+        as_json = args.json
+
+        def _intel_out(payload: Any, text: str) -> int:
+            if as_json:
+                print(json.dumps(payload, indent=2, default=str))
+            else:
+                print(text)
+            jarvis.close()
+            return 0
+
+        if args.action == "cycle":
+            text = " ".join(args.text) if args.text else "status check"
+            loop.start()
+            record = loop.cycle_once(event_from_user(text))
+            payload = record.to_dict()
+            return _intel_out(payload,
+                              f"cycle {record.cycle_id}: ok={record.ok} "
+                              f"action={record.action_taken or '-'} "
+                              f"policy={record.policy_allowed}")
+        payload = {"loop": loop.status(),
+                   "subsystems": {
+                       "world": jarvis.world_registry.stats()
+                       if hasattr(jarvis.world_registry, "stats") else {},
+                       "memory": jarvis.palace.stats(),
+                       "policy": {"audit": len(jarvis.policy.audit)},
+                   }}
+        return _intel_out(payload, json.dumps(payload, indent=2, default=str))
+
+    if args.command == "neural":
+        from .neural.scale import SparseLIFNetwork
+        from .neural.topology import FLY_166K_SCHEMA, SyntheticGenerator
+        as_json = args.json
+
+        def _neural_out(payload: Any, text: str) -> int:
+            if as_json:
+                print(json.dumps(payload, indent=2, default=str))
+            else:
+                print(text)
+            jarvis.close()
+            return 0
+
+        if args.action == "benchmark":
+            import random
+            import time
+            n = max(16, min(args.neurons, 166000))
+            net = SparseLIFNetwork(n)
+            rng = random.Random(41)
+            edges = min(n * 10, 200000)
+            for _ in range(edges):
+                net.stage_edge(rng.randrange(n), rng.randrange(n),
+                               rng.uniform(0.1, 0.9), rng.randrange(3))
+            t0 = time.perf_counter()
+            net.compile()
+            gen_ms = (time.perf_counter() - t0) * 1000.0
+            t0 = time.perf_counter()
+            spikes = 0
+            for _ in range(5):
+                spikes += len(net.step({0: 2.0}))
+            step_ms = (time.perf_counter() - t0) * 1000.0 / 5.0
+            payload = {"neurons": n, "edges": net.edge_count,
+                       "compile_ms": round(gen_ms, 1),
+                       "step_ms": round(step_ms, 2), "spikes": spikes}
+            return _neural_out(payload,
+                               f"neural: {n} neurons, {net.edge_count} edges, "
+                               f"step {step_ms:.2f} ms")
+        if args.action == "snapshot":
+            import random
+            n = max(4, min(args.neurons, 5000))
+            net = SparseLIFNetwork(n)
+            rng = random.Random(7)
+            for _ in range(n * 2):
+                net.stage_edge(rng.randrange(n), rng.randrange(n), 0.8, 0)
+            net.compile()
+            net.step({0: 2.0})
+            payload = net.snapshot()
+            payload = {"time": payload["time"], "size": payload["size"],
+                       "edge_count": payload["edge_count"],
+                       "total_spikes": payload["total_spikes"]}
+            return _neural_out(payload, json.dumps(payload, indent=2, default=str))
+        payload = {"substrate": "sparse-lif-csr",
+                   "fly_schema_neurons": FLY_166K_SCHEMA.total_neurons(),
+                   "fly_schema_origin": FLY_166K_SCHEMA.origin,
+                   "populations": len(FLY_166K_SCHEMA.populations),
+                   "synthetic_generator": "seeded, deterministic"}
+        return _neural_out(payload, json.dumps(payload, indent=2, default=str))
 
     if args.command == "device-fabric":
         fabric = jarvis.device_fabric
