@@ -14,6 +14,7 @@
   <a href="https://github.com/MuntazarAI/jarvis-os"><img src="https://img.shields.io/github/stars/MuntazarAI/jarvis-os?style=flat-square" alt="GitHub stars"></a>
   <a href="https://github.com/MuntazarAI/jarvis-os/issues"><img src="https://img.shields.io/github/issues/MuntazarAI/jarvis-os?style=flat-square" alt="GitHub issues"></a>
   <a href="https://github.com/MuntazarAI/jarvis-os/commits/main"><img src="https://img.shields.io/github/last-commit/MuntazarAI/jarvis-os?style=flat-square" alt="Last commit"></a>
+  <a href="https://github.com/MuntazarAI/jarvis-os/actions/workflows/project-health.yml"><img src="https://github.com/MuntazarAI/jarvis-os/actions/workflows/project-health.yml/badge.svg?branch=main" alt="Project health"></a>
 </p>
 
 <p align="center">
@@ -21,7 +22,9 @@
   <a href="#-core-capabilities">Capabilities</a> ·
   <a href="#-architecture">Architecture</a> ·
   <a href="#-quick-start">Quick Start</a> ·
-  <a href="docs/README.md">Docs</a>
+  <a href="docs/README.md">Docs</a> ·
+  <a href="https://muntazarai.github.io/jarvis-os/">Docs site</a> ·
+  <a href="https://muntazarai.github.io/jarvis-os/dashboard.html">System Explorer</a>
 </p>
 
 ---
@@ -369,6 +372,10 @@ The real network transport is being developed as the next milestone and should n
 Read [ANDROID_NODE.md](docs/ANDROID_NODE.md).
 
 ---
+
+## Developer environment
+
+Open this repository in **GitHub Codespaces** or any Dev Container-compatible VS Code setup to get a ready-to-use Python environment. The configuration lives in `.devcontainer/devcontainer.json`.
 
 ## Documentation
 
