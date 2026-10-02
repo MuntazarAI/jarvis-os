@@ -12,7 +12,6 @@
   <a href="https://github.com/MuntazarAI/jarvis-os/actions"><img src="https://img.shields.io/github/actions/workflow/status/MuntazarAI/jarvis-os/slsa.yml?label=build&style=flat-square" alt="Build"></a>
   <img src="https://img.shields.io/github/last-commit/MuntazarAI/jarvis-os?style=flat-square" alt="Last commit">
   <img src="https://img.shields.io/github/repo-size/MuntazarAI/jarvis-os?style=flat-square" alt="Repo size">
-  <img src="https://img.shields.io/github/license/MuntazarAI/jarvis-os?style=flat-square&label=license" alt="License status">
 </p>
 
 <p align="center">
@@ -33,6 +32,16 @@ JARVIS-OS is an experimental, modular personal AI platform designed to turn a lo
 It combines **cognition, memory, world modeling, evidence-based reasoning, agents, tools, automation, voice, vision, and security controls** behind one architecture.
 
 > **Status:** Active development · public repository · architecture evolving rapidly
+
+## ◈ System Overview
+
+JARVIS-OS is being built as a **personal intelligence runtime**, not a chat wrapper.
+
+The architecture treats intelligence as a closed operational loop:
+
+`PERCEIVE → CONTEXTUALIZE → REMEMBER → REASON → PLAN → ACT → VERIFY → REFLECT`
+
+Every stage can expose evidence, uncertainty, provenance, budgets, and failure state.
 
 ## Why JARVIS-OS?
 
