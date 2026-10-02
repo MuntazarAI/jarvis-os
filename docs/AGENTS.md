@@ -265,3 +265,20 @@ weight reset) always win. `explain` shows weights and their history.
 Separation kept: TriggerEngine fires, ProactiveEngine attends, Dot
 owns responsibility, Orchestrator coordinates, PolicyEngine authorizes,
 World Model represents, Memory preserves.
+
+## Missions 3.3 — Mission Control & persistent missions
+
+See `docs/MISSIONS.md` for the full contract. Summary for agents:
+
+- A Mission coordinates Dots → Tasks → Agents with ordered,
+  ID-dependency objectives, verification, and recovery.
+- `MissionRuntime.advance()` runs exactly one bounded step, then stops.
+- Completion requires verification against explicit success criteria —
+  a successful final task alone never completes a mission.
+- Progress is deterministic and weighted; failed/skipped count zero.
+- World mirror: `mission`/`objective` entities, contains/owns/related_to.
+- Memory: goals, verified outcomes, approved preferences only.
+- Security: no execution outside DotRuntime/Orchestrator → PolicyEngine;
+  no auto-approvals; stale tokens authorize nothing; secrets scrubbed.
+- CLI: `missions list|create|inspect|start|pause|resume|stop|cancel|`
+  `status|explain|objectives|verify|checkpoint|recover|advance [--json]`.

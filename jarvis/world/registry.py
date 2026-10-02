@@ -44,6 +44,8 @@ ENTITY_TYPES = (
     "agent",
     "organization",
     "knowledge_source",
+    "mission",
+    "objective",
 )
 
 RELATIONS = (

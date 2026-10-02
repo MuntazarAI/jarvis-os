@@ -127,6 +127,15 @@ class Jarvis:
             tasks=self.tasks, palace=self.palace,
             world_registry=self.world_registry, triggers=self.triggers,
             store=self.dot_store, policy=self.policy))
+        from ..missions.manager import MissionDependencies, MissionManager
+        from ..world.registry import JsonFileWorldStore as MissionStore
+        self.mission_store = MissionStore(
+            str(self.config.paths.resolve("home") / "missions.json"))
+        self.missions = MissionManager(MissionDependencies(
+            tasks=self.tasks, dots=self.dots, palace=self.palace,
+            world_registry=self.world_registry, triggers=self.triggers,
+            store=self.mission_store, policy=self.policy,
+            bus=self.bus))
         self.self_model = SelfModel(permissions=["fs.read", "exec.eval"])
         for perm in ("fs.read", "exec.eval", "desktop.screenshot",
                      "desktop.windows", "clipboard.read"):
@@ -701,5 +710,9 @@ class Jarvis:
             pass
         try:
             self.dots.persist()
+        except Exception:
+            pass
+        try:
+            self.missions.persist()
         except Exception:
             pass

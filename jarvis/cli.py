@@ -96,6 +96,24 @@ def build_parser() -> argparse.ArgumentParser:
     dots.add_argument("--json", action="store_true",
                       help="machine-readable output")
 
+    msn = sub.add_parser("missions", help="persistent multi-dot missions")
+    msn.add_argument("action", nargs="?", default="list",
+                     choices=["list", "create", "inspect", "start",
+                              "pause", "resume", "stop", "cancel",
+                              "status", "explain", "objectives", "verify",
+                              "checkpoint", "recover", "advance"])
+    msn.add_argument("text", nargs="*", help="id, name/goal, or objective spec")
+    msn.add_argument("--priority", type=int, default=5)
+    msn.add_argument("--depends", default="",
+                     help="comma-separated objective IDs")
+    msn.add_argument("--weight", type=float, default=1.0)
+    msn.add_argument("--dot", default="", help="dot ID for an objective")
+    msn.add_argument("--criteria", default="",
+                     help="JSON success criteria list")
+    msn.add_argument("--reason", default="", help="reason/context")
+    msn.add_argument("--json", action="store_true",
+                     help="machine-readable output")
+
     pro = sub.add_parser("proactive", help="proactive attention + decisions")
     pro.add_argument("action", nargs="?", default="status",
                      choices=["status", "candidates", "explain", "scan"])
@@ -562,6 +580,218 @@ def main(argv: list[str] | None = None) -> int:
         print('usage: jarvis dots '
               'list|create|inspect|start|pause|resume|stop|status|explain|wake|'
               'schedule|tick|notify')
+        jarvis.close()
+        return 2
+
+    if args.command == "missions":
+        from .missions.runtime import MissionContext, MissionRuntime
+        manager = jarvis.missions
+        action = args.action
+        as_json = args.json
+
+        def _out(payload: Any, text: str) -> int:
+            if as_json:
+                print(json.dumps(payload, indent=2, default=str))
+            else:
+                print(text)
+            jarvis.close()
+            return 0
+
+        def _ctx() -> MissionContext:
+            return MissionContext(
+                orchestrator=jarvis.orchestrator, tasks=jarvis.tasks,
+                dots=jarvis.dots, palace=jarvis.palace,
+                world_registry=jarvis.world_registry,
+                policy=jarvis.policy)
+
+        if action == "list":
+            missions = manager.list()
+            payload = {"missions": [m.to_dict() for m in missions]}
+            text = "\n".join(
+                f"{m.mission_id[:13]:15} {m.name:28} {m.status.value:12} "
+                f"progress={m.progress:.0%}" for m in missions) \
+                or "(no missions yet)"
+            return _out(payload, text)
+        if action == "create":
+            text = " ".join(args.text).strip()
+            if not text or "|" not in text:
+                print('usage: jarvis missions create "Name | goal text"')
+                jarvis.close()
+                return 2
+            name, _, goal = text.partition("|")
+            mission = manager.create(name=name.strip(), goal=goal.strip(),
+                                     priority=args.priority)
+            return _out({"mission": mission.to_dict()},
+                        f"created {mission.mission_id} ({mission.status.value})")
+        if action == "status" and not args.text:
+            missions = manager.list()
+            by_status: dict[str, int] = {}
+            for mission in missions:
+                by_status[mission.status.value] = \
+                    by_status.get(mission.status.value, 0) + 1
+            payload = {"missions": len(missions), "by_status": by_status}
+            if as_json:
+                return _out(payload, json.dumps(payload, indent=2))
+            print(f"missions: {len(missions)}  "
+                  + " ".join(f"{s}={c}" for s, c in sorted(by_status.items()))
+                  or "(no missions yet)")
+            if not missions:
+                print("(no missions yet)")
+            jarvis.close()
+            return 0
+        if action in ("inspect", "status", "explain"):
+            mid = " ".join(args.text).strip()
+            info = manager.inspect(mid) if mid else None
+            if info is None:
+                print(f"unknown mission: {mid or '(none given)'}")
+                jarvis.close()
+                return 2
+            if action == "explain":
+                lines = [
+                    f"mission {info['mission_id']} ({info['name']}): "
+                    f"{info['status']}, progress={info['progress']:.0%}",
+                    f"  goal: {info['goal'][:120]}",
+                    f"  active objective: "
+                    f"{info['active_objective'][:13] or 'none'}",
+                    f"  ready: {info['ready_objectives']}",
+                    f"  blocked_by: {info['blocked_by']}",
+                    f"  uncertainty: {info['uncertainty'][-3:] if info['uncertainty'] else []}",
+                    f"  evidence: {len(info['evidence_refs'])} refs",
+                    f"  checkpoints: {len(info['checkpoint_refs'])}",
+                ]
+                return _out(info, "\n".join(lines))
+            return _out(info, json.dumps(info, indent=2, default=str))
+        if action in ("start", "pause", "resume", "stop", "cancel",
+                      "recover"):
+            mid = " ".join(args.text).strip()
+            if not mid:
+                print(f"usage: jarvis missions {action} <mission-id>")
+                jarvis.close()
+                return 2
+            try:
+                if action == "recover":
+                    mission = manager.recover(mid, reason=args.reason)
+                else:
+                    mission = getattr(manager, action)(
+                        mid, **({"reason": args.reason}
+                                if action in ("stop", "cancel", "resume")
+                                else {}))
+            except (KeyError, ValueError, Exception) as exc:
+                print(f"cannot {action} {mid}: {exc}")
+                jarvis.close()
+                return 1
+            return _out({"mission": mission.to_dict()},
+                        f"{mission.mission_id}: {mission.status.value}")
+        if action == "objectives":
+            parts = list(args.text)
+            sub = parts[0].lower() if parts else "list"
+            rest = parts[1:]
+            if sub == "add" and rest:
+                import json as _json
+                mid = rest[0]
+                spec = " ".join(rest[1:])
+                if "|" not in spec:
+                    print("usage: jarvis missions objectives add "
+                          "<mission-id> \"Name | description\" "
+                          "[--depends id1,id2] [--weight N] [--dot ID] "
+                          "[--criteria JSON]")
+                    jarvis.close()
+                    return 2
+                name, _, desc = spec.partition("|")
+                try:
+                    criteria = _json.loads(args.criteria or "[]")
+                except ValueError as exc:
+                    print(f"bad --criteria JSON: {exc}")
+                    jarvis.close()
+                    return 2
+                try:
+                    obj = manager.add_objective(
+                        mid, name=name.strip(), description=desc.strip(),
+                        depends_on=[d.strip() for d in args.depends.split(",")
+                                    if d.strip()],
+                        weight=args.weight, dot_id=args.dot,
+                        success_criteria=criteria)
+                except (KeyError, ValueError) as exc:
+                    print(f"cannot add objective: {exc}")
+                    jarvis.close()
+                    return 1
+                return _out({"objective": obj.to_dict()},
+                            f"added {obj.objective_id}")
+            mid = rest[0] if (sub == "list" and rest) else ""
+            if sub not in ("list", "add"):
+                mid = parts[0]  # bare: `objectives <mission-id>`
+            mission = manager.get(mid) if mid else None
+            if mission is None:
+                print(f"usage: jarvis missions objectives "
+                      f"[list <mission-id>|add ...]; unknown mission: {mid}")
+                jarvis.close()
+                return 2
+            payload = {"objectives": [o.to_dict() for o in
+                                      mission.objectives.values()]}
+            text = "\n".join(
+                f"{o.objective_id[:13]:15} {o.name:28} {o.status.value:10} "
+                f"w={o.weight:g} deps={len(o.depends_on)}" for o in
+                mission.objectives.values()) or "(no objectives yet)"
+            return _out(payload, text)
+        if action == "verify":
+            mid = " ".join(args.text).strip()
+            mission = manager.get(mid) if mid else None
+            if mission is None:
+                print(f"unknown mission: {mid or '(none given)'}")
+                jarvis.close()
+                return 2
+            from .missions.verification import verify_all
+            from .missions.runtime import _VerifyContext, MissionContext as MC
+            report = verify_all(mission.success_criteria,
+                                _VerifyContext(MC(
+                                    orchestrator=jarvis.orchestrator,
+                                    tasks=jarvis.tasks, dots=jarvis.dots,
+                                    palace=jarvis.palace,
+                                    world_registry=jarvis.world_registry,
+                                    policy=jarvis.policy), mission))
+            return _out(report, f"verdict: {report['verdict']}\n" + "\n".join(
+                f"  {r['kind']}: {r['verdict']} — {r['detail'][:100]}"
+                for r in report["results"]) or "  (no criteria)")
+        if action == "checkpoint":
+            mid = " ".join(args.text).strip()
+            mission = manager.get(mid) if mid else None
+            if mission is None:
+                print(f"unknown mission: {mid or '(none given)'}")
+                jarvis.close()
+                return 2
+            checkpoints = mission.metadata.get("checkpoints", [])
+            payload = {"checkpoints": checkpoints}
+            if as_json:
+                return _out(payload, json.dumps(payload, indent=2,
+                                                 default=str))
+            lines = [f"{c.get('checkpoint_id', '?')[:18]:20} "
+                     f"{c.get('verdict', ''):10} {c.get('note', '')[:60]}"
+                     for c in checkpoints] or ["(no checkpoints yet)"]
+            return _out(payload, "\n".join(lines))
+        if action == "advance":
+            mid = " ".join(args.text).strip()
+            if not mid:
+                print("usage: jarvis missions advance <mission-id>")
+                jarvis.close()
+                return 2
+            from .missions.runtime import MissionContext as MC
+            from .missions.runtime import MissionRuntime
+            runtime = MissionRuntime(manager)
+            try:
+                report = runtime.advance(mid, MC(
+                    orchestrator=jarvis.orchestrator, tasks=jarvis.tasks,
+                    dots=jarvis.dots, palace=jarvis.palace,
+                    world_registry=jarvis.world_registry,
+                    policy=jarvis.policy))
+            except (KeyError, ValueError, Exception) as exc:
+                print(f"cannot advance {mid}: {exc}")
+                jarvis.close()
+                return 1
+            return _out(report.to_dict(),
+                        f"{report.outcome}: {report.reason[:160]}")
+        print("usage: jarvis missions list|create|inspect|start|pause|resume|"
+              "stop|cancel|status|explain|objectives|verify|checkpoint|"
+              "recover|advance [--json]")
         jarvis.close()
         return 2
 
