@@ -33,6 +33,7 @@ def test_approved_write_verifies_and_undoes(tmp_path):
                       return_value={"ok": True, "bytes": 1234}), \
          patch.object(agent.computer.clipboard, "read",
                       side_effect=[{"ok": True, "text": "original"},
+                                   {"ok": True, "text": "undo-me-123"},
                                    {"ok": True, "text": "undo-me-123"}]), \
          patch.object(agent.computer.clipboard, "write",
                       return_value={"ok": True}):
