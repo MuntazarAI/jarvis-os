@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS memories (
     expired INTEGER DEFAULT 0,
     fingerprint TEXT NOT NULL,
     vector TEXT DEFAULT '[]',
-    metadata TEXT DEFAULT '{}'
+    metadata TEXT DEFAULT '{}',
+    origin TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_mem_tier ON memories(tier, archived, expired);
 CREATE INDEX IF NOT EXISTS idx_mem_room ON memories(room);
@@ -89,7 +90,55 @@ TIERS = (
     "conversation",
     "project",
     "relationship",
+    "goal",
+    "temporal",
+    "environmental",
+    "decision",
 )
+
+
+#: Provenance taxonomy — every memory must be attributable to one origin.
+#: Origins are stored on write; older rows without an origin infer it
+#: lazily from `source` on read (no data migration needed).
+ORIGINS = (
+    "told",       # explicitly told by the user
+    "inferred",   # derived by JARVIS from other records
+    "observed",   # captured from sensors/camera/screen
+    "hypothesis", # a guess under test, not a fact
+    "system",     # produced by JARVIS internals (logs, telemetry)
+)
+
+_ORIGIN_BY_SOURCE = {
+    "user": "told",
+    "cli": "told",
+    "voice": "told",
+    "sensor": "observed",
+    "camera": "observed",
+    "screen": "observed",
+    "file": "observed",
+    "consolidation": "inferred",
+    "inference": "inferred",
+    "hypothesis": "hypothesis",
+    "merge": "inferred",
+    "compress": "inferred",
+}
+
+
+def infer_origin(source: str) -> str:
+    """Map a free-form source label to the provenance taxonomy."""
+    return _ORIGIN_BY_SOURCE.get((source or "").lower(), "system")
+
+
+def origin_of(mem: "Memory") -> str:
+    """Human sentence explaining why JARVIS holds this memory."""
+    origin = mem.origin or infer_origin(mem.source)
+    return {
+        "told": "I remember this because you explicitly told me.",
+        "inferred": "I inferred this from previous records — tell me if it is wrong.",
+        "observed": "This is an observation I captured.",
+        "hypothesis": "This is only a hypothesis under test, not an established fact.",
+        "system": "This was recorded by my own internals.",
+    }.get(origin, "This was recorded by my own internals.")
 
 
 @dataclass
@@ -99,6 +148,7 @@ class Memory:
     room: str = "Home"
     kind: str = "note"
     source: str = ""
+    origin: str = ""
     modality: str = "text"
     confidence: float = 0.6
     importance: float = 0.5
@@ -165,6 +215,11 @@ class MemoryPalace:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(SCHEMA)
+            # Lightweight migration for databases created before `origin`.
+            cols = {row["name"] for row in
+                    self._conn.execute("PRAGMA table_info(memories)").fetchall()}
+            if "origin" not in cols:
+                self._conn.execute("ALTER TABLE memories ADD COLUMN origin TEXT DEFAULT ''")
             self._conn.commit()
         self.dim = self.config.models.embedding_dim
 
@@ -179,7 +234,10 @@ class MemoryPalace:
         if tier not in TIERS:
             raise ValueError(f"unknown tier: {tier}")
         kwargs.setdefault("vector", embed(content, self.dim))
-        mem = Memory(content=content, tier=tier, room=room, **kwargs)
+        origin = kwargs.pop("origin", "") or infer_origin(kwargs.get("source", ""))
+        if origin not in ORIGINS:
+            raise ValueError(f"unknown origin: {origin}")
+        mem = Memory(content=content, tier=tier, room=room, origin=origin, **kwargs)
         fp = mem.fingerprint()
         with self._lock:
             existing = self._conn.execute(
@@ -199,8 +257,9 @@ class MemoryPalace:
                 "INSERT INTO memories (id, tier, room, kind, content, summary, source, modality,"
                 " confidence, importance, sensitivity, privacy, provenance, related_entities,"
                 " related_memories, related_events, valid_from, valid_until, created_at,"
-                " last_accessed, access_count, archived, expired, fingerprint, vector, metadata)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " last_accessed, access_count, archived, expired, fingerprint, vector, metadata,"
+                " origin)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     mem.id, mem.tier, mem.room, mem.kind, mem.content,
                     kwargs.get("summary", ""), mem.source, mem.modality, mem.confidence,
@@ -209,7 +268,7 @@ class MemoryPalace:
                     json.dumps(mem.related_events), mem.valid_from, mem.valid_until,
                     mem.created_at, mem.last_accessed, mem.access_count,
                     int(mem.archived), int(mem.expired), fp,
-                    json.dumps(mem.vector), json.dumps(mem.metadata),
+                    json.dumps(mem.vector), json.dumps(mem.metadata), mem.origin,
                 ),
             )
             for rid in mem.related_memories:
@@ -241,6 +300,10 @@ class MemoryPalace:
 
     # -- read ------------------------------------------------------------
     def _row_to_memory(self, row: sqlite3.Row) -> Memory:
+        try:
+            origin = row["origin"] or ""
+        except (IndexError, KeyError):
+            origin = ""
         return Memory(
             id=row["id"],
             tier=row["tier"],
@@ -248,6 +311,7 @@ class MemoryPalace:
             kind=row["kind"],
             content=row["content"],
             source=row["source"],
+            origin=origin or infer_origin(row["source"]),
             modality=row["modality"],
             confidence=row["confidence"],
             importance=row["importance"],
@@ -281,6 +345,7 @@ class MemoryPalace:
         room: str | None = None,
         include_archived: bool = False,
         limit: int = 500,
+        origin: str | None = None,
     ) -> list[Memory]:
         sql = "SELECT * FROM memories WHERE 1=1"
         args: list[Any] = []
@@ -296,7 +361,15 @@ class MemoryPalace:
         args.append(limit)
         with self._lock:
             rows = self._conn.execute(sql, args).fetchall()
-        return [self._row_to_memory(r) for r in rows]
+        memories = [self._row_to_memory(r) for r in rows]
+        # Origin filtering happens in Python: older rows store origin=''
+        # and infer it from `source` on read, so SQL cannot see it.
+        if origin is None:
+            return memories
+        if origin not in ORIGINS:
+            raise ValueError(f"unknown origin: {origin}")
+        return [m for m in memories
+                if (m.origin or infer_origin(m.source)) == origin]
 
     def rooms(self) -> dict[str, int]:
         with self._lock:
@@ -317,8 +390,10 @@ class MemoryPalace:
     def update(self, memory_id: str, **changes: Any) -> Memory | None:
         allowed = {
             "content", "room", "tier", "kind", "confidence", "importance",
-            "sensitivity", "privacy", "summary_note",
+            "sensitivity", "privacy", "summary_note", "origin",
         }
+        if "origin" in changes and changes["origin"] not in ORIGINS:
+            raise ValueError(f"unknown origin: {changes['origin']}")
         fields = {k: v for k, v in changes.items() if k in allowed}
         if "content" in fields:
             fields["vector"] = json.dumps(embed(str(fields["content"]), self.dim))
@@ -407,6 +482,43 @@ class MemoryPalace:
             )
             self._conn.commit()
         return cur.rowcount > 0
+
+    def correct(self, memory_id: str, new_content: str, reason: str = "") -> Memory | None:
+        """Supersede a memory: archive the old record, store the correction,
+        and link them so the history stays traceable."""
+        old = self.get(memory_id)
+        if old is None:
+            return None
+        new = self.remember(
+            new_content,
+            tier=old.tier,
+            room=old.room,
+            kind=old.kind,
+            source=old.source,
+            origin=old.origin or infer_origin(old.source),
+            confidence=old.confidence,
+            importance=min(1.0, old.importance + 0.05),
+            related_entities=list(old.related_entities),
+            metadata={**old.metadata, "corrects": old.id,
+                      "correction_reason": reason},
+        )
+        self.archive(old.id, reason=f"corrected: {reason}" if reason else "corrected")
+        self._link(new.id, old.id, kind="supersedes")
+        return new
+
+    def reinforce(self, memory_id: str, amount: float = 0.05) -> Memory | None:
+        """Strengthen a memory that proved useful (confidence/importance bump)."""
+        mem = self.get(memory_id)
+        if mem is None:
+            return None
+        return self.update(
+            memory_id,
+            confidence=min(1.0, mem.confidence + amount),
+            importance=min(1.0, mem.importance + amount),
+        )
+
+    def store_goal(self, content: str, **kw: Any) -> Memory:
+        return self.remember(content, tier="goal", kind="goal", **kw)
 
     def decay_score(self, mem: Memory) -> float:
         """Recency + frequency + importance, with exponential time decay."""
