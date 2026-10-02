@@ -70,6 +70,19 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
         checks.append(HealthCheck("gods-eye-live", False, str(exc)[:120],
                                   required=False))
     try:
+        from ..device.fabric import DeviceFabric
+        from ..policy.policy import PolicyEngine
+        home = str(config.paths.home) if config else ""
+        fabric_checks = DeviceFabric(
+            home=home or ".", policy=PolicyEngine(config)).doctor()
+        for item in fabric_checks:
+            checks.append(HealthCheck(
+                f"device-fabric:{item['name']}", bool(item["ok"]),
+                str(item.get("detail", "")), required=False))
+    except Exception as exc:
+        checks.append(HealthCheck("device-fabric", False, str(exc)[:120],
+                                  required=False))
+    try:
         from ..computer.computer import ComputerController
         ctrl = ComputerController()
         checks.append(HealthCheck("computer:screenshot", ctrl.screen.available(),

@@ -151,6 +151,11 @@ class Jarvis:
             world_registry=self.world_registry, triggers=self.triggers,
             store=self.mission_store, policy=self.policy,
             bus=self.bus))
+        from ..device.fabric import DeviceFabric
+        self.device_fabric = DeviceFabric(
+            self.config.paths.home, config=self.config.device_fabric,
+            policy=self.policy, world_registry=self.world_registry,
+            spatial=self.spatial)
         # Late-bound live-intelligence subsystem hooks: observe-only wiring.
         # Live sync never auto-promotes, auto-executes, or auto-approves —
         # those stay explicit caller actions via LiveIntelligenceService.
@@ -159,6 +164,16 @@ class Jarvis:
             self.live_eye.dots = self.dots
             self.live_eye.missions = self.missions
             self.live_eye.palace = self.palace
+        except AttributeError:
+            pass
+        # Late-bound device-fabric hooks: routing stays PolicyEngine-gated,
+        # trust stays an explicit human decision; nothing auto-executes.
+        try:
+            self.device_fabric.proactive = self.proactive
+            self.device_fabric.dots = self.dots
+            self.device_fabric.missions = self.missions
+            self.device_fabric.palace = self.palace
+            self.device_fabric.bus = self.bus
         except AttributeError:
             pass
         self.self_model = SelfModel(permissions=["fs.read", "exec.eval"])
@@ -703,6 +718,7 @@ class Jarvis:
             "gods_eye": self.gods_eye.status(),
             "gods_eye_app": self.gods_eye_app.status(),
             "gods_eye_live": self.live_eye.status(),
+            "device_fabric": self.device_fabric.status(),
         }
 
     def poll_proactive(self) -> list[str]:
@@ -746,5 +762,9 @@ class Jarvis:
             pass
         try:
             self.missions.persist()
+        except Exception:
+            pass
+        try:
+            self.device_fabric.save()
         except Exception:
             pass

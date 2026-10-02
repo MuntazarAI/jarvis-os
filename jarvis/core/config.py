@@ -118,6 +118,14 @@ class ServerConfig:
 
 
 @dataclass
+class DeviceFabricConfig:
+    enabled: bool = True
+    state_path: str = "device-fabric.json"
+    heartbeat_timeout_s: float = 120.0
+    max_devices: int = 64
+
+
+@dataclass
 class JarvisConfig:
     paths: PathsConfig = field(default_factory=PathsConfig)
     cognitive: CognitiveConfig = field(default_factory=CognitiveConfig)
@@ -125,6 +133,7 @@ class JarvisConfig:
     policy: PolicyConfig = field(default_factory=PolicyConfig)
     models: ModelConfig = field(default_factory=ModelConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
+    device_fabric: DeviceFabricConfig = field(default_factory=DeviceFabricConfig)
     personality: dict[str, Any] = field(
         default_factory=lambda: {
             "formality": "professional",
