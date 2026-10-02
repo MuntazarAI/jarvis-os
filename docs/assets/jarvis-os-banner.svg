@@ -1,18 +1,95 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" role="img" aria-labelledby="title desc">
-<title id="title">JARVIS-OS</title>
-<desc id="desc">JARVIS-OS futuristic system identity graphic</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 520" role="img" aria-labelledby="title desc">
+<title id="title">JARVIS-OS — Personal Intelligence Runtime</title>
+<desc id="desc">Futuristic JARVIS-OS command-center banner with a glowing core, mountain horizon, neural silhouette and system telemetry.</desc>
 <defs>
-  <linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#00e5ff"/><stop offset="1" stop-color="#7c4dff"/></linearGradient>
-  <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#020611"/><stop offset=".48" stop-color="#071a31"/><stop offset="1" stop-color="#120b2c"/>
+  </linearGradient>
+  <linearGradient id="sky" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#00d9ff"/><stop offset=".5" stop-color="#4d7cff"/><stop offset="1" stop-color="#9d4dff"/>
+  </linearGradient>
+  <linearGradient id="mount" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#183a60"/><stop offset="1" stop-color="#02050d"/>
+  </linearGradient>
+  <radialGradient id="sun"><stop offset="0" stop-color="#bff8ff"/><stop offset=".22" stop-color="#3de7ff"/><stop offset="1" stop-color="#3de7ff" stop-opacity="0"/></radialGradient>
+  <radialGradient id="core"><stop offset="0" stop-color="#ffffff"/><stop offset=".15" stop-color="#7df4ff"/><stop offset=".48" stop-color="#008dff" stop-opacity=".8"/><stop offset="1" stop-color="#512cff" stop-opacity="0"/></radialGradient>
+  <filter id="glow"><feGaussianBlur stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <filter id="soft"><feGaussianBlur stdDeviation="25"/></filter>
+  <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" fill="none" stroke="#37dfff" stroke-opacity=".08"/></pattern>
 </defs>
-<rect width="1200" height="320" rx="28" fill="#070b14"/>
-<g opacity=".22" stroke="#00e5ff"><path d="M40 70H1160M40 250H1160M110 30V290M1090 30V290"/></g>
-<g transform="translate(95 65)" filter="url(#glow)">
-  <circle cx="95" cy="95" r="72" fill="none" stroke="url(#g)" stroke-width="8"/>
-  <circle cx="95" cy="95" r="28" fill="none" stroke="#00e5ff" stroke-width="6"/>
-  <path d="M95 15V45M95 145V175M15 95H45M145 95H175M39 39L60 60M130 130L151 151M151 39L130 60M60 130L39 151" stroke="#00e5ff" stroke-width="5" stroke-linecap="round"/>
+
+<rect width="1600" height="520" rx="30" fill="url(#bg)"/>
+<rect width="1600" height="520" rx="30" fill="url(#grid)"/>
+
+<!-- atmospheric arcs -->
+<g fill="none" stroke="url(#sky)" opacity=".18">
+  <ellipse cx="1070" cy="245" rx="480" ry="190" stroke-width="2"/>
+  <ellipse cx="1070" cy="245" rx="380" ry="145" stroke-width="1"/>
+  <path d="M650 420C850 130 1190 60 1510 180" stroke-width="2"/>
 </g>
-<text x="330" y="138" fill="white" font-family="Arial,Helvetica,sans-serif" font-size="64" font-weight="700" letter-spacing="8">JARVIS-OS</text>
-<text x="334" y="184" fill="#00e5ff" font-family="monospace" font-size="20" letter-spacing="4">LOCAL INTELLIGENCE // SYSTEM CORE</text>
-<text x="334" y="224" fill="#7f8da3" font-family="monospace" font-size="16">MEMORY · WORLD MODEL · AGENTS · EVIDENCE · ACTION · VERIFY</text>
+
+<!-- stars / telemetry -->
+<g fill="#6defff" opacity=".8">
+  <circle cx="720" cy="86" r="2"/><circle cx="790" cy="150" r="1.5"/><circle cx="890" cy="70" r="2"/>
+  <circle cx="1010" cy="115" r="1.5"/><circle cx="1230" cy="72" r="2"/><circle cx="1370" cy="118" r="1.5"/>
+</g>
+
+<!-- sun -->
+<circle cx="1120" cy="235" r="130" fill="url(#sun)" filter="url(#soft)"/>
+<circle cx="1120" cy="235" r="34" fill="#9df8ff" opacity=".85"/>
+
+<!-- mountain horizon -->
+<path d="M0 420L170 300 250 360 390 250 540 390 700 275 805 355 940 215 1070 360 1210 255 1340 345 1480 245 1600 330V520H0Z" fill="url(#mount)"/>
+<path d="M0 438L180 355 260 400 410 315 560 430 710 350 820 405 955 300 1080 420 1210 335 1350 410 1490 320 1600 380" fill="none" stroke="#2aa9e8" stroke-opacity=".35" stroke-width="2"/>
+
+<!-- abstract neural silhouette -->
+<g transform="translate(970 55)" opacity=".92">
+  <path d="M210 25C290 55 335 125 322 205C314 256 282 288 245 316C210 342 185 365 175 410H48C62 347 89 311 112 279C135 247 130 215 124 183C115 135 125 88 165 52C177 41 192 31 210 25Z" fill="#071321" stroke="#3fe9ff" stroke-opacity=".42" stroke-width="3"/>
+  <path d="M235 84C280 116 286 174 264 214C245 249 215 262 190 275" fill="none" stroke="#68f2ff" stroke-opacity=".65" stroke-width="3"/>
+  <g stroke="#31dfff" stroke-opacity=".5" stroke-width="2">
+    <path d="M170 84L222 125L178 165L242 204L185 246"/>
+    <path d="M214 62L190 112L250 146L205 190L258 226"/>
+    <path d="M150 118L190 112L178 165L205 190"/>
+  </g>
+  <g fill="#7cf6ff" filter="url(#glow)">
+    <circle cx="170" cy="84" r="4"/><circle cx="222" cy="125" r="4"/><circle cx="178" cy="165" r="4"/>
+    <circle cx="242" cy="204" r="4"/><circle cx="205" cy="190" r="4"/>
+  </g>
+</g>
+
+<!-- core ring -->
+<g transform="translate(150 112)" filter="url(#glow)">
+  <circle cx="105" cy="105" r="82" fill="none" stroke="#087dff" stroke-opacity=".3" stroke-width="20"/>
+  <circle cx="105" cy="105" r="72" fill="none" stroke="url(#sky)" stroke-width="8"/>
+  <circle cx="105" cy="105" r="48" fill="url(#core)"/>
+  <circle cx="105" cy="105" r="20" fill="#d9ffff"/>
+  <path d="M105 13V38M105 172V197M13 105H38M172 105H197M40 40L58 58M152 152L170 170M170 40L152 58M58 152L40 170" stroke="#7df6ff" stroke-width="4" stroke-linecap="round"/>
+</g>
+
+<!-- title block -->
+<g font-family="Arial,Helvetica,sans-serif">
+  <text x="390" y="178" fill="#f5fbff" font-size="72" font-weight="700" letter-spacing="8">JARVIS-OS</text>
+  <text x="394" y="220" fill="#55eaff" font-family="monospace" font-size="21" letter-spacing="5">PERSONAL INTELLIGENCE RUNTIME</text>
+  <text x="394" y="270" fill="#c5d9ef" font-family="monospace" font-size="17">OBSERVE  /  REMEMBER  /  REASON  /  BUILD  /  ACCOMPLISH</text>
+</g>
+
+<!-- right telemetry panel -->
+<g transform="translate(1260 120)">
+  <path d="M0 0H260L286 26V225L260 251H0Z" fill="#020914" fill-opacity=".76" stroke="#26dfff" stroke-opacity=".55"/>
+  <text x="24" y="42" fill="#65f1ff" font-family="monospace" font-size="15" letter-spacing="3">SYSTEM CORE</text>
+  <g font-family="monospace" font-size="13" fill="#b7c9dc">
+    <text x="24" y="78">MEMORY        ONLINE</text><circle cx="236" cy="73" r="5" fill="#38f6a4"/>
+    <text x="24" y="110">WORLD MODEL   ONLINE</text><circle cx="236" cy="105" r="5" fill="#38f6a4"/>
+    <text x="24" y="142">AGENTS        READY</text><circle cx="236" cy="137" r="5" fill="#38f6a4"/>
+    <text x="24" y="174">EVIDENCE      ACTIVE</text><circle cx="236" cy="169" r="5" fill="#38f6a4"/>
+    <text x="24" y="206">POLICY        ENFORCED</text><circle cx="236" cy="201" r="5" fill="#38f6a4"/>
+  </g>
+</g>
+
+<!-- bottom HUD -->
+<path d="M55 465H1545" stroke="#2de3ff" stroke-opacity=".25"/>
+<g font-family="monospace" font-size="12" fill="#6f8da8">
+  <text x="70" y="492">LOCAL-FIRST</text><text x="245" y="492">EVIDENCE-DRIVEN</text><text x="470" y="492">MODULAR</text>
+  <text x="610" y="492">BOUNDED AUTONOMY</text><text x="860" y="492">PRIVACY-AWARE</text>
+</g>
 </svg>
