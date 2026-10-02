@@ -68,6 +68,13 @@ def build_parser() -> argparse.ArgumentParser:
     ag.add_argument("--json", action="store_true",
                     help="machine-readable output")
 
+    pro = sub.add_parser("proactive", help="proactive attention + decisions")
+    pro.add_argument("action", nargs="?", default="status",
+                     choices=["status", "candidates", "explain", "scan"])
+    pro.add_argument("text", nargs="*", help="candidate id for explain")
+    pro.add_argument("--json", action="store_true",
+                     help="machine-readable output")
+
     say = sub.add_parser("say", help="speak text aloud via TTS")
     say.add_argument("text", nargs="+")
 
@@ -266,6 +273,53 @@ def main(argv: list[str] | None = None) -> int:
                     print("(no entities observed yet)")
             else:
                 print(json.dumps(payload, indent=2, default=str))
+        jarvis.close()
+        return 0
+
+    if args.command == "proactive":
+        engine = jarvis.proactive
+        action = args.action
+        as_json = args.json
+        if action == "scan":
+            found = jarvis.poll_proactive()
+            payload = {"candidates": found, "count": len(found)}
+            print(json.dumps(payload, indent=2) if as_json else
+                  (f"{len(found)} candidate(s): " + ", ".join(found)
+                   if found else "(no candidates)"))
+        elif action == "candidates":
+            pending = [c.to_dict() for c in engine.candidates.values()
+                       if c.status == "pending"]
+            if as_json:
+                print(json.dumps({"candidates": pending}, indent=2,
+                                 default=str))
+            elif not pending:
+                print("(no pending candidates)")
+            else:
+                for cand in pending:
+                    print(f"{cand['candidate_id']} [{cand['level']}] "
+                          f"{cand['type']} {cand['entity'] or ''}".rstrip()
+                          + f" score={cand['score']:.2f}")
+        elif action == "explain":
+            cid = " ".join(args.text).strip()
+            if not cid:
+                print("usage: proactive explain <candidate-id> [--json]")
+                jarvis.close()
+                return 2
+            if as_json:
+                cand = engine.candidates.get(cid)
+                decision = engine.decisions.get(cid)
+                print(json.dumps({
+                    "candidate": cand.to_dict() if cand else None,
+                    "decision": decision.to_dict() if decision else None,
+                }, indent=2, default=str))
+            else:
+                print(engine.explain(cid))
+        else:  # status
+            info = engine.status()
+            print(json.dumps(info, indent=2) if as_json else
+                  f"candidates: {info['candidates']}  "
+                  f"pending: {info['pending']}  decided: {info['decided']}  "
+                  f"notifications: {info['notifications']}")
         jarvis.close()
         return 0
 

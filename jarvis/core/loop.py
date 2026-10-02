@@ -90,6 +90,10 @@ class Jarvis:
             str(self.config.paths.resolve("home") / "world.json"))
         self.world_registry = WorldRegistry()
         self.world_registry.load(self.world_store)
+        from ..proactive.engine import ProactiveEngine
+        self.proactive = ProactiveEngine(
+            home=str(self.config.paths.resolve("home")))
+        self.proactive.attach(self.bus)
         self.models = default_models(self.config)
         self.router = ModelRouter(self.models, self.config)
         self.policy = PolicyEngine(self.config)
@@ -646,7 +650,27 @@ class Jarvis:
             "models": self.models.stats(),
             "policy_conflicts": self.policy.conflicts(),
             "audit_entries": len(self.policy.audit),
+            "proactive": self.proactive.status(),
         }
+
+    def poll_proactive(self) -> list[str]:
+        """On-demand proactive sweep: tasks, triggers, world, goals.
+
+        Read-only. Returns candidate IDs. No background threads; the caller
+        (CLI, cycle hook, or schedule trigger) decides when to run it.
+        """
+        try:
+            goals = [m.content for m in
+                     self.palace.all(tier="goal", limit=20)]
+        except Exception:
+            goals = []
+        try:
+            candidates = self.proactive.scan(
+                tasks=self.tasks, triggers=self.triggers,
+                world=self, goals=goals)
+        except Exception:
+            return []
+        return [c.candidate_id for c in candidates]
 
     def close(self) -> None:
         self.events.close()
@@ -654,5 +678,9 @@ class Jarvis:
         self.graph.close()
         try:
             self.world_registry.save(self.world_store)
+        except Exception:
+            pass
+        try:
+            self.proactive.save()
         except Exception:
             pass

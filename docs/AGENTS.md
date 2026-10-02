@@ -180,3 +180,24 @@ World Model 2.0 snapshots (both kept; neither replaced):
 - CLI: `agents world entities|get|relations|history|conflicts|uncertain|changes`
 - Loop persists `world.json` on close; orchestrator receives the registry
 - No auto-approvals, no standing permissions, external content stays untrusted
+
+## Proactive Intelligence 3.0 — event attention, controlled decisions
+
+`jarvis/proactive/engine.py` proposes; it never executes. Pipeline:
+
+world/state/events → attention → candidate → decision
+(IGNORE / INFORM / ASK / PLAN) → existing orchestrator →
+PolicyEngine → approval → action only when permitted
+
+- 10 normalized event types with id/timestamp/source/entity/confidence/provenance
+- Deterministic attention: urgency × confidence + novelty + goal relevance,
+  every factor recorded as a reason; zero confidence = no signal
+- Deduplication with cooldowns; duplicates suppressed, events preserved
+- Decisions: <0.35 IGNORE, <0.6 INFORM, <0.8 ASK, above proposes a bounded
+  PLAN (team/depth/goal) that is NOT executed by this layer
+- Caps: untrusted content and conflicting evidence can never reach PLAN
+- Emergency stop forces IGNORE; expiry forces IGNORE
+- Goal blockage detection: failed-tasks + stalled goals → candidates
+- Bounded JSON persistence (`proactive.json`); corrupt files load as empty
+- No threads, no polling, no model calls; EventBus subscription only
+- CLI: `proactive status|candidates|explain <id>|scan [--json]`
