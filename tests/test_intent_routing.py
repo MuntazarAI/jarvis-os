@@ -9,6 +9,7 @@ a memory-write operation.
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -93,7 +94,8 @@ def test_memory_query_empty_store_says_so():
 def test_knowledge_question_answered_without_memory_prefix():
     jarvis = _jarvis()
     try:
-        result = jarvis.cycle_once("what is the capital of France?")
+        with patch.object(jarvis, "_ask_model", return_value="Paris is the capital of France."):
+            result = jarvis.cycle_once("what is the capital of France?")
         assert result.intent == "question"
         assert "I recall:" not in result.response
         assert "paris" in result.response.lower(), result.response

@@ -169,20 +169,20 @@ class SpatialMemoryPalace:
     def __init__(self, path: str | Path | None = None, *,
                  world_registry: Any | None = None,
                  memory_palace: Any | None = None) -> None:
-        self.path = Path(path) if path else None
+        self.storage_path = Path(path) if path else None
         self.world_registry = world_registry
         self.memory_palace = memory_palace
         self.nodes: dict[str, SpatialNode] = {}
         self.relations: dict[str, SpatialRelation] = {}
         self.observations: dict[str, SpatialObservation] = {}
         self.history: list[dict[str, Any]] = []
-        if self.path and self.path.exists():
+        if self.storage_path and self.storage_path.exists():
             self.load()
 
     def _save(self) -> None:
-        if not self.path:
+        if not self.storage_path:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "version": 1,
             "nodes": {k: v.to_dict() for k, v in self.nodes.items()},
@@ -190,21 +190,21 @@ class SpatialMemoryPalace:
             "observations": {k: v.to_dict() for k, v in self.observations.items()},
             "history": self.history[-1000:],
         }
-        fd, tmp = tempfile.mkstemp(prefix=".spatial-", dir=str(self.path.parent))
+        fd, tmp = tempfile.mkstemp(prefix=".spatial-", dir=str(self.storage_path.parent))
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, indent=2, sort_keys=True)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(tmp, self.path)
+            os.replace(tmp, self.storage_path)
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
 
     def load(self) -> None:
-        if not self.path or not self.path.exists():
+        if not self.storage_path or not self.storage_path.exists():
             return
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        data = json.loads(self.storage_path.read_text(encoding="utf-8"))
         self.nodes = {}
         for key, raw in data.get("nodes", {}).items():
             try:
@@ -485,7 +485,6 @@ class SpatialMemoryPalace:
                 attributes={"spatial_node_id": node.id, **node.attributes},
                 provenance={"spatial_memory": True, **node.provenance},
                 confidence=node.confidence,
-                evidence_refs=node.evidence_refs,
             )
             if node.parent_id:
                 parent = self.nodes.get(node.parent_id)

@@ -3,6 +3,7 @@
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -123,7 +124,8 @@ def test_knowledge_prefers_model_over_weak_recall():
     jarvis = Jarvis(home=tempfile.mkdtemp())
     try:
         jarvis.cycle_once("remember the deploy key is rotated monthly")
-        result = jarvis.cycle_once("what is the capital of France?")
+        with patch.object(jarvis, "_ask_model", return_value="Paris is the capital of France."):
+            result = jarvis.cycle_once("what is the capital of France?")
         assert "paris" in result.response.lower()
         assert "I recall:" not in result.response
         relevant = jarvis.cycle_once("what is the deploy key schedule?")

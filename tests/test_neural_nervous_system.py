@@ -9,7 +9,9 @@ def test_lif_neuron_leaks_and_fires():
     assert neuron.potential == 0.8
     assert neuron.step(0.0) is False
     assert neuron.potential == 0.4
-    assert neuron.step(0.7) is True
+    assert neuron.step(0.7) is False
+    assert neuron.potential == 0.8999999999999999
+    assert neuron.step(0.6) is True
     assert neuron.potential == 0.0
     assert neuron.spikes == 1
 

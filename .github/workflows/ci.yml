@@ -24,7 +24,7 @@ jobs:
           node-version: "24"
           package-manager-cache: false
       - name: Install system test dependencies
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg xvfb xclip ydotool
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
@@ -32,7 +32,7 @@ jobs:
       - name: Install test tooling and project
         run: python -m pip install --upgrade pip pytest && python -m pip install -e .
       - name: Run tests
-        run: python -m pytest -q
+        run: xvfb-run -a bash -lc 'printf "ci-seed" | xclip -selection clipboard; python -m pytest -q'
 
   repository-sanity:
     name: Repository sanity
