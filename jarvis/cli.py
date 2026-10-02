@@ -91,6 +91,40 @@ def build_parser() -> argparse.ArgumentParser:
     fab.add_argument("--json", action="store_true",
                      help="machine-readable output")
 
+    dev = sub.add_parser("device", help="device endpoints: android node")
+    dev.add_argument("area", nargs="?", default="android", choices=["android"])
+    dev.add_argument("action", nargs="?", default="status",
+                     choices=["status", "list", "info", "register", "pair",
+                              "trust", "revoke", "capabilities",
+                              "permissions", "command", "connect",
+                              "disconnect", "queue"])
+    dev.add_argument("--device", default="", help="device id")
+    dev.add_argument("--name", default="", help="node name for register")
+    dev.add_argument("--code", default="", help="6-digit pairing code")
+    dev.add_argument("--node", default="",
+                     help="node id the Android app asserts during pair")
+    dev.add_argument("--reason", default="", help="reason for trust decisions")
+    dev.add_argument("--by", default="user", help="actor for trust decisions")
+    dev.add_argument("--model", default="",
+                     help="android device model for register")
+    dev.add_argument("--android-version", default="",
+                     help="android version string for register")
+    dev.add_argument("--app-version", default="",
+                     help="node app version string for register")
+    dev.add_argument("--owner", default="", help="owner for register")
+    dev.add_argument("--capability", default="",
+                     help="capability list (comma-separated) for declare")
+    dev.add_argument("--report", default="",
+                     help="JSON permission report for permissions")
+    dev.add_argument("--command", dest="node_command", default="",
+                     help="typed command to send")
+    dev.add_argument("--args", default="",
+                     help="JSON object of command args")
+    dev.add_argument("--approve", default="",
+                     help="policy approval token for command")
+    dev.add_argument("--json", action="store_true",
+                     help="machine-readable output")
+
     bench = sub.add_parser("benchmark", help="latency + resource benchmark")
     bench.add_argument("--samples", type=int, default=3)
 
@@ -1262,6 +1296,184 @@ def main(argv: list[str] | None = None) -> int:
                 for c in result["checks"]))
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"device-fabric: {exc}")
+            jarvis.close()
+            return 1
+
+    if args.command == "device":
+        from .device.android import AndroidNodeAdapter
+        adapter = AndroidNodeAdapter(jarvis.device_fabric)
+        as_json = args.json
+
+        def _out(payload: Any, text: str) -> int:
+            if as_json:
+                print(json.dumps(payload, indent=2, default=str))
+            else:
+                print(text)
+            jarvis.close()
+            return 0
+
+        try:
+            if args.action == "status":
+                if args.device:
+                    result = adapter.status(args.device)
+                    return _out(result,
+                                f"{result['name']} pair={result['pairing_state']} "
+                                f"connected={result['connected']} "
+                                f"queued={result['queue']['queued']}")
+                result = {"nodes": adapter.list_android()}
+                return _out(result, "\n".join(
+                    f"{r['device_id'][:12]:14} {r['name']:20} "
+                    f"{r['pairing_state']:12} "
+                    f"{'online' if r['connected'] else 'offline'}"
+                    for r in result["nodes"]) or "no android nodes")
+            if args.action == "list":
+                result = {"nodes": adapter.list_android()}
+                return _out(result, "\n".join(
+                    f"{r['device_id'][:12]:14} {r['name']:20} "
+                    f"lifecycle={r['lifecycle']} trust={r['trust']}"
+                    for r in result["nodes"]) or "no android nodes")
+            if args.action == "info":
+                if not args.device:
+                    print("usage: jarvis device android info --device <id>")
+                    jarvis.close()
+                    return 2
+                result = adapter.status(args.device)
+                return _out(result,
+                            f"{result['name']} ({result['device_type']}) "
+                            f"lifecycle={result['lifecycle']} "
+                            f"trust={result['trust']} "
+                            f"pair={result['pairing_state']} "
+                            f"connected={result['connected']}")
+            if args.action == "register":
+                if not (args.name and args.model and args.android_version
+                        and args.app_version):
+                    print("usage: jarvis device android register --name N "
+                          "--model M --android-version V --app-version A "
+                          "[--owner O]")
+                    jarvis.close()
+                    return 2
+                result = adapter.register_android(
+                    args.name,
+                    {"device_model": args.model,
+                     "android_version": args.android_version,
+                     "app_version": args.app_version},
+                    by=args.by, owner=args.owner)
+                return _out(result,
+                            f"registered {result['device_id']} "
+                            f"pairing code {result['pairing']['pairing_code']} "
+                            f"(expires in {result['pairing']['expires_in_s']:.0f}s)")
+            if args.action == "pair":
+                if not (args.device and args.code):
+                    print("usage: jarvis device android pair --device <id> "
+                          "--code 123456 [--node <node-id>] [--reason R]")
+                    jarvis.close()
+                    return 2
+                result = adapter.pair(args.device, args.code, by=args.by,
+                                      reason=args.reason, node_id=args.node)
+                return _out(result,
+                            f"paired {result['name']} "
+                            f"trust={result['trust']}")
+            if args.action == "trust":
+                if not args.device:
+                    print("usage: jarvis device android trust --device <id> "
+                          "[--reason R]")
+                    jarvis.close()
+                    return 2
+                result = adapter.trust_android(args.device, by=args.by,
+                                               reason=args.reason)
+                return _out(result,
+                            f"trusted {result['name']} "
+                            f"trust={result['trust']}")
+            if args.action == "revoke":
+                if not args.device:
+                    print("usage: jarvis device android revoke --device <id> "
+                          "[--reason R]")
+                    jarvis.close()
+                    return 2
+                result = adapter.revoke_android(args.device, by=args.by,
+                                                reason=args.reason)
+                return _out(result, f"revoked {result['name']}")
+            if args.action == "capabilities":
+                if not args.device:
+                    print("usage: jarvis device android capabilities "
+                          "--device <id> [--capability a.b,c]")
+                    jarvis.close()
+                    return 2
+                if args.capability:
+                    declared = [c.strip() for c in args.capability.split(",")
+                                if c.strip()]
+                    result = adapter.declare_android_capabilities(
+                        args.device, declared, by=args.by)
+                    return _out(result,
+                                f"granted={result['granted']} "
+                                f"withheld={len(result['withheld'])}")
+                result = adapter.status(args.device)
+                return _out({"capabilities": result["capabilities"]},
+                            ", ".join(sorted(result["capabilities"]))
+                            or "no capabilities")
+            if args.action == "permissions":
+                if not (args.device and args.report):
+                    print("usage: jarvis device android permissions "
+                          "--device <id> --report '{...}'")
+                    jarvis.close()
+                    return 2
+                try:
+                    report = json.loads(args.report)
+                except json.JSONDecodeError as exc:
+                    print(f"bad --report JSON: {exc}")
+                    jarvis.close()
+                    return 2
+                result = adapter.report_permissions(args.device, report,
+                                                    by=args.by)
+                return _out(result,
+                            f"granted={result['granted']} "
+                            f"withheld={len(result['withheld'])}")
+            if args.action == "command":
+                if not (args.device and args.node_command):
+                    print("usage: jarvis device android command --device <id> "
+                          "--command device.vibrate [--args '{...}'] "
+                          "[--approve TOKEN]")
+                    jarvis.close()
+                    return 2
+                try:
+                    cmd_args = json.loads(args.args) if args.args else {}
+                except json.JSONDecodeError as exc:
+                    print(f"bad --args JSON: {exc}")
+                    jarvis.close()
+                    return 2
+                result = adapter.send_command("cli", args.device,
+                                              args.node_command, cmd_args,
+                                              approval_token=args.approve)
+                return _out(result, result.get("error", str(result.get(
+                    "command_id", result))))
+            if args.action == "connect":
+                if not args.device:
+                    print("usage: jarvis device android connect --device <id>")
+                    jarvis.close()
+                    return 2
+                result = adapter.connect(args.device, by=args.by)
+                return _out(result,
+                            f"connected={result['connected']} "
+                            f"drained={result['drained']}")
+            if args.action == "disconnect":
+                if not args.device:
+                    print("usage: jarvis device android disconnect "
+                          "--device <id>")
+                    jarvis.close()
+                    return 2
+                result = adapter.disconnect(args.device, by=args.by)
+                return _out(result,
+                            f"connected={result['connected']}")
+            # queue
+            if not args.device:
+                print("usage: jarvis device android queue --device <id>")
+                jarvis.close()
+                return 2
+            result = adapter.queue_depth(args.device)
+            return _out(result, f"queued={result['queued']} "
+                               f"dropped={result['dropped_while_offline']}")
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"device: {exc}")
             jarvis.close()
             return 1
 
