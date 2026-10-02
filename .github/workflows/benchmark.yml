@@ -1,0 +1,31 @@
+name: Benchmark Lab
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "jarvis/neural/**"
+      - "benchmarks/**"
+      - ".github/workflows/benchmark.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  neural:
+    name: Neural microbenchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e .
+      - name: Run benchmark
+        run: python benchmarks/neural_benchmark.py --size 1000 --steps 1000 --repeats 3
+      - name: Publish benchmark artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: neural-benchmark
+          path: benchmark-results/neural.json
