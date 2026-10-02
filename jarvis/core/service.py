@@ -97,6 +97,39 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
         checks.append(HealthCheck("android-node", False, str(exc)[:120],
                                   required=False))
     try:
+        from ..intelligence import IntelligenceLoop, SensoryBus
+        loop = IntelligenceLoop()
+        loop.start()
+        record = loop.cycle_once({"text": "doctor probe"})
+        checks.append(HealthCheck("intelligence:loop", bool(record.ok),
+                                  f"cycle ok, {len(record.stages)} stages",
+                                  required=False))
+        checks.append(HealthCheck("intelligence:bus", True, "sensory bus ready",
+                                  required=False))
+    except Exception as exc:
+        checks.append(HealthCheck("intelligence", False, str(exc)[:120],
+                                  required=False))
+    try:
+        from ..neural.scale import SparseLIFNetwork
+        from ..neural.topology import FLY_166K_SCHEMA
+        probe = SparseLIFNetwork(8)
+        probe.stage_edge(0, 1, 1.5)
+        probe.compile()
+        fired = probe.step({0: 1.5})
+        checks.append(HealthCheck("neural:substrate", fired == [0],
+                                  "sparse LIF probe fired",
+                                  required=False))
+        checks.append(HealthCheck(
+            "neural:fly-schema",
+            FLY_166K_SCHEMA.total_neurons() == 166000
+            and FLY_166K_SCHEMA.origin == "synthetic",
+            f"{FLY_166K_SCHEMA.total_neurons()} schematic neurons "
+            f"({FLY_166K_SCHEMA.origin})",
+            required=False))
+    except Exception as exc:
+        checks.append(HealthCheck("neural", False, str(exc)[:120],
+                                  required=False))
+    try:
         from ..computer.computer import ComputerController
         ctrl = ComputerController()
         checks.append(HealthCheck("computer:screenshot", ctrl.screen.available(),

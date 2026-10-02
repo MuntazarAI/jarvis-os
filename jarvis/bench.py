@@ -34,7 +34,22 @@ def run(jarvis: Jarvis, samples: int = 3) -> dict[str, Any]:
     # model routing latency (no generation)
     _, route_ms = _timed(jarvis.router.route, "write a function")
     results["route_ms"] = round(route_ms, 2)
-    # resource footprint
+    # neural substrate latency (small deterministic net, no LLM)
+    from .neural.scale import SparseLIFNetwork
+    import random as _random
+    _rng = _random.Random(41)
+    _net = SparseLIFNetwork(2000)
+    for _ in range(20000):
+        _net.stage_edge(_rng.randrange(2000), _rng.randrange(2000),
+                        _rng.uniform(0.1, 0.9), _rng.randrange(3))
+    _, compile_ms = _timed(_net.compile)
+    results["neural_compile_ms"] = round(compile_ms, 1)
+    steps = []
+    for _ in range(samples):
+        _, ms = _timed(_net.step, {0: 2.0})
+        steps.append(ms)
+    results["neural_step_ms"] = round(sum(steps) / len(steps), 2)
+    results["neural_edges"] = _net.edge_count
     state = jarvis.world.system_state()
     results["memory"] = state.get("memory", {})
     results["disk"] = state.get("disk", {})
