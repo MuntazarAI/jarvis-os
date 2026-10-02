@@ -90,6 +90,10 @@ class Jarvis:
             str(self.config.paths.resolve("home") / "world.json"))
         self.world_registry = WorldRegistry()
         self.world_registry.load(self.world_store)
+        from ..spatial.palace import SpatialMemoryPalace
+        self.spatial = SpatialMemoryPalace(
+            str(self.config.paths.resolve("home") / "spatial.json"),
+            world_registry=self.world_registry, memory_palace=self.palace)
         from ..proactive.engine import ProactiveEngine
         self.proactive = ProactiveEngine(
             home=str(self.config.paths.resolve("home")))
