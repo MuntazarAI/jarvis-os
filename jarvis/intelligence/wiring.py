@@ -112,13 +112,30 @@ def make_reason_hook(reasoner: Any = None):
     return reason
 
 
-def make_policy_hook(policy: Any = None, actor: str = "intelligence-loop"):
+def make_policy_hook(policy: Any = None, actor: str = "intelligence-loop",
+                     tools: Any = None):
+    """Build the loop's policy gate.
+
+    Required permissions and risk come from the tool spec, exactly like
+    ``Jarvis._execute_step``. Without a registry the loop cannot know what
+    an action requires, so it denies (fail closed) rather than guessing.
+    """
     def policy_check(action: str, args: Mapping[str, Any]) -> tuple[bool, str]:
         if policy is None:
             return False, "no policy bound (fail closed)"
+        if tools is None:
+            return False, "no tool registry bound (cannot verify permissions)"
+        try:
+            tool = tools.get(action)
+        except Exception as exc:
+            return False, f"tool lookup failed (fail closed): {exc}"[:200]
+        if tool is None:
+            return False, f"unknown tool: {action}"
         try:
             from ..core.types import ActionPlan
-            plan = ActionPlan(action=action, args=dict(args))
+            plan = ActionPlan(action=action, args=dict(args),
+                              required_permissions=list(tool.spec.required_permissions),
+                              risk=tool.spec.risk)
             decision = policy.evaluate(actor, plan)
         except Exception as exc:
             return False, f"policy error (fail closed): {exc}"[:200]
@@ -196,7 +213,8 @@ def build_loop(**components: Any) -> IntelligenceLoop:
         reason=reason_hook,
         plan=planner.plan,
         policy_check=make_policy_hook(components.get("policy"),
-                                      components.get("actor", "intelligence-loop")),
+                                      components.get("actor", "intelligence-loop"),
+                                      components.get("tools")),
         executor=make_executor_hook(components.get("tools")),
         learn=make_learn_hook(components.get("palace")),
         neural_checkpoint=checkpoint,

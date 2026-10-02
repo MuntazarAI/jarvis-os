@@ -203,6 +203,7 @@ class JsonFileWorldStore:
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
+        self.last_load_error: str = ""
 
     def save(self, data: dict[str, Any]) -> None:
         tmp = self.path.with_suffix(".tmp")
@@ -210,9 +211,21 @@ class JsonFileWorldStore:
         tmp.replace(self.path)
 
     def load(self) -> dict[str, Any]:
+        """Recover from an unreadable/corrupt file instead of crashing.
+
+        The file is left untouched on disk for forensics; only this store's
+        view resets. ``last_load_error`` records why, so doctor/status can
+        surface corruption rather than hiding it.
+        """
+        self.last_load_error = ""
         if not self.path.exists():
             return {}
-        return json.loads(self.path.read_text())
+        try:
+            data = json.loads(self.path.read_text())
+        except (OSError, ValueError) as exc:
+            self.last_load_error = f"{type(exc).__name__}: {exc}"[:200]
+            return {}
+        return data if isinstance(data, dict) else {}
 
 
 class WorldRegistry:

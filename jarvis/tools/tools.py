@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shlex
@@ -166,15 +167,27 @@ def terminal_run(command: str, timeout: float = 30.0, cwd: str = ".") -> ToolRes
 
 
 def python_run(code: str, timeout: float = 15.0) -> ToolResult:
-    """Restricted evaluation: math/logic only, no imports, no dunders."""
+    """Restricted evaluation: math/logic only, no imports, no dunders.
+
+    Hardened with an AST whitelist (not substring matching): only pure
+    expression/assignment statements over safe builtins are accepted.
+    Loops, definitions, imports, attribute access, and dunder names are
+    rejected before compilation, so neither branch can hang the process
+    or reach host internals.
+    """
     safe_builtins = {
         "abs": abs, "min": min, "max": max, "sum": sum, "len": len,
         "round": round, "sorted": sorted, "range": range, "enumerate": enumerate,
         "str": str, "int": int, "float": float, "bool": bool, "list": list,
         "dict": dict, "tuple": tuple, "set": set,
     }
-    if "__" in code or "import" in code:
-        return _fail("python_run", "blocked: dunder access and imports are not allowed")
+    if not isinstance(code, str) or not code.strip():
+        return _fail("python_run", "empty code")
+    if len(code) > 4000:
+        return _fail("python_run", "blocked: code exceeds 4000 characters")
+    allowed, reason = _python_ast_allowed(code, set(safe_builtins))
+    if not allowed:
+        return _fail("python_run", f"blocked: {reason}")
     try:
         compiled = compile(code, "<jarvis>", "eval")
         import time
@@ -182,18 +195,76 @@ def python_run(code: str, timeout: float = 15.0) -> ToolResult:
         result = eval(compiled, {"__builtins__": safe_builtins}, {})  # noqa: S307
         if time.time() > deadline:
             return _fail("python_run", "budget exceeded")
-        return _ok("python_run", {"result": result})
+        return _ok("python_run", {"result": _capped_result(result)})
     except SyntaxError:
         try:
             compiled = compile(code, "<jarvis>", "exec")
             namespace: dict[str, Any] = {}
             exec(compiled, {"__builtins__": safe_builtins}, namespace)  # noqa: S102
             namespace.pop("__builtins__", None)
-            return _ok("python_run", {"result": namespace.get("result"), "defined": sorted(namespace)})
+            return _ok("python_run", {"result": _capped_result(namespace.get("result")),
+                                      "defined": sorted(namespace)})
         except Exception as exc:
             return _fail("python_run", f"{type(exc).__name__}: {exc}")
     except Exception as exc:
         return _fail("python_run", f"{type(exc).__name__}: {exc}")
+
+
+_SAFE_EXPR_NODES = (
+    ast.Expression, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare,
+    ast.IfExp, ast.Call, ast.Name, ast.Load, ast.Store,
+    ast.Constant, ast.List, ast.Tuple, ast.Set, ast.Dict,
+    ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp,
+    ast.comprehension, ast.Add, ast.Sub, ast.Mult, ast.Div,
+    ast.FloorDiv, ast.Mod, ast.Pow, ast.USub, ast.UAdd, ast.Not,
+    ast.And, ast.Or, ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt,
+    ast.GtE, ast.Is, ast.IsNot, ast.In, ast.NotIn,
+    ast.Subscript, ast.Slice, ast.If, ast.Assign, ast.AnnAssign,
+    ast.AugAssign, ast.Expr, ast.Module, ast.keyword,
+)
+
+_BANNED_STMT_NAMES = (
+    "Import", "ImportFrom", "FunctionDef", "AsyncFunctionDef",
+    "ClassDef", "Lambda", "While", "For", "AsyncFor", "With",
+    "AsyncWith", "Global", "Nonlocal", "Delete", "Try", "Raise",
+    "Assert", "Yield", "YieldFrom", "Await", "NamedExpr",
+)
+
+
+def _python_ast_allowed(code: str, safe_names: set[str]) -> tuple[bool, str]:
+    """Whitelist check for python_run: (allowed, reason)."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as exc:
+        return False, f"syntax error: {exc}"[:160]
+    for node in ast.walk(tree):
+        name = type(node).__name__
+        if name in _BANNED_STMT_NAMES:
+            return False, f"{name} is not allowed"
+        if name == "Attribute":
+            attr = getattr(node, "attr", "")
+            if attr.startswith("_"):
+                return False, "dunder/private attribute access is not allowed"
+            return False, "attribute access is not allowed"
+        if name == "Name" and str(getattr(node, "id", "")).startswith("_"):
+            return False, "dunder/private names are not allowed"
+        if name == "Call":
+            func = getattr(node, "func", None)
+            if not isinstance(func, ast.Name) or func.id not in safe_names:
+                return False, "only safe builtins may be called"
+        elif not isinstance(node, _SAFE_EXPR_NODES):
+            return False, f"{name} is not allowed"
+    return True, "ok"
+
+
+def _capped_result(result: Any, limit: int = 2000) -> Any:
+    try:
+        text = repr(result)
+    except Exception:
+        return "[unrepresentable result]"
+    if len(text) > limit:
+        return text[:limit] + "…[truncated]"
+    return result
 
 
 def git_status(repo: str = ".") -> ToolResult:
