@@ -73,7 +73,17 @@ def build_parser() -> argparse.ArgumentParser:
     dots.add_argument("action", nargs="?", default="list",
                       choices=["list", "create", "inspect", "start",
                                "pause", "resume", "stop", "status",
-                               "explain", "wake"])
+                               "explain", "wake", "schedule", "tick",
+                               "notify"])
+    dots.add_argument("--kind", default="",
+                      help="schedule kind for dots schedule create")
+    dots.add_argument("--config", default="",
+                      help="JSON schedule config for dots schedule create")
+    dots.add_argument("--tz", default="UTC", help="schedule timezone")
+    dots.add_argument("--reason", default="",
+                      help="reason/context for schedule or wake")
+    dots.add_argument("--cooldown", type=float, default=300.0,
+                      help="schedule cooldown seconds")
     dots.add_argument("text", nargs="*", help="id, name/goal, or event summary")
     dots.add_argument("--role", default="general")
     dots.add_argument("--priority", type=int, default=5)
@@ -419,8 +429,139 @@ def main(argv: list[str] | None = None) -> int:
                 f"{r['dot_id'][:13]} → {r['outcome']}: {r['reason'][:100]}"
                 for r in results) or "(no activations ran)"
             return _out({"matched": matched, "activations": results}, text)
+        if action == "schedule":
+            parts = list(args.text)
+            sub = parts[0].lower() if parts else "list"
+            rest = parts[1:]
+            if sub == "list":
+                scheds = manager.list_schedules(
+                    rest[0] if rest else "")
+                payload = {"schedules": [s.to_dict() for s in scheds]}
+                text = "\n".join(
+                    f"{s.schedule_id[:13]:15} {s.kind:10} "
+                    f"dot={s.dot_id[:13]:15} "
+                    f"{'on' if s.enabled else 'off':4} "
+                    f"next={s.next_run or '-'} runs={s.activations}"
+                    for s in scheds) or "(no schedules yet)"
+                return _out(payload, text)
+            if sub == "create":
+                import json as _json
+                if len(rest) < 2:
+                    print("usage: jarvis dots schedule create <dot-id> "
+                          "<kind> --config '{...}' [--tz TZ] "
+                          "[--reason R] [--cooldown S]")
+                    jarvis.close()
+                    return 2
+                try:
+                    config = _json.loads(args.config or "{}")
+                except ValueError as exc:
+                    print(f"bad --config JSON: {exc}")
+                    jarvis.close()
+                    return 2
+                try:
+                    sched = manager.create_schedule(
+                        rest[0], rest[1], config=config,
+                        timezone=args.tz, reason=args.reason,
+                        cooldown_s=args.cooldown)
+                except (KeyError, ValueError) as exc:
+                    print(f"cannot create schedule: {exc}")
+                    jarvis.close()
+                    return 1
+                return _out({"schedule": sched.to_dict()},
+                            f"created {sched.schedule_id} "
+                            f"next={sched.next_run or '(event-driven)'}")
+            if sub in ("inspect", "enable", "disable", "delete"):
+                if not rest:
+                    print(f"usage: jarvis dots schedule {sub} <schedule-id>")
+                    jarvis.close()
+                    return 2
+                sid = rest[0]
+                try:
+                    if sub == "inspect":
+                        sched = manager.get_schedule(sid)
+                        if sched is None:
+                            print(f"unknown schedule: {sid}")
+                            jarvis.close()
+                            return 2
+                        return _out({"schedule": sched.to_dict()},
+                                    json.dumps(sched.to_dict(), indent=2,
+                                               default=str))
+                    if sub == "enable":
+                        sched = manager.enable_schedule(sid)
+                    elif sub == "disable":
+                        sched = manager.disable_schedule(sid)
+                    else:
+                        if not manager.delete_schedule(sid):
+                            print(f"unknown schedule: {sid}")
+                            jarvis.close()
+                            return 2
+                        return _out({"deleted": sid}, f"deleted {sid}")
+                except KeyError as exc:
+                    print(f"unknown schedule: {exc}")
+                    jarvis.close()
+                    return 2
+                return _out({"schedule": sched.to_dict()},
+                            f"{sid}: enabled={sched.enabled}")
+            if sub == "wake":
+                if not rest:
+                    print("usage: jarvis dots schedule wake <dot-id>")
+                    jarvis.close()
+                    return 2
+                dot = manager.get(rest[0])
+                if dot is None:
+                    print(f"unknown dot: {rest[0]}")
+                    jarvis.close()
+                    return 2
+                from .dots.runtime import DotRuntime, RuntimeContext
+                from .dots import wake as wake_mod
+                report = wake_mod.fire_dot(
+                    manager, jarvis.proactive, dot,
+                    args.reason or "manual schedule wake",
+                    DotRuntime(manager),
+                    RuntimeContext(
+                        orchestrator=jarvis.orchestrator,
+                        tasks=jarvis.tasks, palace=jarvis.palace,
+                        world_registry=jarvis.world_registry,
+                        policy=jarvis.policy),
+                    policy=jarvis.policy)
+                return _out(report, json.dumps(report, indent=2,
+                                               default=str))
+            print("usage: jarvis dots schedule "
+                  "list|create|inspect|enable|disable|delete|wake [--json]")
+            jarvis.close()
+            return 2
+        if action == "tick":
+            # On-demand schedule evaluation. No threads, no daemons:
+            # whoever invokes tick (human, cron, service loop) drives it.
+            from .dots import wake as wake_mod
+            from .dots.runtime import DotRuntime, RuntimeContext
+            ctx = RuntimeContext(
+                orchestrator=jarvis.orchestrator, tasks=jarvis.tasks,
+                palace=jarvis.palace,
+                world_registry=jarvis.world_registry, policy=jarvis.policy)
+            reports = wake_mod.poll_schedules(
+                manager, jarvis.triggers, jarvis.proactive,
+                policy=jarvis.policy, bus=jarvis.bus,
+                activate=lambda dot, reason, event: DotRuntime(
+                    manager).activate(dot, reason, ctx, event=event))
+            payload = {"wakes": reports}
+            fired = [r for r in reports if r.get("status") == "activated"]
+            text = (f"{len(fired)} activation(s), "
+                    f"{len(reports)} schedule(s) checked" if reports
+                    else "(no schedules configured)")
+            return _out(payload, text)
+        if action == "notify":
+            notes = jarvis.proactive.notifications
+            payload = {"notifications": notes[-20:]}
+            if as_json:
+                return _out(payload, json.dumps(payload, indent=2,
+                                                 default=str))
+            lines = [f"{n.get('text', '')[:100]} [{n.get('level', '')}]"
+                     for n in notes[-20:]] or ["(no notifications)"]
+            return _out(payload, "\n".join(lines))
         print('usage: jarvis dots '
-              'list|create|inspect|start|pause|resume|stop|status|explain|wake')
+              'list|create|inspect|start|pause|resume|stop|status|explain|wake|'
+              'schedule|tick|notify')
         jarvis.close()
         return 2
 

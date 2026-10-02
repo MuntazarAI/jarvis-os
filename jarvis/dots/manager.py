@@ -58,8 +58,10 @@ class DotManager:
     """Central Dot lifecycle owner. No threads, no polling, no execution."""
 
     def __init__(self, deps: DotDependencies | None = None) -> None:
+        from .schedule import DotSchedule
         self.deps = deps or DotDependencies()
         self.dots: dict[str, Dot] = {}
+        self.schedules: dict[str, DotSchedule] = {}
         # (dot_id, fingerprint) pairs already routed and not yet consumed.
         self._pending: dict[str, str] = {}
         if self.deps.store is not None:
@@ -74,6 +76,8 @@ class DotManager:
             "saved_at": now(),
             "dots": {dot_id: _scrub(dot.to_dict())
                      for dot_id, dot in self.dots.items()},
+            "schedules": {sid: _scrub(sched.to_dict())
+                          for sid, sched in self.schedules.items()},
         })
 
     def load(self) -> int:
@@ -85,6 +89,7 @@ class DotManager:
             return 0
         if not isinstance(data, dict):
             return 0
+        from .schedule import DotSchedule
         count = 0
         for dot_id, raw in (data.get("dots") or {}).items():
             try:
@@ -94,7 +99,76 @@ class DotManager:
             dot.dot_id = dot_id
             self.dots[dot_id] = dot
             count += 1
+        for sid, raw in (data.get("schedules") or {}).items():
+            try:
+                sched = DotSchedule.from_dict(raw)
+            except Exception:
+                continue
+            sched.schedule_id = sid
+            self.schedules[sid] = sched
         return count
+
+    # -- schedules ---------------------------------------------------
+    def create_schedule(self, dot_id: str, kind: str,
+                        config: dict[str, Any] | None = None,
+                        timezone: str = "UTC", reason: str = "",
+                        cooldown_s: float = 300.0,
+                        max_activations: int = 0) -> Any:
+        """Create + validate a wake schedule for an existing Dot."""
+        from .schedule import DotSchedule, compute_next, validate_schedule
+        if dot_id not in self.dots:
+            raise KeyError(f"unknown dot: {dot_id}")
+        checked = validate_schedule(kind, dict(config or {}), timezone)
+        sched = DotSchedule(
+            dot_id=dot_id, kind=checked["kind"], config=checked["config"],
+            timezone=checked["timezone"], reason=reason,
+            cooldown_s=cooldown_s, max_activations=max_activations)
+        if kind in ("one-time", "interval", "daily", "weekly"):
+            sched.next_run = compute_next(
+                sched.kind, sched.config, sched.timezone, now(),
+                created_at=sched.created_at)
+            if sched.next_run is None:
+                raise ValueError(
+                    "schedule would never fire (one-time time is in the past?)")
+        self.schedules[sched.schedule_id] = sched
+        self.persist()
+        return sched
+
+    def get_schedule(self, schedule_id: str) -> Any | None:
+        return self.schedules.get(schedule_id)
+
+    def list_schedules(self, dot_id: str = "") -> list[Any]:
+        scheds = self.schedules.values()
+        if dot_id:
+            scheds = [s for s in scheds if s.dot_id == dot_id]
+        return sorted(scheds, key=lambda s: s.created_at)
+
+    def enable_schedule(self, schedule_id: str) -> Any:
+        sched = self._require_schedule(schedule_id)
+        sched.enabled = True
+        sched.updated_at = now()
+        self.persist()
+        return sched
+
+    def disable_schedule(self, schedule_id: str) -> Any:
+        sched = self._require_schedule(schedule_id)
+        sched.enabled = False
+        sched.updated_at = now()
+        self.persist()
+        return sched
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        if schedule_id not in self.schedules:
+            return False
+        del self.schedules[schedule_id]
+        self.persist()
+        return True
+
+    def _require_schedule(self, schedule_id: str) -> Any:
+        sched = self.schedules.get(schedule_id)
+        if sched is None:
+            raise KeyError(f"unknown schedule: {schedule_id}")
+        return sched
 
     # -- lifecycle -----------------------------------------------------
     def create(self, name: str, goal: str, role: str = "general",
@@ -244,6 +318,14 @@ class DotManager:
 
     def consume_pending(self, dot_id: str, fingerprint: str) -> bool:
         return self._pending.pop(f"{dot_id}|{fingerprint}", None) is not None
+
+    def mark_pending(self, dot_id: str, fingerprint: str) -> bool:
+        """Queue one pending activation marker. False if already queued."""
+        key = f"{dot_id}|{fingerprint}"
+        if key in self._pending:
+            return False
+        self._pending[key] = dot_id
+        return True
 
     def pending(self, dot_id: str) -> list[str]:
         """Fingerprints queued for this Dot, oldest first."""

@@ -235,3 +235,33 @@ uses → tool, observes → entity, related_to → goals) and store goals via
 `palace.store_goal`. Trigger subscriptions match Proactive 3.0 events
 with per-dot dedupe. CLI: `dots list|create|inspect|start|pause|resume|
 stop|status|explain|wake [--json]`.
+
+## Dots 3.2 — scheduled wakes, notifications, adaptive attention
+
+Schedules (`jarvis/dots/schedule.py`) describe *when* a Dot deserves
+attention — one-time, interval (≥60s), daily, weekly, event-triggered,
+manual — with timezone validation, cooldowns, failure backoff, max
+activations, and next/last-run bookkeeping persisted in `dots.json`.
+Schedules never execute: `jarvis/dots/wake.py` evaluates due schedules
+on demand (`dots tick`, human/cron-driven, no daemons) through
+TriggerEngine → EventBus → ProactiveEngine attention → DotRuntime →
+Orchestrator → PolicyEngine. Overlapping activations are serialized per
+Dot; per-poll wake caps stop storms; completed Dots recover a fresh
+cycle while failed/blocked/stopped/paused Dots never auto-restart.
+
+Notifications (`jarvis/notify/`): provider-neutral interface with a
+log-file backend (always available), desktop backend (only when
+notify-send exists), and a mock backend for tests. Policy gates master
+switch, quiet hours, per-key cooldown, hourly rate, expiry, and
+emergency stop. Secrets are scrubbed before build/storage.
+
+Attention feedback (`ProactiveEngine.record_outcome`,
+`update_weights`): only observed outcomes (notified/interacted/approved/
+ignored/useful) move three bounded [0.5, 1.5] factor weights by ±0.05,
+each change logged with provenance. Explicit overrides
+(notifications, learning, quiet hours, cooldowns, rates, per-dot prefs,
+weight reset) always win. `explain` shows weights and their history.
+
+Separation kept: TriggerEngine fires, ProactiveEngine attends, Dot
+owns responsibility, Orchestrator coordinates, PolicyEngine authorizes,
+World Model represents, Memory preserves.

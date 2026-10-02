@@ -94,6 +94,13 @@ class Jarvis:
         self.proactive = ProactiveEngine(
             home=str(self.config.paths.resolve("home")))
         self.proactive.attach(self.bus)
+        from ..notify.notifications import (
+            DesktopBackend, LogBackend, Notifier)
+        home_dir = str(self.config.paths.resolve("home"))
+        self.notifier = Notifier(
+            backends=[LogBackend(f"{home_dir}/notifications.jsonl"),
+                      DesktopBackend()])
+        self.proactive.set_notifier(self.notifier)
         self.models = default_models(self.config)
         self.router = ModelRouter(self.models, self.config)
         self.policy = PolicyEngine(self.config)

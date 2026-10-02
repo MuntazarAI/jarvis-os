@@ -194,9 +194,17 @@ class AttentionEngine:
         self.cooldown_s = cooldown_s
         self._seen: dict[str, dict[str, Any]] = {}
 
+    #: Adaptive multipliers keyed by scoring factor. Bounded [0.5, 1.5].
+    #: Base urgency, confidence scaling and safety caps are NEVER weighted.
+    WEIGHT_FACTORS = ("novelty", "recurrence", "goal_relevance")
+    WEIGHT_MIN = 0.5
+    WEIGHT_MAX = 1.5
+
     def score(self, event: ProactiveEvent,
-              goal_texts: list[str] | None = None) -> AttentionCandidate:
+              goal_texts: list[str] | None = None,
+              weights: dict[str, float] | None = None) -> AttentionCandidate:
         reasons: list[str] = []
+        weights = weights or {}
         base = URGENCY.get(event.type, 0.3)
         reasons.append(f"base urgency {base:.2f} for type {event.type}")
         score = base
@@ -216,14 +224,18 @@ class AttentionEngine:
         # Novelty: first sighting of this fingerprint matters more.
         # (fp already computed above for the zero-confidence guard.)
         seen = self._seen.get(fp)
+        w_novel = float(weights.get("novelty", 1.0))
+        w_recur = float(weights.get("recurrence", 1.0))
         if seen is None:
-            score += 0.15
-            reasons.append("novel: first occurrence of this signal")
+            score += 0.15 * w_novel
+            reasons.append("novel: first occurrence of this signal"
+                           + (f" (weight {w_novel:.2f})" if w_novel != 1.0 else ""))
         else:
-            score += min(0.2, 0.05 * seen["count"])
+            score += min(0.2, 0.05 * seen["count"]) * w_recur
             reasons.append(
                 f"recurring: seen {seen['count']}x before "
-                f"(raises urgency, cooldown still applies)")
+                f"(raises urgency, cooldown still applies)"
+                + (f" (weight {w_recur:.2f})" if w_recur != 1.0 else ""))
         # Goal relevance: entity or keywords overlap stated goals.
         goal_hit = False
         for goal in goal_texts or []:
@@ -233,8 +245,10 @@ class AttentionEngine:
                 goal_hit = True
                 break
         if goal_hit:
-            score += 0.2
-            reasons.append("relevant to a stated user goal")
+            w_goal = float(weights.get("goal_relevance", 1.0))
+            score += 0.2 * w_goal
+            reasons.append("relevant to a stated user goal"
+                           + (f" (weight {w_goal:.2f})" if w_goal != 1.0 else ""))
         # Untrusted content is capped: it may inform, never drive action.
         if not event.trusted:
             score = min(score, 0.65)
@@ -279,6 +293,7 @@ class ProactiveDecision:
     plan: dict[str, Any] | None = None
     question: str = ""
     notification: str = ""
+    source_dot: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -287,6 +302,7 @@ class ProactiveDecision:
             "confidence": self.confidence, "policy_status": self.policy_status,
             "timestamp": self.timestamp, "plan": self.plan,
             "question": self.question, "notification": self.notification,
+            "source_dot": self.source_dot,
         }
 
     @classmethod
@@ -301,7 +317,8 @@ class ProactiveDecision:
             timestamp=data.get("timestamp", now()),
             plan=data.get("plan"),
             question=data.get("question", ""),
-            notification=data.get("notification", ""))
+            notification=data.get("notification", ""),
+            source_dot=data.get("source_dot", ""))
 
     def explain(self) -> str:
         lines = [f"decision {self.decision} for {self.candidate_id} "
@@ -327,6 +344,21 @@ class ProactiveEngine:
     No threads, no polling, no model calls, no tool execution.
     """
 
+    #: Explicit user settings. Learning and notifications below always
+    #: defer to these; behavior is never inferred.
+    DEFAULT_OVERRIDES = {
+        "notifications_enabled": True,
+        "learning_enabled": True,
+        "quiet_hours": None,  # [start_hour, end_hour] or None
+        "notification_cooldown_s": 600.0,
+        "max_notifications_per_hour": 10,
+        "per_dot": {},  # dot_id -> {"notifications": bool}
+    }
+
+    #: Observable outcome fields. Only these keys are stored.
+    OUTCOME_FIELDS = ("notified", "interacted", "approved", "task_succeeded",
+                      "ignored", "useful", "note")
+
     def __init__(self, home: str | Path | None = None,
                  cooldown_s: float = 3600.0, max_records: int = 200) -> None:
         self._goal_texts: list[str] = []
@@ -334,6 +366,13 @@ class ProactiveEngine:
         self.candidates: dict[str, AttentionCandidate] = {}
         self.decisions: dict[str, ProactiveDecision] = {}
         self.notifications: list[dict[str, Any]] = []
+        self.outcomes: list[dict[str, Any]] = []
+        self.weights: dict[str, float] = {f: 1.0 for f in
+                                          AttentionEngine.WEIGHT_FACTORS}
+        self.weight_history: list[dict[str, Any]] = []
+        self.overrides: dict[str, Any] = json.loads(
+            json.dumps(self.DEFAULT_OVERRIDES))
+        self._notifier: Any = None
         self.max_records = max_records
         self.home = Path(home) if home else None
         if self.home is not None:
@@ -357,6 +396,10 @@ class ProactiveEngine:
                               list(self.decisions.values())[-self.max_records:]],
                 "notifications": self.notifications[-self.max_records:],
                 "attention": self.attention.snapshot(),
+                "outcomes": self.outcomes[-self.max_records:],
+                "weights": dict(self.weights),
+                "weight_history": self.weight_history[-self.max_records:],
+                "overrides": self.overrides,
             }
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps(data, default=str, indent=2))
@@ -387,6 +430,23 @@ class ProactiveEngine:
         self.notifications = data.get("notifications", [])[-self.max_records:]
         if "attention" in data:
             self.attention.restore(data["attention"])
+        self.outcomes = [o for o in data.get("outcomes", [])
+                         if isinstance(o, dict)][-self.max_records:]
+        if isinstance(data.get("weights"), dict):
+            for factor in AttentionEngine.WEIGHT_FACTORS:
+                value = data["weights"].get(factor, 1.0)
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    continue
+                self.weights[factor] = max(AttentionEngine.WEIGHT_MIN, min(
+                    AttentionEngine.WEIGHT_MAX, value))
+        if isinstance(data.get("weight_history"), list):
+            self.weight_history = data["weight_history"][-self.max_records:]
+        if isinstance(data.get("overrides"), dict):
+            for key in self.DEFAULT_OVERRIDES:
+                if key in data["overrides"]:
+                    self.overrides[key] = data["overrides"][key]
 
     # -- intake -----------------------------------------------------
     def attach(self, bus: Any) -> None:
@@ -425,7 +485,8 @@ class ProactiveEngine:
                     self.attention.note_seen(fp)
                     return None
         candidate = self.attention.score(
-            event, goal_texts=getattr(self, "_goal_texts", None))
+            event, goal_texts=getattr(self, "_goal_texts", None),
+            weights=dict(self.weights))
         candidate.event_ids = [event.event_id]
         self.attention.note_seen(fp)
         self.candidates[candidate.candidate_id] = candidate
@@ -469,14 +530,19 @@ class ProactiveEngine:
             self.notifications.append(
                 {"candidate_id": cand.candidate_id, "text": note,
                  "at": now(), "level": cand.level})
+            self._maybe_notify(decision, cand)
             return decision
         if cand.score < 0.8 or not _trusted_candidate(cand):
             question = (f"I noticed {cand.type}"
                         + (f" involving {cand.entity}" if cand.entity else "")
                         + ". Want me to look into it?")
-            return self._record(cand, DECISION_ASK,
-                                reasons + ["needs human judgment"], cand.confidence,
-                                question=question, evidence_refs=evidence)
+            decision = self._record(cand, DECISION_ASK,
+                                    reasons + ["needs human judgment"],
+                                    cand.confidence,
+                                    question=question,
+                                    evidence_refs=evidence)
+            self._maybe_notify(decision, cand)
+            return decision
         plan = {"team": _team_for(cand.type), "depth": 2,
                 "goal": f"investigate: {cand.type} {cand.entity}".strip()}
         return self._record(cand, DECISION_PLAN,
@@ -645,14 +711,210 @@ class ProactiveEngine:
         decision = self.decisions.get(candidate_id)
         parts.append(decision.explain() if decision
                      else "no decision recorded yet")
+        parts.append("attention weights: " + ", ".join(
+            f"{f}={self.weights.get(f, 1.0):.2f}"
+            for f in AttentionEngine.WEIGHT_FACTORS)
+            + " (explicit user settings always win; see overrides)")
         return "\n".join(parts)
+
+    def _quiet_tuple(self) -> tuple[int, int] | None:
+        raw = self.overrides.get("quiet_hours")
+        if isinstance(raw, (list, tuple)) and len(raw) == 2:
+            return (int(raw[0]), int(raw[1]))
+        return None
 
     def status(self) -> dict[str, Any]:
         pending = [c for c in self.candidates.values() if c.status == "pending"]
         return {"candidates": len(self.candidates), "pending": len(pending),
                 "decided": len(self.decisions),
                 "notifications": len(self.notifications),
+                "outcomes": len(self.outcomes),
+                "weights": dict(self.weights),
+                "learning_enabled": self.overrides.get("learning_enabled", True),
                 "levels": {c.candidate_id: c.level for c in pending}}
+
+    def _maybe_notify(self, decision: ProactiveDecision,
+                      cand: AttentionCandidate) -> None:
+        """Deliver INFORM/ASK decisions through the attached notifier, if any.
+
+        Explicit user overrides always win: notifications_enabled off,
+        quiet hours, per-dot preference, cooldowns and rate limits are
+        applied here; adaptive weights never affect delivery.
+        Delivery failures never affect the decision itself.
+        """
+        if self._notifier is None:
+            return
+        try:
+            policy = getattr(self._notifier, "policy", None)
+            if policy is not None:
+                policy.enabled = bool(self.overrides.get(
+                    "notifications_enabled", True))
+                policy.quiet_hours = self._quiet_tuple()
+                policy.cooldown_s = float(self.overrides.get(
+                    "notification_cooldown_s", policy.cooldown_s))
+                policy.max_per_hour = int(self.overrides.get(
+                    "max_notifications_per_hour", policy.max_per_hour))
+                per_dot = self.overrides.get("per_dot", {}) or {}
+                dot_pref = per_dot.get(decision.source_dot, {})
+                if isinstance(dot_pref, dict) and \
+                        dot_pref.get("notifications") is False:
+                    return
+            from ..notify.notifications import Notification, scrub_notification
+            payload = scrub_notification({
+                "source_dot": "",
+                "type": ("question" if decision.decision == DECISION_ASK
+                         else "info"),
+                "title": f"JARVIS noticed: {cand.type}",
+                "message": decision.question or decision.notification,
+                "priority": "high" if cand.level in ("high", "critical")
+                else "normal",
+                "dedup_key": f"proactive:{cand.fingerprint}",
+                "related_event": cand.source_event_id,
+                "evidence_refs": decision.evidence_refs,
+                "requires_approval": decision.decision == DECISION_ASK,
+                "expires_at": cand.expires_at,
+            })
+            notification = Notification(**payload)
+            self._notifier.deliver(notification)
+        except Exception:
+            pass
+
+    # -- notifier ---------------------------------------------------
+    def set_notifier(self, notifier: Any) -> None:
+        """Attach a notification dispatcher (see jarvis.notify)."""
+        self._notifier = notifier
+
+    def _maybe_notify(self, decision: ProactiveDecision,
+                      candidate: AttentionCandidate) -> None:
+        if self._notifier is None:
+            return
+        if decision.decision not in (DECISION_INFORM, DECISION_ASK):
+            return
+        try:
+            self._notifier.deliver_decision(self, decision, candidate)
+        except Exception:
+            pass
+
+    # -- overrides ----------------------------------------------------
+    def set_override(self, key: str, value: Any) -> dict[str, Any]:
+        """Explicit user setting. Unknown keys rejected, never inferred."""
+        if key not in self.DEFAULT_OVERRIDES:
+            raise KeyError(f"unknown override: {key}")
+        if key == "quiet_hours" and value is not None:
+            if (not isinstance(value, (list, tuple)) or len(value) != 2
+                    or not all(isinstance(h, int) and 0 <= h <= 23
+                               for h in value)):
+                raise ValueError("quiet_hours must be [start_hour, end_hour]")
+            value = [int(value[0]), int(value[1])]
+        self.overrides[key] = value
+        return dict(self.overrides)
+
+    def reset_weights(self) -> dict[str, float]:
+        """Restore default attention weights. History is preserved."""
+        self.weights = {f: 1.0 for f in AttentionEngine.WEIGHT_FACTORS}
+        self.weight_history.append(
+            {"at": now(), "action": "reset", "weights": dict(self.weights)})
+        return dict(self.weights)
+
+    # -- outcomes + adaptive weights ------------------------------------
+    def record_outcome(self, candidate_id: str, **fields: Any) -> dict[str, Any]:
+        """Record an OBSERVED outcome. Only documented fields are stored.
+
+        Useful/redundant/interacted/approved/ignored come from explicit
+        user actions or verifiable task results — never inferred.
+        """
+        cand = self.candidates.get(candidate_id)
+        if cand is None:
+            raise KeyError(f"unknown candidate: {candidate_id}")
+        unknown = set(fields) - set(self.OUTCOME_FIELDS)
+        if unknown:
+            raise ValueError(f"unknown outcome fields: {sorted(unknown)}")
+        record = {"candidate_id": candidate_id,
+                  "event_type": cand.type, "decision": None,
+                  "at": now(), "applied": False}
+        decision = self.decisions.get(candidate_id)
+        if decision is not None:
+            record["decision"] = decision.decision
+        for key in self.OUTCOME_FIELDS:
+            if key in fields:
+                record[key] = fields[key]
+        self.outcomes.append(record)
+        self.outcomes = self.outcomes[-self.max_records:]
+        return record
+
+    def update_weights(self) -> list[dict[str, Any]]:
+        """Apply small bounded updates from unapplied outcomes.
+
+        Rules (transparent, conservative):
+        - useful notification/interaction → +0.05 on factors that fired
+        - ignored or explicitly useless → -0.05
+        - bounds [0.5, 1.5]; learning toggle respected; security caps
+          and thresholds in scoring are never touched.
+        """
+        applied: list[dict[str, Any]] = []
+        if not self.overrides.get("learning_enabled", True):
+            return applied
+        for outcome in self.outcomes:
+            if outcome.get("applied"):
+                continue
+            outcome["applied"] = True
+            useful = bool(outcome.get("useful")) or bool(
+                outcome.get("interacted")) or bool(outcome.get("approved"))
+            # Explicit redundancy signals: ignored, or useful=False.
+            redundant = (outcome.get("useful") is False) or (
+                bool(outcome.get("ignored")) and not useful)
+            if useful == redundant:
+                continue  # no usable signal either way
+            delta = 0.05 if useful else -0.05
+            cand = self.candidates.get(outcome["candidate_id"])
+            factors = self._factors_for(outcome.get("event_type", ""),
+                                        cand)
+            for factor in factors:
+                old = self.weights.get(factor, 1.0)
+                new = round(max(AttentionEngine.WEIGHT_MIN,
+                                min(AttentionEngine.WEIGHT_MAX,
+                                    old + delta)), 3)
+                if new != old:
+                    self.weights[factor] = new
+                    applied.append({
+                        "at": now(), "factor": factor,
+                        "old": old, "new": new,
+                        "candidate_id": outcome["candidate_id"],
+                        "reason": ("positive outcome observed"
+                                   if delta > 0 else
+                                   "ignored/redundant outcome observed")})
+        self.weight_history.extend(applied)
+        return applied
+
+    @staticmethod
+    def _factors_for(event_type: str,
+                     cand: Any | None) -> list[str]:
+        """Which scoring factors participated. Conservative default: all
+        additive factors share credit/blame equally."""
+        factors = ["novelty"]
+        if cand is not None:
+            reasons = " ".join(getattr(cand, "reasons", []))
+            if "recurring" in reasons:
+                factors.append("recurrence")
+            if "stated user goal" in reasons:
+                factors.append("goal_relevance")
+        return factors
+
+    def explain_weights(self) -> str:
+        lines = ["attention weights (bounded [0.5, 1.5]):"]
+        for factor in AttentionEngine.WEIGHT_FACTORS:
+            lines.append(f"  {factor}: {self.weights.get(factor, 1.0):.2f}")
+        lines.append(f"learning: {'on' if self.overrides.get('learning_enabled', True) else 'off (explicit user setting)'}")
+        recent = self.weight_history[-5:]
+        if recent:
+            lines.append("recent updates:")
+            for entry in recent:
+                lines.append(
+                    f"  {entry.get('factor')}: {entry.get('old')} → "
+                    f"{entry.get('new')} ({entry.get('reason')})")
+        else:
+            lines.append("no adaptive updates yet (defaults in effect)")
+        return "\n".join(lines)
 
 
 def _trusted_candidate(cand: AttentionCandidate) -> bool:
