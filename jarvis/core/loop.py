@@ -112,6 +112,14 @@ class Jarvis:
         self.orchestrator = self._build_orchestrator()
         self.tasks = TaskEngine()
         self.triggers = TriggerEngine()
+        from ..dots.manager import DotDependencies, DotManager
+        from ..world.registry import JsonFileWorldStore as DotStore
+        self.dot_store = DotStore(
+            str(self.config.paths.resolve("home") / "dots.json"))
+        self.dots = DotManager(DotDependencies(
+            tasks=self.tasks, palace=self.palace,
+            world_registry=self.world_registry, triggers=self.triggers,
+            store=self.dot_store, policy=self.policy))
         self.self_model = SelfModel(permissions=["fs.read", "exec.eval"])
         for perm in ("fs.read", "exec.eval", "desktop.screenshot",
                      "desktop.windows", "clipboard.read"):
@@ -682,5 +690,9 @@ class Jarvis:
             pass
         try:
             self.proactive.save()
+        except Exception:
+            pass
+        try:
+            self.dots.persist()
         except Exception:
             pass

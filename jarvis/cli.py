@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from typing import Any
 from pathlib import Path
 
 from .core.config import JarvisConfig
@@ -67,6 +68,23 @@ def build_parser() -> argparse.ArgumentParser:
     ag.add_argument("--task", default="", help="task id for explain")
     ag.add_argument("--json", action="store_true",
                     help="machine-readable output")
+
+    dots = sub.add_parser("dots", help="persistent autonomous workers")
+    dots.add_argument("action", nargs="?", default="list",
+                      choices=["list", "create", "inspect", "start",
+                               "pause", "resume", "stop", "status",
+                               "explain", "wake"])
+    dots.add_argument("text", nargs="*", help="id, name/goal, or event summary")
+    dots.add_argument("--role", default="general")
+    dots.add_argument("--priority", type=int, default=5)
+    dots.add_argument("--workspace", default="",
+                      help="workspace root path restriction")
+    dots.add_argument("--tools", default="",
+                      help="comma-separated allowed tools")
+    dots.add_argument("--updates", default="",
+                      help="comma-separated trigger subscriptions")
+    dots.add_argument("--json", action="store_true",
+                      help="machine-readable output")
 
     pro = sub.add_parser("proactive", help="proactive attention + decisions")
     pro.add_argument("action", nargs="?", default="status",
@@ -275,6 +293,136 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(payload, indent=2, default=str))
         jarvis.close()
         return 0
+
+    if args.command == "dots":
+        from .dots.manager import DotManager
+        from .dots.runtime import DotRuntime, RuntimeContext
+        manager = jarvis.dots
+        action = args.action
+        as_json = args.json
+
+        def _out(payload: Any, text: str) -> int:
+            if as_json:
+                print(json.dumps(payload, indent=2, default=str))
+            else:
+                print(text)
+            jarvis.close()
+            return 0
+
+        if action == "list":
+            dots = manager.list()
+            payload = {"dots": [d.to_dict() for d in dots]}
+            text = "\n".join(
+                f"{d.dot_id[:13]:15} {d.name:24} {d.status.value:12} "
+                f"progress={d.progress:.0%}" for d in dots) or "(no dots yet)"
+            return _out(payload, text)
+        if action == "create":
+            text = " ".join(args.text).strip()
+            if not text or "|" not in text:
+                print('usage: jarvis dots create "Name | goal text" '
+                      "[--role R] [--priority N] [--workspace PATH] "
+                      "[--tools a,b] [--updates t1,t2]")
+                jarvis.close()
+                return 2
+            name, _, goal = text.partition("|")
+            workspace = {"root": args.workspace} if args.workspace else {}
+            dot = manager.create(
+                name=name.strip(), goal=goal.strip(), role=args.role,
+                priority=args.priority, workspace=workspace,
+                tools=[t.strip() for t in args.tools.split(",") if t.strip()],
+                trigger_subscriptions=[
+                    u.strip() for u in args.updates.split(",") if u.strip()])
+            return _out({"dot": dot.to_dict()},
+                        f"created {dot.dot_id} ({dot.status.value})")
+        if action == "status" and not args.text:
+            dots = manager.list()
+            by_status: dict[str, int] = {}
+            for dot in dots:
+                by_status[dot.status.value] = by_status.get(dot.status.value, 0) + 1
+            payload = {"dots": len(dots), "by_status": by_status,
+                       "pending_activations": len(manager._pending)}
+            if as_json:
+                print(json.dumps(payload, indent=2, default=str))
+            else:
+                print(f"dots: {len(dots)}  "
+                      + " ".join(f"{status}={count}"
+                                 for status, count in sorted(by_status.items()))
+                      or "(no dots yet)")
+                if not dots:
+                    print("(no dots yet)")
+            jarvis.close()
+            return 0
+        if action in ("inspect", "status", "explain"):
+            dot_id = " ".join(args.text).strip()
+            info = manager.inspect(dot_id) if dot_id else None
+            if info is None:
+                print(f"unknown dot: {dot_id or '(none given)'}")
+                jarvis.close()
+                return 2
+            if action == "explain":
+                lines = [
+                    f"dot {info['dot_id']} ({info['name']}): "
+                    f"{info['status']}, progress={info['progress']:.0%}",
+                    f"  goal: {info['goal'][:120]}",
+                    f"  tasks: {info['task_ids']}",
+                    f"  failures: {info['failures'][-3:] if info['failures'] else []}",
+                    f"  checkpoint: "
+                    f"{(info['checkpoint'] or {}).get('checkpoint_id', 'none')}",
+                    f"  traces: {info['trace_refs'][-3:] if info['trace_refs'] else []}",
+                ]
+                return _out(info, "\n".join(lines))
+            return _out(info, json.dumps(info, indent=2, default=str))
+        if action in ("start", "pause", "resume", "stop"):
+            dot_id = " ".join(args.text).strip()
+            if not dot_id:
+                print(f"usage: jarvis dots {action} <dot-id>")
+                jarvis.close()
+                return 2
+            try:
+                if action == "pause":
+                    dot = manager.pause(dot_id)
+                else:
+                    dot = getattr(manager, action)(
+                        dot_id, reason=f"cli {action}")
+            except (KeyError, ValueError, Exception) as exc:
+                print(f"cannot {action} {dot_id}: {exc}")
+                jarvis.close()
+                return 1
+            return _out({"dot": dot.to_dict()},
+                        f"{dot.dot_id}: {dot.status.value}")
+        if action == "wake":
+            # Event-driven activation: match text against subscriptions,
+            # then run ONE bounded activation for each matched Dot.
+            event = {"type": "manual", "entity": "", "summary": " ".join(args.text)}
+            matched = manager.route_event(event)
+            if not matched:
+                return _out({"matched": [], "activations": []},
+                            "(no subscribed dots matched)")
+            runtime = DotRuntime(manager)
+            ctx = RuntimeContext(
+                orchestrator=jarvis.orchestrator, tasks=jarvis.tasks,
+                palace=jarvis.palace,
+                world_registry=jarvis.world_registry, policy=jarvis.policy)
+            results = []
+            for dot_id in matched:
+                dot = manager.get(dot_id)
+                if dot is None:
+                    continue
+                for fingerprint in manager.pending(dot_id):
+                    manager.consume_pending(dot_id, fingerprint)
+                result = runtime.activate(
+                    dot, reason=f"cli wake: {event['summary'][:80]}",
+                    ctx=ctx, event=event)
+                results.append(result.to_dict())
+            manager.persist()
+            text = "\n".join(
+                f"{r['dot_id'][:13]} → {r['outcome']}: {r['reason'][:100]}"
+                for r in results) or "(no activations ran)"
+            return _out({"matched": matched, "activations": results}, text)
+        print('usage: jarvis dots '
+              'list|create|inspect|start|pause|resume|stop|status|explain|wake')
+        jarvis.close()
+        return 2
 
     if args.command == "proactive":
         engine = jarvis.proactive

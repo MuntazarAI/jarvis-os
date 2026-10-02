@@ -201,3 +201,37 @@ PolicyEngine → approval → action only when permitted
 - Bounded JSON persistence (`proactive.json`); corrupt files load as empty
 - No threads, no polling, no model calls; EventBus subscription only
 - CLI: `proactive status|candidates|explain <id>|scan [--json]`
+
+## Dots 3.1 — persistent autonomous workers
+
+A Dot is a persistent responsibility owner, not an agent and not a task:
+
+- Agent = capability/worker role (orchestrated per activation)
+- Task = one unit of work (TaskEngine)
+- Goal = desired persistent outcome (memory tier goal)
+- Proactive Engine = decides what deserves attention
+- Dot = persistent owner of a responsibility across sessions
+- Orchestrator = coordinates agents per activation
+- PolicyEngine = authorizes every action
+- World Model = represents state/reality
+- Memory = preserves knowledge/context
+
+Lifecycle: CREATED → READY → RUNNING → (WAITING | PAUSED | BLOCKED |
+NEEDS_APPROVAL | COMPLETED | FAILED | STOPPED). Terminal states leave
+only via explicit recover(), which archives the run and starts fresh.
+All transitions validated; anything else raises InvalidTransition.
+
+Each activation is bounded: emergency-stop check → load state → find or
+create one TaskEngine task → workspace + injection checks → one
+Orchestrator.run with tight budgets → evidence recorded → progress
+updated → checkpoint written → state persisted. No threads, no polling.
+
+Checkpoints are atomic JSON (tmp + replace) and record task state,
+completed/pending work, evidence/operation refs, budgets, failures, and
+an explicit uncertain flag. Uncertain work is never marked completed.
+
+Dots mirror into WorldRegistry as `agent` entities (owns → task,
+uses → tool, observes → entity, related_to → goals) and store goals via
+`palace.store_goal`. Trigger subscriptions match Proactive 3.0 events
+with per-dot dedupe. CLI: `dots list|create|inspect|start|pause|resume|
+stop|status|explain|wake [--json]`.

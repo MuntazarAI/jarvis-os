@@ -73,7 +73,7 @@ The knowledge graph connects entities and relationships. Future temporal graph w
 
 ### Agents and tasks
 
-Agents provide specialized execution capabilities. Tasks and workflows provide durable orchestration, retries, checkpoints, branches, and triggers.
+Agents provide specialized execution capabilities. Tasks and workflows provide durable orchestration, retries, checkpoints, branches, and triggers. Dots 3.1 (`jarvis/dots/`) adds persistent responsibility owners on top: a Dot owns a goal across sessions, wakes on subscribed Proactive 3.0 events, and executes one bounded activation per wake through the existing Orchestrator, TaskEngine, PolicyEngine, and checkpoints. No second task engine, no background workers.
 
 ### Policy and security
 
