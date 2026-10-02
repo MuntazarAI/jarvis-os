@@ -23,14 +23,18 @@ from typing import Any
 from ..core.types import new_id, now
 
 SOURCE_KINDS = {
-    "aircraft": "aircraft",
-    "ship": "vessel",
-    "satellite": "satellite",
+    "aircraft": "event",
+    "ship": "event",
+    "satellite": "event",
     "earthquake": "event",
+    "wildfire": "event",
+    "cyclone": "event",
+    "launch": "event",
+    "weather": "event",
     "traffic": "event",
-    "camera": "camera",
-    "transit": "vehicle",
-    "radio": "signal",
+    "camera": "device",
+    "transit": "event",
+    "radio": "event",
     "place": "location",
     "infrastructure": "location",
 }

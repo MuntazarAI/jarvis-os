@@ -59,6 +59,17 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
                               "arecord present"
                               if shutil.which("arecord") else "no capture tool"))
     try:
+        from ..geospatial.live import LiveIntelligenceService
+        home = str(config.paths.home) if config else ""
+        live_checks = LiveIntelligenceService(home=home or ".").doctor()
+        for item in live_checks:
+            checks.append(HealthCheck(
+                f"gods-eye-live:{item['name']}", bool(item["ok"]),
+                str(item.get("detail", "")), required=False))
+    except Exception as exc:
+        checks.append(HealthCheck("gods-eye-live", False, str(exc)[:120],
+                                  required=False))
+    try:
         from ..computer.computer import ComputerController
         ctrl = ComputerController()
         checks.append(HealthCheck("computer:screenshot", ctrl.screen.available(),

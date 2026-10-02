@@ -100,6 +100,11 @@ class Jarvis:
         self.gods_eye = GodsEyeBridge(
             str(self.config.paths.resolve("home") / "gods-eye-observations.json"),
             world_registry=self.world_registry, spatial=self.spatial)
+        from ..geospatial.live import LiveConfig, LiveIntelligenceService
+        self.live_eye = LiveIntelligenceService(
+            self.config.paths.home, config=LiveConfig(),
+            bridge=self.gods_eye, world_registry=self.world_registry,
+            spatial=self.spatial)
         from ..proactive.engine import ProactiveEngine
         self.proactive = ProactiveEngine(
             home=str(self.config.paths.resolve("home")))
@@ -146,6 +151,16 @@ class Jarvis:
             world_registry=self.world_registry, triggers=self.triggers,
             store=self.mission_store, policy=self.policy,
             bus=self.bus))
+        # Late-bound live-intelligence subsystem hooks: observe-only wiring.
+        # Live sync never auto-promotes, auto-executes, or auto-approves —
+        # those stay explicit caller actions via LiveIntelligenceService.
+        try:
+            self.live_eye.proactive = self.proactive
+            self.live_eye.dots = self.dots
+            self.live_eye.missions = self.missions
+            self.live_eye.palace = self.palace
+        except AttributeError:
+            pass
         self.self_model = SelfModel(permissions=["fs.read", "exec.eval"])
         for perm in ("fs.read", "exec.eval", "desktop.screenshot",
                      "desktop.windows", "clipboard.read"):
@@ -687,6 +702,7 @@ class Jarvis:
             "proactive": self.proactive.status(),
             "gods_eye": self.gods_eye.status(),
             "gods_eye_app": self.gods_eye_app.status(),
+            "gods_eye_live": self.live_eye.status(),
         }
 
     def poll_proactive(self) -> list[str]:
@@ -718,6 +734,10 @@ class Jarvis:
             pass
         try:
             self.proactive.save()
+        except Exception:
+            pass
+        try:
+            self.live_eye.save()
         except Exception:
             pass
         try:
