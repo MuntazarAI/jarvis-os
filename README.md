@@ -1,94 +1,369 @@
-# JARVIS-OS — Personal AI Operating System
+# JARVIS-OS
 
-Fresh implementation. Core runs on the standard library only.
-Voice STT lives in `.venv` (faster-whisper, offline); system backends
-(ollama, espeak-ng, tesseract, ffmpeg, ydotool) auto-detect.
+> **A local-first personal AI operating system for memory, reasoning, perception, automation, and computer control.**
 
-## Quick start (the `jarvis` command works from any folder)
+JARVIS-OS is an experimental, modular personal AI platform designed to turn a local computer into a persistent, context-aware assistant.
+
+It combines **cognition, memory, world modeling, evidence-based reasoning, agents, tools, automation, voice, vision, and security controls** behind one architecture.
+
+> **Status:** Active development · public repository · architecture evolving rapidly
+
+## Why JARVIS-OS?
+
+Most assistants are centered around a single conversation and a single model call.
+
+JARVIS-OS is built around a different idea:
+
+```text
+Perceive → Understand → Remember → Reason → Plan → Act → Verify → Reflect
+                 ↑                                  ↓
+                 └──────── World + Knowledge ───────┘
+```
+
+The system is designed to preserve context across tasks while keeping observations, memories, hypotheses, actions, and verification distinguishable.
+
+---
+
+## Core capabilities
+
+| System | What it provides |
+|---|---|
+| 🧠 Cognitive loop | End-to-end perception, reasoning, planning, action, verification |
+| 🗃️ Memory 3.0 | Provenance-aware memory with tiers, correction, reinforcement, and consolidation |
+| 🌍 World Model 2.0 | Snapshots, state changes, temporal queries, expectations, predictions, and uncertainty |
+| 🕸️ Knowledge graph | Entity relationships, traversal, paths, identity, and version history |
+| 🔎 Evidence & reasoning | Hypotheses, Bayesian-style updates, alternatives, red-team analysis |
+| 🕵️ Mentalist mode | Evidence-first observation and hypothesis analysis without pretending to read minds |
+| 🤖 Agents | DAG planning, delegation, voting, validation, and specialized execution |
+| 🛠️ Tools | Sandboxed tools with timeouts and policy controls |
+| 🛡️ Security | Policy gates, approvals, consent, sealed secrets, audit, and emergency stop |
+| 🖥️ Computer control | Screen observation, clipboard, and approved input automation |
+| 🌐 Research | Browser/research workflows with source-aware reasoning |
+| 🎙️ Voice | Offline STT, TTS, VAD, wake-word architecture |
+| 👁️ Vision | Camera/screen perception with resource-aware fast/slow paths |
+| 🧩 Model routing | Local-first model selection and fallback chains |
+| ⚙️ Tasks | Workflows, triggers, retries, checkpoints, branches, and cancellation |
+| 📡 API | REST + WebSocket interfaces |
+| 📊 Verification | Tests, doctor checks, benchmarks, and failure isolation |
+
+---
+
+## Architecture
+
+JARVIS-OS is organized as cooperating subsystems rather than one giant assistant class.
+
+```text
+                         ┌─────────────────────┐
+                         │       USER          │
+                         └──────────┬──────────┘
+                                    │
+                         ┌──────────▼──────────┐
+                         │   Cognitive Loop    │
+                         └──────────┬──────────┘
+                                    │
+              ┌─────────────────────┼─────────────────────┐
+              │                     │                     │
+       ┌──────▼──────┐       ┌──────▼──────┐       ┌──────▼──────┐
+       │  Perception │       │   Memory    │       │    World    │
+       │ voice/vision│       │   Memory 3  │       │   Model 2   │
+       └──────┬──────┘       └──────┬──────┘       └──────┬──────┘
+              │                     │                     │
+              └─────────────────────┼─────────────────────┘
+                                    │
+                         ┌──────────▼──────────┐
+                         │ Knowledge + Evidence│
+                         │   + Reasoning       │
+                         └──────────┬──────────┘
+                                    │
+                  ┌─────────────────┼─────────────────┐
+                  │                 │                 │
+           ┌──────▼──────┐   ┌──────▼──────┐   ┌──────▼──────┐
+           │    Agents   │   │   Planner   │   │    Policy   │
+           │  + DAG      │   │ + Tasks     │   │ + Risk      │
+           └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
+                  │                 │                 │
+                  └─────────────────┼─────────────────┘
+                                    │
+                         ┌──────────▼──────────┐
+                         │ Tools / Computer /  │
+                         │ Browser / Services  │
+                         └──────────┬──────────┘
+                                    │
+                         ┌──────────▼──────────┐
+                         │ Verify → Reflect →  │
+                         │ Memory / World      │
+                         └─────────────────────┘
+```
+
+### Architecture map
+
+| Layer | Location | Responsibility |
+|---|---|---|
+| Core | `jarvis/core/` | Loop, configuration, shared types |
+| Events | `jarvis/events/` | Event sourcing, replay, snapshots |
+| Memory | `jarvis/memory/` | Memory palace, consolidation, graph, identity |
+| World | `jarvis/world/` | Environmental and system state |
+| Cognition | `jarvis/cognition/` | Intent, attention, executive functions, mentalist mode |
+| Inference | `jarvis/inference/` | Evidence, hypotheses, reasoning, analysis |
+| Agents | `jarvis/agents/` | Agent orchestration and DAG planning |
+| Tasks | `jarvis/tasks/` | Workflows, triggers, retries, checkpoints |
+| Models | `jarvis/models/` | Model registry, routing, lifecycle |
+| Tools | `jarvis/tools/` | Controlled tool execution |
+| Policy | `jarvis/policy/` | Permissions, risk gates, approvals |
+| Security | `jarvis/security/` | Secrets, sessions, consent, safeguards |
+| Voice | `jarvis/voice/` | STT, TTS, VAD, wake-word pipeline |
+| Vision | `jarvis/vision/` | Screen/camera perception |
+| API | `jarvis/api/` | REST and WebSocket interfaces |
+
+For the detailed system specification, see [the unified architecture map](docs/JARVIS_FULL_MASTER_MAP_UNIFIED.md).
+
+---
+
+## Quick start
+
+### 1. Clone
 
 ```bash
-jarvis talk "hello there"
-jarvis repl                 # /reset /summary session commands
-jarvis remember "deploy key rotates monthly" --room "Home"
-jarvis mentalist "chair moved"
+git clone git@github.com:MuntazarAI/jarvis-os.git
+cd jarvis-os
+```
+
+### 2. Install the package
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+The core project intentionally keeps its Python dependency surface small. Optional capabilities can use local system backends and optional packages.
+
+### 3. Run JARVIS
+
+```bash
 jarvis status
-jarvis devices              # voice/vision/computer/model snapshot
-jarvis doctor               # dependency + hardware + model checks
-jarvis start|stop|restart   # supervised API service
-jarvis see screen --fast
-jarvis see camera --fast
-jarvis say "Voice online"
-jarvis listen --always --no-speak   # needs .venv for offline STT
-jarvis serve --port 8765
+jarvis doctor
+jarvis talk "hello there"
+jarvis repl
+```
+
+### Useful commands
+
+```bash
+jarvis status
+jarvis devices
+jarvis doctor
 jarvis benchmark
 jarvis consolidate
+
+jarvis remember "deploy key rotates monthly" --room "Home"
+jarvis mentalist "chair moved"
+
+jarvis see screen --fast
+jarvis see camera --fast
+
+jarvis say "Voice online"
+jarvis listen --always --no-speak
+
+jarvis start
+jarvis stop
+jarvis restart
+jarvis serve --port 8765
+```
+
+### Test the project
+
+```bash
 pytest tests/ -q
 ```
 
-Daily-driver phrases (just talk naturally): "what am I working on?",
-"continue my project", "what changed since yesterday?", "run my tests",
-"explain this error: ...", "analyze this repo", "i prefer concise answers",
-"decide ship on friday".
+---
 
-## Voice setup (one time, already done on this machine)
+## Voice
+
+Offline voice support can be installed into the project environment:
 
 ```bash
-uv venv .venv && uv pip install --python .venv/bin/python faster-whisper sounddevice pytest
-source .venv/bin/activate  # then `jarvis listen` uses offline STT
+uv venv .venv
+uv pip install --python .venv/bin/python faster-whisper sounddevice pytest
+source .venv/bin/activate
 ```
 
-## Architecture (spec: `docs/JARVIS_FULL_MASTER_MAP_UNIFIED.md`)
+System backends are detected automatically when available, including Ollama, espeak-ng, Tesseract, FFmpeg, and ydotool.
 
-| Spec system | Module | Status |
-|---|---|---|
-| Master Cognitive Loop | `jarvis/core/loop.py` | working end-to-end |
-| Config / types | `jarvis/core/` | validated, tested |
-| Event sourcing + bus | `jarvis/events/store.py` | dedup, snapshots, replay |
-| Memory Palace (13 tiers, 20 rooms) | `jarvis/memory/palace.py` | hybrid retrieval, decay |
-| Consolidation | `jarvis/memory/consolidation.py` | dedup, merge, promote |
-| Knowledge graph + identity | `jarvis/memory/graph.py` | traverse, paths, versions |
-| World model + timeline gaps | `jarvis/world/model.py` | arrival-order anomaly detection |
-| Perception / understanding / attention | `jarvis/cognition/cognition.py` | intent, entities, budget |
-| Executive / reflection | `jarvis/cognition/cognition.py` | Eisenhower, decompose, failure analysis |
-| Mentalist mode | `jarvis/cognition/mentalist.py` | display contract, safeguards |
-| Evidence / hypothesis / analysis / reasoning | `jarvis/inference/` | Bayesian update, red-team, deception guard |
-| Tools (7 sandboxed) | `jarvis/tools/tools.py` | restricted python, timeouts |
-| Policy + risk | `jarvis/policy/policy.py` | gates, approvals, e-stop, audit |
-| Agents + DAG planner | `jarvis/agents/agents.py` | validated plans, voting |
-| Tasks / workflows / triggers | `jarvis/tasks/engine.py` | retries, checkpoints, branches |
-| Models router + lifecycle | `jarvis/models/models.py` | local-first, fallback chain |
-| Self-model / improvement | `jarvis/models/models.py` | human-gated patches |
-| Secrets / sessions / consent | `jarvis/security/security.py` | sealed vault, TTL consent |
-| REST + WebSocket API | `jarvis/api/server.py` | token auth |
-| Voice / vision | `jarvis/voice/`, `jarvis/vision/` | dormant without hardware |
+---
 
-## Verification
+## Current verification
 
-65+ pytest tests on system Python (plus venv-only live-audio/model tests),
-all executed against the real code. Verification-first found and fixed
-15+ real bugs before they shipped, including: hypothesis-engine recursion,
-dead timeline-gap detection, graph kind clobbering, workflow ok-on-failure,
-condition short-circuit, cancel idempotency, backwards file triggers,
-attention starvation, hypothesis leakage, vacuous permission checks,
-tool-risk ignored by the gate, `apt`-in-`capture` false positive,
-PyAV incompatibility, and capture-ok-vs-recognized conflation.
+The repository is developed verification-first.
 
-## Known hardware truth (this machine, verified live)
+The current project documentation records:
 
-- Models: qwen2.5:3b/coder, minicpm-v, nomic-embed via Ollama — answers work.
-  No GPU: scene description takes minutes on CPU, so `see` defaults to a
-  documented fast/slow split.
-- Voice: mic + espeak-ng live; offline faster-whisper STT in `.venv`.
-- Computer: screenshot (XWayland layer), GTK clipboard, ydotool input with
-  daemon running; full-desktop capture needs portal consent.
-- GNOME blocks legacy screenshot DBus and wtype; stadium-grade input waits
-  for explicit approval per action.
+- Full test suite: **143 passed, 2 skipped** after World Model 2.0
+- World Model 2.0 focused tests: **13 passed**
+- `jarvis doctor`: hardware/dependency checks verified on the development machine
+- Benchmarking includes cognitive-cycle and memory-search timing
+- Resource-heavy model paths are explicitly treated as constrained on CPU-only hardware
 
-## Safety rules enforced in code
+The exact verification state can change as development continues; run the commands above for the current state.
 
-- Policy gates every tool call; destructive verbs blocked or approval-gated.
-- `python_run` has no imports, no dunders, no `open`.
-- Deception analysis can never output "person is lying".
-- Conflicts are reported with alternative causes, never labeled as lies.
-- Secrets are sealed with HMAC; tampering detected on load.
-- EMERGENCY STOP file blocks all actions.
+---
+
+## Design principles
+
+### Local first
+
+Prefer local models, local memory, local state, and local processing whenever practical.
+
+### Evidence over confidence theater
+
+Observations, facts, hypotheses, predictions, and unknowns should remain distinguishable.
+
+### Unknown stays unknown
+
+A missing sensor or unavailable observation must not silently become a negative fact.
+
+### Verify important work
+
+Actions and conclusions should be independently checked when the task or risk level requires it.
+
+### Policy before action
+
+Tools and computer actions pass through security and policy controls.
+
+### Bounded autonomy
+
+Agents and automation operate within explicit permissions, budgets, timeouts, and cancellation boundaries.
+
+### Resource awareness
+
+The architecture should scale down gracefully on ordinary hardware rather than assuming unlimited GPUs.
+
+### Incremental architecture
+
+Existing working subsystems should be extended rather than repeatedly rewritten.
+
+---
+
+## Safety and security
+
+JARVIS-OS includes application-level safeguards such as:
+
+- policy gates around tool calls
+- approval gates for destructive operations
+- restricted Python execution
+- secret sealing and tamper detection
+- consent/session controls
+- emergency-stop handling
+- prompt/tool injection defenses
+- evidence and provenance tracking
+- failure isolation
+
+These are software safeguards, not a guarantee of security. Review the code and your local environment before using JARVIS with sensitive systems.
+
+See [SECURITY.md](SECURITY.md) for the project's security-reporting process.
+
+---
+
+## Documentation
+
+| Document | Purpose |
+|---|---|
+| [Architecture map](docs/JARVIS_FULL_MASTER_MAP_UNIFIED.md) | Complete system specification |
+| [Documentation index](docs/README.md) | Organized entry point for project documentation |
+| [Architecture guide](docs/ARCHITECTURE.md) | High-level architecture and subsystem boundaries |
+| [Contributing](CONTRIBUTING.md) | Development workflow and contribution standards |
+| [Security](SECURITY.md) | Security reporting and safe disclosure |
+| [Changelog](CHANGELOG.md) | Milestone history |
+
+---
+
+## Project structure
+
+```text
+jarvis-os/
+├── .github/
+│   ├── workflows/
+│   ├── ISSUE_TEMPLATE/
+│   └── pull_request_template.md
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── JARVIS_FULL_MASTER_MAP_UNIFIED.md
+│   └── README.md
+├── jarvis/
+│   ├── agents/
+│   ├── api/
+│   ├── cognition/
+│   ├── core/
+│   ├── events/
+│   ├── inference/
+│   ├── memory/
+│   ├── models/
+│   ├── policy/
+│   ├── security/
+│   ├── tasks/
+│   ├── tools/
+│   ├── vision/
+│   ├── voice/
+│   └── world/
+├── tests/
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── README.md
+├── SECURITY.md
+└── pyproject.toml
+```
+
+---
+
+## Roadmap
+
+### Completed foundations
+
+- [x] Core cognitive loop
+- [x] Memory 3.0 provenance architecture
+- [x] World Model 2.0
+- [x] Evidence and hypothesis infrastructure
+- [x] Policy and security foundations
+- [x] Agent/DAG foundation
+- [x] Voice/vision/computer foundations
+- [x] Research and developer workflows
+
+### In active development
+
+- [ ] Knowledge Graph 2.0 — temporal relationships
+- [ ] Agent Intelligence 2.0 — coordinated specialist agents
+- [ ] Stronger evidence-chain reconstruction
+- [ ] Resource-aware multi-agent scheduling
+- [ ] Deeper observability and execution tracing
+- [ ] Richer UI/HUD layer
+
+### Longer-term
+
+- [ ] Distributed JARVIS nodes
+- [ ] Advanced multimodal temporal memory
+- [ ] Capability discovery
+- [ ] Model lifecycle management
+- [ ] Self-improvement with strict human gates
+
+The roadmap is directional; implemented behavior is defined by the code and tests, not by the specification alone.
+
+---
+
+## Development philosophy
+
+JARVIS-OS is intentionally being built as an evolving systems project.
+
+The goal is not to make a demo that appears intelligent.
+
+The goal is to build infrastructure that can:
+
+**observe → remember → connect → reason → act → verify → learn**
+
+while remaining transparent about uncertainty and limitations.
+
+---
+
+## License
+
+No open-source license has been declared yet. Until a license is added to this repository, reuse rights should not be assumed.
