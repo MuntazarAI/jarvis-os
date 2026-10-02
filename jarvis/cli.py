@@ -55,6 +55,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("restart", help="restart the JARVIS service")
     sub.add_parser("doctor", help="dependency + hardware + model health checks")
 
+    ag = sub.add_parser("agents", help="multi-agent organization")
+    ag.add_argument("action", nargs="?", default="list",
+                    choices=["list", "status", "run", "explain", "teams"])
+    ag.add_argument("text", nargs="*", help="goal text for run")
+    ag.add_argument("--team", default="",
+                    help="team strategy: research/coding/debugging/computer/decision/daily")
+    ag.add_argument("--depth", type=int, default=None,
+                    help="adaptive depth 0-5 (default: auto)")
+    ag.add_argument("--task", default="", help="task id for explain")
+
     say = sub.add_parser("say", help="speak text aloud via TTS")
     say.add_argument("text", nargs="+")
 
@@ -142,6 +152,43 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "status":
         print(json.dumps(jarvis.status(), indent=2, default=str))
+        jarvis.close()
+        return 0
+
+    if args.command == "agents":
+        from .agents.contract import role_cards
+        from .agents.orchestrator import TEAMS
+        orch = jarvis.orchestrator
+        if args.action == "list":
+            for card in role_cards():
+                print(f"{card.role_id:15} executor={card.executor or '-':10} "
+                      f"model={card.model_requirements:9} "
+                      f"{','.join(card.skills) or 'reasoning-only'}")
+        elif args.action == "teams":
+            for name, stages in TEAMS.items():
+                print(f"{name}: {' → '.join(r for r, _ in stages)}")
+        elif args.action == "status":
+            print(json.dumps({
+                "roles": len(role_cards()),
+                "executors": [a.name for a in
+                              jarvis.supervisor.registry.list_agents()],
+                "budgets": orch.budgets.to_dict(),
+                "traced_tasks": len(orch.traces),
+            }, indent=2))
+        elif args.action in ("run", "explain"):
+            goal = " ".join(args.text)
+            if not goal and not args.task:
+                print("usage: jarvis agents run <goal> [--team T] [--depth N]")
+                jarvis.close()
+                return 2
+            if args.action == "explain" and args.task and not goal:
+                print(orch.explain(args.task) if args.task in orch.traces
+                      else f"no trace for task {args.task} in this session")
+            else:
+                out = orch.run(goal, team=args.team or None, depth=args.depth)
+                print(json.dumps(out["result"], indent=2, default=str))
+                print("--- trace ---")
+                print(orch.explain(out["task_id"]))
         jarvis.close()
         return 0
 

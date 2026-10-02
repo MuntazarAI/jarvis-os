@@ -100,6 +100,7 @@ class Jarvis:
         except Exception:
             self.computer = None
         self.supervisor = Supervisor(on_step=self._execute_step)
+        self.orchestrator = self._build_orchestrator()
         self.tasks = TaskEngine()
         self.triggers = TriggerEngine()
         self.self_model = SelfModel(permissions=["fs.read", "exec.eval"])
@@ -606,6 +607,21 @@ class Jarvis:
             self.palace.store_episode(f"trigger fired: {trig.action}",
                                       room="Experiences", importance=0.5)
         return notes
+
+    def _build_orchestrator(self) -> Any:
+        """Agent Intelligence 2.0 bound to this loop's live subsystems."""
+        from ..agents.orchestrator import Budgets, Orchestrator, OrchestratorContext
+        return Orchestrator(OrchestratorContext(
+            registry=self.supervisor.registry,
+            planner=self.supervisor.planner,
+            policy=self.policy,
+            tools=self.tools,
+            model_router=self.router,
+            palace=self.palace,
+            graph=self.graph,
+            tracker=getattr(self, "state", None),
+            computer=getattr(self, "computer", None),
+        ), Budgets(max_agents=6, max_tool_calls=10, max_runtime_s=120.0))
 
     def status(self) -> dict[str, Any]:
         return {
