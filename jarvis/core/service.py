@@ -97,6 +97,31 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
         checks.append(HealthCheck("android-node", False, str(exc)[:120],
                                   required=False))
     try:
+        from ..device.android_transport import read_host_status
+        home = str(config.paths.home) if config else ""
+        info = read_host_status(home or ".")
+        if info.get("running") and info.get("live"):
+            checks.append(HealthCheck(
+                "device-transport:listener", True,
+                f"host live on port {info.get('port')} "
+                f"(pid {info.get('pid')}, "
+                f"{len(info.get('peers') or [])} peer(s))",
+                required=False))
+        else:
+            checks.append(HealthCheck(
+                "device-transport:listener", True,
+                "no host running (start with: "
+                "jarvis device transport serve)",
+                required=False))
+        checks.append(HealthCheck(
+            "device-transport:protocol", True,
+            "socket framing u32BE+JSON, 256KiB cap, rotating-HMAC auth, "
+            "TRUST_PENDING pairing; see docs/ANDROID_TRANSPORT.md",
+            required=False))
+    except Exception as exc:
+        checks.append(HealthCheck("device-transport", False, str(exc)[:120],
+                                  required=False))
+    try:
         from ..computer.computer import ComputerController
         ctrl = ComputerController()
         checks.append(HealthCheck("computer:screenshot", ctrl.screen.available(),

@@ -91,13 +91,15 @@ def build_parser() -> argparse.ArgumentParser:
     fab.add_argument("--json", action="store_true",
                      help="machine-readable output")
 
-    dev = sub.add_parser("device", help="device endpoints: android node")
-    dev.add_argument("area", nargs="?", default="android", choices=["android"])
+    dev = sub.add_parser("device", help="device endpoints: android node, socket transport")
+    dev.add_argument("area", nargs="?", default="android",
+                     choices=["android", "transport"])
     dev.add_argument("action", nargs="?", default="status",
                      choices=["status", "list", "info", "register", "pair",
-                              "trust", "revoke", "capabilities",
+                              "trust", "revoke", "unpair", "capabilities",
                               "permissions", "command", "connect",
-                              "disconnect", "queue"])
+                              "disconnect", "queue", "serve", "peers",
+                              "approve"])
     dev.add_argument("--device", default="", help="device id")
     dev.add_argument("--name", default="", help="node name for register")
     dev.add_argument("--code", default="", help="6-digit pairing code")
@@ -122,6 +124,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="JSON object of command args")
     dev.add_argument("--approve", default="",
                      help="policy approval token for command")
+    dev.add_argument("--port", type=int, default=0,
+                     help="port for transport serve (0 = ephemeral)")
+    dev.add_argument("--host", default="",
+                     help="bind address for transport serve (default: loopback)")
     dev.add_argument("--json", action="store_true",
                      help="machine-readable output")
 
@@ -1312,6 +1318,64 @@ def main(argv: list[str] | None = None) -> int:
             jarvis.close()
             return 0
 
+        if args.area == "transport":
+            from .device.android_transport import (
+                AndroidSocketHost,
+                read_host_status,
+            )
+            try:
+                if args.action == "status":
+                    result = read_host_status(jarvis.device_fabric.home)
+                    state = ("live" if result.get("live")
+                             else "not running")
+                    detail = (f"port={result.get('port')} "
+                              f"pid={result.get('pid')} "
+                              f"peers={result.get('peers', [])}"
+                              if result.get("live")
+                              else result.get("detail", "no host running"))
+                    return _out(result, f"transport {state}: {detail}")
+                if args.action == "peers":
+                    result = read_host_status(jarvis.device_fabric.home)
+                    peers = (result.get("peers", [])
+                             if result.get("live") else [])
+                    return _out({"peers": peers},
+                                "\n".join(peers) or "no peers connected")
+                if args.action == "approve":
+                    if not args.device:
+                        print("usage: jarvis device transport approve "
+                              "--device <id> [--reason R]")
+                        jarvis.close()
+                        return 2
+                    result = adapter.trust_android(args.device, by=args.by,
+                                                   reason=args.reason)
+                    return _out(result,
+                                f"approved {result['name']} "
+                                f"trust={result['trust']}")
+                if args.action == "serve":
+                    host = AndroidSocketHost(
+                        adapter, host=args.host, port=args.port)
+                    port = host.start()
+                    print(f"serving android transport on port {port} "
+                          f"(Ctrl-C to stop)")
+                    try:
+                        import time
+                        while True:
+                            time.sleep(1.0)
+                    except KeyboardInterrupt:
+                        pass
+                    finally:
+                        host.stop()
+                    jarvis.close()
+                    return 0
+                print("usage: jarvis device transport "
+                      "{status|serve|peers|approve}")
+                jarvis.close()
+                return 2
+            except (OSError, RuntimeError, ValueError) as exc:
+                print(f"device transport: {exc}")
+                jarvis.close()
+                return 1
+
         try:
             if args.action == "status":
                 if args.device:
@@ -1391,8 +1455,18 @@ def main(argv: list[str] | None = None) -> int:
                     jarvis.close()
                     return 2
                 result = adapter.revoke_android(args.device, by=args.by,
-                                                reason=args.reason)
+                                                 reason=args.reason)
                 return _out(result, f"revoked {result['name']}")
+            if args.action == "unpair":
+                if not args.device:
+                    print("usage: jarvis device android unpair --device <id> "
+                          "[--reason R]")
+                    jarvis.close()
+                    return 2
+                ok = adapter.unpair(args.device, by=args.by)
+                return _out({"device_id": args.device, "unpaired": ok},
+                            f"unpaired {args.device}" if ok
+                            else f"unknown device {args.device}")
             if args.action == "capabilities":
                 if not args.device:
                     print("usage: jarvis device android capabilities "

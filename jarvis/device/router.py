@@ -49,30 +49,66 @@ class DeviceRouter:
               approval_token: str = "") -> dict[str, Any]:
         """Route one capability command. Never raises for policy denials."""
         args = dict(args or {})
+        authorized = self.authorize(actor, device_id, capability, args,
+                                    approval_token=approval_token)
+        if not authorized["authorized"]:
+            return self._deny(actor, device_id, capability, args,
+                              authorized["reasons"],
+                              decision=authorized.get("decision"),
+                              approval_token=authorized.get("approval_token"))
+        device = authorized["device"]
+        # 5. Dispatch over the transport to the node's handler.
+        message = self.build_command_message(actor, device, capability, args)
+        try:
+            reply = self.transport.send(message)
+        except (TransportError, Exception) as exc:
+            return self._deny(actor, device_id, capability, args,
+                              [f"transport delivery failed: {exc}"])
+        if reply is None:
+            return self._deny(actor, device_id, capability, args,
+                              ["transport returned no reply"])
+        return self.finish(actor, device, capability, message, reply)
+
+    def authorize(self, actor: str, device_id: str, capability: str,
+                  args: dict[str, Any] | None = None,
+                  approval_token: str = "") -> dict[str, Any]:
+        """Steps 1-4 of route(): e-stop, device, capability, policy.
+
+        Returns ``{"authorized": bool, "reasons": [...], "device": Device
+        | None, "decision": PolicyDecision | None, "approval_token": str}``.
+        Never raises for policy denials. Async transports (socket poll)
+        authorize here, deliver later, and finalize via finish().
+        """
+        args = dict(args or {})
+        denied: dict[str, Any] = {"authorized": False, "reasons": [],
+                                  "device": None, "decision": None,
+                                  "approval_token": ""}
         # 1. Emergency stop blocks everything, before any other work.
         if self.policy is not None and hasattr(self.policy, "_emergency_stop"):
             try:
                 if self.policy._emergency_stop():
-                    return self._deny(actor, device_id, capability, args,
-                                      ["EMERGENCY STOP engaged — all device actions blocked"])
+                    denied["reasons"] = [
+                        "EMERGENCY STOP engaged — all device actions blocked"]
+                    return denied
             except Exception:
                 pass
         # 2. Device must exist and be allowed to execute.
         try:
             device = self.registry.require(device_id)
         except Exception:
-            return self._deny(actor, device_id, capability, args,
-                              [f"unknown device: {device_id}"])
+            denied["reasons"] = [f"unknown device: {device_id}"]
+            return denied
+        denied["device"] = device
         if not device.can_execute():
-            return self._deny(actor, device_id, capability, args,
-                              [device.block_reason() or "device cannot execute"])
+            denied["reasons"] = [device.block_reason() or "device cannot execute"]
+            return denied
         # 3. Capability must be declared and enabled on that node.
         if capability not in device.capabilities:
-            return self._deny(actor, device_id, capability, args,
-                              [f"capability not declared by node: {capability}"])
+            denied["reasons"] = [f"capability not declared by node: {capability}"]
+            return denied
         if not self.registry.capability_enabled(device, capability):
-            return self._deny(actor, device_id, capability, args,
-                              [f"capability disabled on node: {capability}"])
+            denied["reasons"] = [f"capability disabled on node: {capability}"]
+            return denied
         # 4. PolicyEngine is authoritative.
         risk = self._capability_risk(device, capability)
         plan = ActionPlan(
@@ -83,43 +119,44 @@ class DeviceRouter:
             risk=RiskLevel.from_score(risk),
         )
         decision = self.policy.evaluate(actor, plan)
+        denied["decision"] = decision
         if not decision.allow:
-            return self._deny(actor, device_id, capability, args,
-                              [f"blocked by policy: {'; '.join(decision.reasons)}"],
-                              decision=decision)
+            denied["reasons"] = [
+                f"blocked by policy: {'; '.join(decision.reasons)}"]
+            return denied
         if decision.requires_approval:
             if not (approval_token and self.policy.approved(approval_token)):
                 token = self.policy.request_approval(actor, plan, decision)
-                out = self._deny(actor, device_id, capability, args,
-                                 [f"needs approval (token {token})"],
-                                 decision=decision)
-                out["approval_token"] = token
-                out["requires_approval"] = True
-                return out
-        # 5. Dispatch over the transport to the node's handler.
+                denied["reasons"] = [f"needs approval (token {token})"]
+                denied["approval_token"] = token
+                return denied
+        return {"authorized": True, "reasons": [], "device": device,
+                "decision": decision, "approval_token": approval_token}
+
+    def build_command_message(self, actor: str, device: Device,
+                              capability: str,
+                              args: dict[str, Any]) -> FabricMessage:
+        """Build (and validate) the COMMAND_REQUEST for an authorized call."""
         message = FabricMessage(
             sender_node=self.core_node_id or "core",
             recipient_node=device.node_id or device.device_id,
             message_type=MessageType.COMMAND_REQUEST.value,
             capability=capability,
-            payload={"device_id": device_id, "args": scrub(args)},
+            payload={"device_id": device.device_id, "args": scrub(args)},
             provenance={"observer": "device-fabric", "actor": actor},
         )
-        try:
-            message.validate()
-            reply = self.transport.send(message)
-        except (TransportError, Exception) as exc:
-            return self._deny(actor, device_id, capability, args,
-                              [f"transport delivery failed: {exc}"])
-        if reply is None:
-            return self._deny(actor, device_id, capability, args,
-                              ["transport returned no reply"])
+        message.validate()
+        return message
+
+    def finish(self, actor: str, device: Device, capability: str,
+               message: FabricMessage, reply: FabricMessage) -> dict[str, Any]:
+        """Turn a COMMAND_RESULT reply into the audited result dict."""
         payload = reply.payload if isinstance(reply.payload, dict) else {}
         result_text = str(payload.get("result", payload.get("output", "")))
         scan = check_text(result_text)
         out: dict[str, Any] = {
             "ok": bool(payload.get("ok", False)),
-            "device_id": device_id,
+            "device_id": device.device_id,
             "capability": capability,
             "result": sanitize_text(result_text, 2000),
             "injection": None if scan["clean"] else scan,
@@ -127,7 +164,7 @@ class DeviceRouter:
         }
         if not out["ok"]:
             out["error"] = str(payload.get("error", "capability failed"))[:500]
-        self._audit(actor, device_id, capability, out["ok"],
+        self._audit(actor, device.device_id, capability, out["ok"],
                     ["routed"] if out["ok"] else [out.get("error", "failed")])
         return out
 
@@ -138,7 +175,7 @@ class DeviceRouter:
 
     def _deny(self, actor: str, device_id: str, capability: str,
               args: dict[str, Any], reasons: list[str],
-              decision: Any = None) -> dict[str, Any]:
+              decision: Any = None, approval_token: str = "") -> dict[str, Any]:
         self._audit(actor, device_id, capability, False, reasons)
         out: dict[str, Any] = {
             "ok": False,
@@ -149,6 +186,9 @@ class DeviceRouter:
         }
         if decision is not None:
             out["policy"] = decision.to_dict() if hasattr(decision, "to_dict") else {}
+        if approval_token:
+            out["approval_token"] = approval_token
+            out["requires_approval"] = True
         return out
 
     def _audit(self, actor: str, device_id: str, capability: str,

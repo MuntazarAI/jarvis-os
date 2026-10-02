@@ -3,3 +3,11 @@ __pycache__/
 .venv/
 .pytest_cache/
 jarvis/__pycache__
+
+# Android (3.10) - never commit generated build output
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+*.aab

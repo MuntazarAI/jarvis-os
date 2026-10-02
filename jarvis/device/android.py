@@ -653,6 +653,27 @@ class AndroidNodeAdapter:
                                         reason=reason or "pairing code confirmed")
         self._remember(f"Android node paired: {info['name']}")
         return self.status(device_id)
+    def pair_request_approval(self, device_id: str, code: str, *,
+                                by: str = "socket-host",
+                                node_id: str = "") -> dict[str, Any]:
+        """Socket pairing step 1: verify the code and bind node_id WITHOUT
+        trusting. The device ends at TRUST_PENDING; an explicit
+        ``trust_android`` (human approval) is still required before the
+        host issues a device secret. Never raises for wrong codes."""
+        from .model import LifecycleState
+        self._require_android(device_id)
+        self.pairing.confirm(device_id, code)
+        if node_id:
+            device = self.fabric.registry.require(device_id)
+            claimed = str(node_id)[:128]
+            if device.node_id and device.node_id != claimed:
+                raise PairingError(
+                    f"node_id conflict: {device.node_id} != {claimed}")
+            device.node_id = claimed
+            self.fabric.registry.node_index[claimed] = device_id
+        self.fabric.registry.transition(device_id,
+                                         LifecycleState.TRUST_PENDING, by=by)
+        return self.status(device_id)
 
     def unpair(self, device_id: str, *, by: str = "user",
                reason: str = "") -> dict[str, Any]:
@@ -826,6 +847,14 @@ class AndroidNodeAdapter:
             return {"ok": False, "device_id": device_id, "command": command,
                     "error": f"capability not available on node: "
                              f"{checked['capability']}"}
+        host = getattr(self, "socket_host", None)
+        if host is not None and host.has_lane(device_id):
+            # Live socket lane: authorize + deliver via the host (bare
+            # wire name, host HMAC proof, correlated result). The host
+            # re-checks authorization; nothing bypasses the router.
+            return host.send_command(actor, device_id, command,
+                                     checked["args"],
+                                     approval_token=approval_token)
         return self.fabric.route_command(actor, device_id,
                                          checked["capability"],
                                          checked["args"],
@@ -984,10 +1013,13 @@ class AndroidNodeAdapter:
                                  "code hashes persisted, plaintext never stored"})
         checks.append({"name": "transport", "ok": True,
                        "detail": "AVAILABLE (in-process via device fabric); "
-                                 "remote transports: UNSUPPORTED (not yet implemented)"})
+                                 "remote socket transport: AVAILABLE "
+                                 "(jarvis.device.socket_transport + "
+                                 "android_transport; see docs/ANDROID_TRANSPORT.md)"})
         checks.append({"name": "apk", "ok": True,
-                       "detail": "OPTIONAL: companion app skeleton under android/; "
-                                 "physical device or emulator required"})
+                       "detail": "OPTIONAL: companion app under android/ "
+                                 "(:app:assembleDebug builds app-debug.apk); "
+                                 "physical device or emulator required to install"})
         return checks
 
     # -- internals ----------------------------------------------------------------------------
