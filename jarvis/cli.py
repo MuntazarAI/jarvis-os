@@ -32,7 +32,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     gev = sub.add_parser("gods-eye", help="manage the local God's Eye View application")
     gev.add_argument("action", nargs="?", default="status",
-                     choices=["status", "install", "start", "stop", "open"])
+                     choices=["status", "install", "start", "stop", "open",
+                              "live-sync", "live-query", "live-status",
+                              "live-promote", "live-doctor"])
+    gev.add_argument("--allow-remote", action="store_true",
+                     help="explicit consent for live network egress")
+    gev.add_argument("--provider", action="append", default=[],
+                     help="live provider name (repeatable)")
+    gev.add_argument("--lat", type=float, default=28.6)
+    gev.add_argument("--lon", type=float, default=77.2)
+    gev.add_argument("--radius-km", type=float, default=500.0)
+    gev.add_argument("--kind", default="")
+    gev.add_argument("--limit", type=int, default=20)
+    gev.add_argument("--key", default="", help="live observation key to promote")
+    gev.add_argument("--approve", action="store_true",
+                     help="explicit approval for live promotion")
 
     men = sub.add_parser("mentalist", help="evidence-gated analysis of a situation")
     men.add_argument("text", nargs="+")
@@ -224,6 +238,21 @@ def main(argv: list[str] | None = None) -> int:
                 result = app.stop()
             elif args.action == "open":
                 result = {"url": app.open()}
+            elif args.action == "live-sync":
+                result = jarvis.live_eye.sync(
+                    args.provider or None, allow_remote=args.allow_remote)
+            elif args.action == "live-query":
+                result = {"records": jarvis.live_eye.query(
+                    args.lat, args.lon, radius_km=args.radius_km,
+                    kind=args.kind, limit=args.limit)}
+            elif args.action == "live-status":
+                result = jarvis.live_eye.status()
+            elif args.action == "live-promote":
+                if not args.key:
+                    raise RuntimeError("live-promote needs --key <observation-key>")
+                result = jarvis.live_eye.promote(args.key, approved=args.approve)
+            elif args.action == "live-doctor":
+                result = {"checks": jarvis.live_eye.doctor()}
             else:
                 result = app.status()
             print(json.dumps(result, indent=2, default=str))
