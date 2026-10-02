@@ -39,9 +39,34 @@ class NodeIdentityStore(context: Context) {
 
     fun nodeId(): String? = prefs.getString(KEY_NODE_ID, null)
 
+    /** Device secret issued once at approved pairing. Stored in plain
+     *  prefs here (documented limitation — EncryptedSharedPreferences in
+     *  a hardened build); never logged, never transmitted, only used as
+     *  HMAC key material for challenge answers. */
+    fun deviceSecret(): String? = prefs.getString(KEY_SECRET, null)
+
+    fun saveDeviceSecret(secret: String) {
+        prefs.edit().putString(KEY_SECRET, secret).apply()
+    }
+
+    fun clearDeviceSecret() {
+        prefs.edit().remove(KEY_SECRET).apply()
+    }
+
+    fun host(): String = prefs.getString(KEY_HOST, "") ?: ""
+
+    fun port(): Int = prefs.getInt(KEY_PORT, 0)
+
+    fun saveEndpoint(host: String, port: Int) {
+        prefs.edit().putString(KEY_HOST, host.take(255)).putInt(KEY_PORT, port).apply()
+    }
+
     companion object {
         private const val PREFS = "jarvis_node_identity"
         private const val KEY_NODE_ID = "node_id"
         private const val KEY_NAME = "display_name"
+        private const val KEY_SECRET = "device_secret"
+        private const val KEY_HOST = "core_host"
+        private const val KEY_PORT = "core_port"
     }
 }

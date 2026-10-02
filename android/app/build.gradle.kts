@@ -11,9 +11,9 @@ android {
         applicationId = "ai.jarvis.node"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
+        versionCode = 2
         // Must match the core-side ANDROID expectations (android.py).
-        versionName = "3.9.0"
+        versionName = "3.10.0"
     }
 
     buildTypes {
@@ -33,4 +33,8 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.appcompat:appcompat:1.8.0")
+    testImplementation("junit:junit:4.13.2")
+    // Real org.json for JVM unit tests: android.jar stubs throw
+    // "not mocked" at runtime, so anything touching JSONObject needs this.
+    testImplementation("org.json:json:20240303")
 }

@@ -21,6 +21,9 @@ object FabricProtocol {
         STATE_UPDATE("state_update"),
         COMMAND_REQUEST("command_request"),
         COMMAND_RESULT("command_result"),
+        PAIR_REQUEST("pair_request"),
+        PAIR_STATUS("pair_status"),
+        AUTH_CHALLENGE("auth_challenge"),
         EVENT("event"),
         ERROR("error"),
         GOODBYE("goodbye");

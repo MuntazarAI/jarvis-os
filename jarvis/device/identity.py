@@ -113,3 +113,14 @@ def current_limitation() -> str:
         "explicit human approval (actor + reason recorded); future transports "
         "must verify sender identity (mTLS / public-key) before trust."
     )
+
+
+def require_verified_transport(transport_name: str, *, action: str = "") -> None:
+    """Refuse trust-affecting actions over transports that cannot prove
+    sender identity (in-process and friends). Raises IdentityError."""
+    if transport_name in UNVERIFIED_TRANSPORTS:
+        what = f" for {action}" if action else ""
+        raise IdentityError(
+            f"refusing trust decision{what}: transport "
+            f"'{transport_name}' cannot prove sender identity"
+        )
