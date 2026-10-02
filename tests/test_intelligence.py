@@ -350,9 +350,27 @@ def test_full_stack_wiring_uses_neural_and_meta_reasoner():
     stages = {s.stage: s for s in record.stages}
     assert record.ok
     assert stages["neural"].ok and stages["neural"].detail.get("signals") is not None
-    assert stages["reason"].detail.get("mode") == "meta-audit" or True
+    assert stages["reason"].detail == {"concluded": True}
     reason_stage = next(s for s in record.stages if s.stage == "reason")
     assert reason_stage.ok
+
+
+def test_meta_reasoner_adapter_returns_structured_conclusion():
+    """The CLI path must use MetaReasoner, not the passthrough fallback."""
+    from jarvis.inference.reasoning import MetaReasoner
+    adapter = wiring.make_meta_reasoner_adapter(MetaReasoner())
+    # "definitely" is a MetaReasoner overconfidence marker.
+    conclusion = adapter({"normalized": {"payload": {"text": "definitely urgent"}},
+                         "neural": {"fired": 9}, "memories": [{"id": "m1"}]})
+    assert conclusion["mode"] == "meta-audit"
+    assert conclusion["spikes"] == 9
+    assert conclusion["memory_count"] == 1
+    assert any("overconfidence" in b for b in conclusion["biases"]), conclusion["biases"]
+
+    # No reasoner bound -> honest passthrough marker, never a fake audit.
+    plain = wiring.make_meta_reasoner_adapter(None)(
+        {"normalized": {"payload": {"text": "hi"}}})
+    assert plain["mode"] == "passthrough"
 
 
 # -- P1: timeout contract ------------------------------------------------
@@ -425,7 +443,9 @@ def test_replay_leaves_world_memory_policy_untouched():
     record = loop.cycle_once({"payload": {"text": "record this event"}})
     live_entities = len(registry.entities)
     live_memories = len(palace.all(limit=1000))
+    audit_after_live = len(policy.audit)
     assert live_entities >= entities_before  # live run may record
+    assert live_memories >= memories_before  # live run may record
 
     snap = capture(record, {"payload": {"text": "record this event"}})
     replayed = replay(snap, loop)
@@ -433,9 +453,10 @@ def test_replay_leaves_world_memory_policy_untouched():
     # dry-run must not add anything beyond the live run
     assert len(registry.entities) == live_entities
     assert len(palace.all(limit=1000)) == live_memories
-    assert len(policy.audit) == len(policy.audit)  # no new approvals
-    assert len(policy.approvals) == approvals_before or True
-    _ = (audit_before, memories_before)
+    assert len(policy.audit) == audit_after_live
+    assert len(policy.approvals) == approvals_before
+    assert len(palace.all(limit=1000)) == live_memories
+    assert len(registry.entities) == live_entities
 
 
 def test_replay_executor_never_called_with_side_effects():
