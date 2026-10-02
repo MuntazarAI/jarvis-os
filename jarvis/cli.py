@@ -67,6 +67,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("devices", help="capability snapshot: voice, vision, computer, models")
 
+    fab = sub.add_parser("device-fabric", help="distributed device mesh: enroll, trust, route")
+    fab.add_argument("action", nargs="?", default="status",
+                     choices=["status", "list", "info", "register",
+                              "enroll-local", "discover", "unregister",
+                              "trust", "distrust", "revoke", "quarantine",
+                              "release", "enable", "disable",
+                              "capabilities", "heartbeat", "sweep",
+                              "locate", "command", "doctor"])
+    fab.add_argument("--device", default="", help="device id")
+    fab.add_argument("--name", default="", help="device name for register/discover")
+    fab.add_argument("--type", default="unknown", help="device type for register")
+    fab.add_argument("--reason", default="", help="reason for trust decisions")
+    fab.add_argument("--by", default="user", help="actor for trust decisions")
+    fab.add_argument("--capability", default="",
+                     help="capability for command / declare (repeatable via comma list)")
+    fab.add_argument("--args", default="",
+                     help="JSON object of command args for command")
+    fab.add_argument("--room", default="",
+                     help="room/area name for locate (empty clears to UNKNOWN)")
+    fab.add_argument("--approve", default="",
+                     help="policy approval token for command")
+    fab.add_argument("--json", action="store_true",
+                     help="machine-readable output")
+
     bench = sub.add_parser("benchmark", help="latency + resource benchmark")
     bench.add_argument("--samples", type=int, default=3)
 
@@ -1113,6 +1137,133 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(snapshot, indent=2, default=str))
         jarvis.close()
         return 0
+
+    if args.command == "device-fabric":
+        fabric = jarvis.device_fabric
+        as_json = args.json
+
+        def _out(payload: Any, text: str) -> int:
+            if as_json:
+                print(json.dumps(payload, indent=2, default=str))
+            else:
+                print(text)
+            jarvis.close()
+            return 0
+
+        try:
+            if args.action == "status":
+                info = fabric.status()
+                return _out(info, f"devices: {info['devices']}  "
+                                 f"transports: {info['transports_available']}  "
+                                 f"policy: {'bound' if info['policy_bound'] else 'UNBOUND'}")
+            if args.action == "list":
+                rows = fabric.list_devices()
+                return _out(rows, "\n".join(
+                    f"{r['device_id']:22} {r['name'][:24]:24} "
+                    f"{r['lifecycle']:13} {r['trust']:11} {r['connectivity']}"
+                    for r in rows) or "(no devices enrolled)")
+            if args.action == "info":
+                if not args.device:
+                    print("usage: jarvis device-fabric info --device <id>")
+                    jarvis.close()
+                    return 2
+                info = fabric.info(args.device)
+                return _out(info, fabric.describe(args.device))
+            if args.action == "register":
+                if not args.name:
+                    print("usage: jarvis device-fabric register --name <n> [--type T]")
+                    jarvis.close()
+                    return 2
+                info = fabric.register_device(args.name, args.type, by=args.by)
+                return _out(info, f"registered {info['name']} "
+                                  f"({info['device_id']}) trust={info['trust']}")
+            if args.action == "enroll-local":
+                info = fabric.register_local(name=args.name, by=args.by)
+                return _out(info, f"local node {info['name']} "
+                                  f"({info['device_id']}) online={info['connectivity']}")
+            if args.action == "discover":
+                if not args.name:
+                    print("usage: jarvis device-fabric discover --name <n>")
+                    jarvis.close()
+                    return 2
+                info = fabric.discover_device(args.name, args.type, by=args.by)
+                return _out(info, f"sighted {info['name']} ({info['device_id']})")
+            if args.action == "unregister":
+                if not args.device:
+                    print("usage: jarvis device-fabric unregister --device <id>")
+                    jarvis.close()
+                    return 2
+                ok = fabric.unregister_device(args.device, by=args.by)
+                return _out({"ok": ok}, "unregistered" if ok else "unknown device")
+            if args.action in ("trust", "distrust", "revoke", "quarantine",
+                               "release", "enable", "disable"):
+                if not args.device:
+                    print(f"usage: jarvis device-fabric {args.action} --device <id> "
+                          f"[--reason R]")
+                    jarvis.close()
+                    return 2
+                method = getattr(fabric, f"{args.action}_device")
+                info = method(args.device, by=args.by, reason=args.reason) \
+                    if args.action not in ("release", "enable") \
+                    else method(args.device, by=args.by)
+                return _out(info, f"{args.device}: lifecycle={info['lifecycle']} "
+                                  f"trust={info['trust']}")
+            if args.action == "capabilities":
+                if not args.device or not args.capability:
+                    print("usage: jarvis device-fabric capabilities --device <id> "
+                          "--capability a.b,c.d")
+                    jarvis.close()
+                    return 2
+                caps = [{"name": c.strip(), "version": 1}
+                        for c in args.capability.split(",") if c.strip()]
+                info = fabric.declare_capabilities(args.device, caps, by=args.by)
+                return _out(info, f"{args.device}: "
+                                  f"{sorted(info['capabilities'])}")
+            if args.action == "heartbeat":
+                if not args.device:
+                    print("usage: jarvis device-fabric heartbeat --device <id>")
+                    jarvis.close()
+                    return 2
+                info = fabric.heartbeat(args.device)
+                return _out(info, f"{args.device}: {info['connectivity']}")
+            if args.action == "sweep":
+                changed = fabric.sweep()
+                return _out({"offline": changed},
+                            f"{len(changed)} node(s) timed out: {changed}")
+            if args.action == "locate":
+                if not args.device:
+                    print("usage: jarvis device-fabric locate --device <id> "
+                          "[--room R]  (empty room clears to UNKNOWN)")
+                    jarvis.close()
+                    return 2
+                info = fabric.set_location(args.device, args.room, by=args.by)
+                return _out(info, f"{args.device}: "
+                                  f"location={info['location'] or 'UNKNOWN'}")
+            if args.action == "command":
+                if not args.device or not args.capability:
+                    print("usage: jarvis device-fabric command --device <id> "
+                          "--capability a.b [--args '{...}'] [--approve TOKEN]")
+                    jarvis.close()
+                    return 2
+                try:
+                    cmd_args = json.loads(args.args) if args.args else {}
+                except json.JSONDecodeError as exc:
+                    print(f"bad --args JSON: {exc}")
+                    jarvis.close()
+                    return 2
+                result = fabric.route_command("cli", args.device,
+                                              args.capability, cmd_args,
+                                              approval_token=args.approve)
+                return _out(result, result.get("error", str(result.get("result", ""))))
+            # doctor
+            result = {"checks": fabric.doctor()}
+            return _out(result, "\n".join(
+                f"{c['name']:28} {'ok' if c['ok'] else 'FAIL'}  {c['detail']}"
+                for c in result["checks"]))
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"device-fabric: {exc}")
+            jarvis.close()
+            return 1
 
     if args.command == "say":
         from .voice.runtime import Speaker
