@@ -154,7 +154,8 @@ def build_parser() -> argparse.ArgumentParser:
                        choices=["status", "cycle", "inspect", "replay",
                                 "events", "failures", "perception-status",
                                 "perception-observe", "perception-events",
-                                "perception-inspect"])
+                                "perception-inspect", "experience",
+                                "beliefs", "learning"])
     intel.add_argument("text", nargs="*", help="input text for cycle")
     intel.add_argument("--cycle", default="",
                        help="cycle id for inspect/replay")
@@ -265,6 +266,156 @@ def _make_jarvis(home: str) -> Jarvis:
     if home:
         config.paths.home = Path(home)
     return Jarvis(config=config)
+
+
+def _intel_adaptive(jarvis: Any, args: Any, _out: Any) -> int:
+    """Experiences, beliefs, learning inspection. Read-only, bounded."""
+    from .cognition.beliefs import BeliefStore
+    from .cognition.experience import ExperienceStore
+    home = str(jarvis.config.paths.home)
+    area, words = args.action, list(args.text or [])
+    sub = words[0] if words else "list"
+    rest = words[1:]
+    if area == "experience":
+        store = ExperienceStore(home)
+        if sub == "list":
+            rows = store.search(limit=20)
+            return _out({"experiences": rows},
+                        "\n".join(
+                            f"{e.get('experience_id', '')[:16]:18} "
+                            f"{e.get('outcome', '?'):12} "
+                            f"cyc={(e.get('cycle_id', '') or '')[:12]}"
+                            for e in rows) or "no experiences recorded")
+        if sub in ("show", "inspect"):
+            if not rest:
+                print("usage: jarvis intelligence experience show <id>")
+                jarvis.close()
+                return 2
+            found = store.get(rest[0])
+            if found is None:
+                found = store.find_by_cycle(rest[0])
+            if found is None:
+                print(f"unknown experience {rest[0]}")
+                jarvis.close()
+                return 1
+            return _out(found,
+                        f"{found.get('experience_id')} "
+                        f"outcome={found.get('outcome')} "
+                        f"evals={len(found.get('evaluations', []))}")
+        if sub == "search":
+            query = " ".join(rest)
+            rows = store.search(limit=20)
+            if query:
+                query_low = query.lower()
+                rows = [e for e in rows
+                        if query_low in json.dumps(e, default=str).lower()]
+            return _out({"experiences": rows},
+                        "\n".join(
+                            f"{e.get('experience_id', '')[:16]:18} "
+                            f"{e.get('outcome', '?')}"
+                            for e in rows[:20]) or "no matches")
+        if sub == "evaluate":
+            if not rest:
+                print("usage: jarvis intelligence experience evaluate <id>")
+                jarvis.close()
+                return 2
+            found = store.get(rest[0]) or store.find_by_cycle(rest[0])
+            if found is None:
+                print(f"unknown experience {rest[0]}")
+                jarvis.close()
+                return 1
+            return _out({"evaluations": found.get("evaluations", [])},
+                        "\n".join(
+                            f"{e.get('prediction_id', '')[:16]:18} "
+                            f"{e.get('verdict', '?')}"
+                            for e in found.get("evaluations", []))
+                        or "no evaluations recorded")
+        print("device: unknown experience action "
+              f"{sub} (list|show|search|evaluate)")
+        jarvis.close()
+        return 2
+    if area == "beliefs":
+        store = BeliefStore(home)
+        if sub == "list":
+            rows = store.find(limit=20)
+            return _out({"beliefs": [b.to_dict() for b in rows]},
+                        "\n".join(
+                            f"{b.belief_id[:16]:18} "
+                            f"{b.confidence:.2f} {b.status.value:12} "
+                            f"{b.statement[:60]}" for b in rows)
+                        or "no beliefs recorded")
+        if sub == "show":
+            if not rest:
+                print("usage: jarvis intelligence beliefs show <id>")
+                jarvis.close()
+                return 2
+            found = store.get(rest[0])
+            if found is None:
+                print(f"unknown belief {rest[0]}")
+                jarvis.close()
+                return 1
+            return _out(found.to_dict(),
+                        f"{found.belief_id} {found.status.value} "
+                        f"conf={found.confidence:.2f}\n"
+                        f"{found.statement}\n"
+                        f"evidence={len(found.evidence_refs)} "
+                        f"rev={found.revision}")
+        if sub == "contradictions":
+            rows = store.find(status="contradicted", limit=20)
+            return _out({"beliefs": [b.to_dict() for b in rows]},
+                        "\n".join(
+                            f"{b.belief_id[:16]:18} "
+                            f"{b.statement[:60]} "
+                            f"vs={len(b.contradictions)}"
+                            for b in rows)
+                        or "no contradictions recorded")
+        print(f"device: unknown beliefs action {sub} (list|show|contradictions)")
+        jarvis.close()
+        return 2
+    if area == "learning":
+        from .cognition.learning import LearningEngine
+        engine = LearningEngine(BeliefStore(home))
+        if sub == "status":
+            proposals = engine.consolidation_proposals(limit=5)
+            payload = {"metrics": dict(engine.metrics),
+                       "proposals": len(proposals),
+                       "neural": _learning_neural_status()}
+            lines = [f"{key}={value}" for key, value in
+                     sorted(engine.metrics.items())]
+            lines.append(f"consolidation_proposals={len(proposals)}")
+            lines.append(f"neural={payload['neural']['available']}")
+            return _out(payload, "LEARNING\n" + "\n".join(lines))
+        if sub == "explain":
+            if not rest:
+                print("usage: jarvis intelligence learning explain <belief-id>")
+                jarvis.close()
+                return 2
+            store = BeliefStore(home)
+            found = store.get(rest[0])
+            if found is None:
+                print(f"unknown belief {rest[0]}")
+                jarvis.close()
+                return 1
+            return _out(found.to_dict(),
+                        f"{found.statement}\n"
+                        f"conf={found.confidence:.2f} "
+                        f"status={found.status.value}\n"
+                        f"evidence={found.evidence_refs}\n"
+                        f"provenance={found.provenance}")
+        print(f"device: unknown learning action {sub} (status|explain)")
+        jarvis.close()
+        return 2
+    print(f"device: unknown area {area}")
+    jarvis.close()
+    return 2
+
+
+def _learning_neural_status() -> dict[str, Any]:
+    try:
+        from .cognition.neural import NeuralSignal
+        return NeuralSignal().status()
+    except Exception:
+        return {"available": False}
 
 
 def _intel_perception(jarvis: Any, args: Any, _out: Any) -> int:
@@ -1815,6 +1966,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.action in ("perception-status", "perception-observe",
                            "perception-events", "perception-inspect"):
             return _intel_perception(jarvis, args, _intel_out)
+        if args.action in ("experience", "beliefs", "learning"):
+            return _intel_adaptive(jarvis, args, _intel_out)
         payload = {"loop": loop.status(),
                    "subsystems": {
                        "world": jarvis.world_registry.stats()
