@@ -1,5 +1,65 @@
 # Voice & Audio Intelligence 5.1
 
+## 5.2 — persistent Turbo runtime (this section)
+
+The one-shot bridge (spawn Python → load model → synthesize → exit)
+reloaded ~3GB of weights per sentence. 5.2 adds a persistent worker:
+
+```
+JARVIS → TTSProvider → PersistentTTSClient (single owner)
+  → stdio JSONL, protocol v1 (no sockets, no network, no shell)
+  → tts_worker.py (Python 3.12 venv): Turbo loaded ONCE
+  → wav artifact in client-owned dir → existing AudioOutput
+```
+
+Why stdio JSONL: simplest portable Linux/Pi mechanism; no stale
+sockets, no network surface, debuggable lines, stdlib only. The device
+socket transport was evaluated and rejected (wrong tool: network
+protocol for a local pipe).
+
+### Lifecycle and ownership
+
+States: STARTING → LOADING → READY → BUSY → READY; FAILED;
+READY → SHUTDOWN_REQUESTED → SHUTDOWN. Illegal transitions rejected.
+One worker, one model, one active synthesis; BUSY rejects with
+structured backpressure (no queue). Timeouts (monotonic): startup 120s,
+ready 1800s, request 900s, health 10s, shutdown 15s. Restarts: max 2
+with 5s/15s backoff, then fallback. Every response correlates by
+request id AND worker generation; timeouts abandon, taint, restart.
+
+Fallback chain: persistent → one-shot bridge → local espeak/piper →
+text-only. The reported `mode` always names the actual producer
+(`persistent`/`bridge`/`direct`/`local-fallback`/`fake`).
+
+### Security and privacy
+
+Worker authority: synthesize validated text, nothing else. No shell,
+no eval/exec, no imports by request, no arbitrary paths (writes only
+`<workdir>/req-<id>.wav`, id charset-enforced), no env modification,
+no network. Child env = parent env + repo PYTHONPATH only. Telemetry
+is metadata-only (lengths, latencies, counts). Temp audio is transient
+by default. Cancellation = abandon + restart (model-level interruption
+is unsafe; documented limitation).
+
+### Configuration (`JarvisConfig.voice`)
+
+`persistent: true` (master switch), plus LIMITS in
+`jarvis/voice/persistent.py` (text/audio caps, all timeouts, restart
+limit, optional `max_worker_rss_mb` defaulting to observe-only).
+`voice worker [--op status|start|stop]`, `voice:worker` doctor check
+with stray-worker (orphan) detection. First-sentence cost remains
+(~20s load); steady state amortizes it. A persistent daemon across CLI
+invocations was deliberately NOT built (stale-endpoint/orphan risk);
+workers live with their owner process (serve/repl/listen benefit,
+one-shot CLI measures cold start honestly then shuts down).
+
+### Measured (this host, CPU-only, Turbo)
+
+time-to-ready ~20–40s (one load); warm syntheses ~12–17s for ~2.3s
+audio (RTF ~5–7) vs one-shot ~22–52s; 10/10 requests ok, RSS
+2.7→3.0GB oscillating, no leak; offline synthesis PASS. See the 5.2
+final report for the full benchmark table.
+
 Local-first voice as a sensory/output modality of the existing
 intelligence architecture — not a second brain, not a toy demo.
 

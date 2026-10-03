@@ -31,7 +31,8 @@ def resolve_tts(config: Any = None, provider_name: str = ""):
         return ChatterboxTTSProvider(
             model=str(get("model", "chatterbox-turbo")),
             reference_audio=str(get("reference_audio", "")),
-            python_executable=str(get("chatterbox_python", "")))
+            python_executable=str(get("chatterbox_python", "")),
+            persistent=bool(get("persistent", True)))
     if name in ("local-fallback", "espeak", "piper"):
         return LocalFallbackTTSProvider()
     from .tts import UnavailableTTSProvider
@@ -74,6 +75,7 @@ def speak_text(text: str, *, config: Any = None,
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / f"{request.request_id}.wav"
     result = primary.synthesize(request, dest)
+    mode = str((result.metadata or {}).get("mode", primary.name))
     TELEMETRY.record("voice.tts", status="ok" if result.ok else "failed",
                      latency_ms=result.latency_ms,
                      text_len=len(rendered),
@@ -107,6 +109,7 @@ def speak_text(text: str, *, config: Any = None,
                 "correlation_id": correlation_id}
     if not play:
         return {"ok": True, "provider": result.provider,
+                "mode": mode,
                 "spoken_aloud": False, "response_text": rendered,
                 "audio_path": result.audio_path,
                 "duration_s": result.duration_s,
@@ -117,6 +120,7 @@ def speak_text(text: str, *, config: Any = None,
         sink = output_for(sink)
     if not sink.available():
         return {"ok": True, "provider": result.provider,
+                "mode": mode,
                 "spoken_aloud": False, "response_text": rendered,
                 "audio_path": result.audio_path,
                 "duration_s": result.duration_s,
@@ -137,6 +141,7 @@ def speak_text(text: str, *, config: Any = None,
             pass
     total_ms = round((time.perf_counter() - started) * 1000, 2)
     return {"ok": played.ok, "provider": result.provider,
+            "mode": mode,
             "spoken_aloud": played.ok, "response_text": rendered,
             "duration_s": result.duration_s,
             "tts_id": request.request_id,

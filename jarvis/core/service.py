@@ -29,6 +29,40 @@ class HealthCheck:
                 "required": self.required}
 
 
+def _voice_worker_detail(config: JarvisConfig | None) -> str:
+    """Cheap worker diagnostics: config, executable, orphans. Never
+    loads the model (that stays opt-in via `voice worker start`)."""
+    voice = getattr(config, "voice", None) if config else None
+    if voice is not None and not getattr(voice, "persistent", True):
+        return "persistent runtime disabled by config"
+    import shutil
+    import subprocess
+    exe = str(getattr(voice, "chatterbox_python", "")
+              if voice else "") or \
+        str(Path.home() / ".config" / "jarvis" / "chatterbox-venv"
+            / "bin" / "python")
+    exe_ok = Path(os.path.expanduser(exe)).exists()
+    orphans = 0
+    if shutil.which("pgrep") is not None:
+        try:
+            proc = subprocess.run(
+                ["pgrep", "-f", "jarvis.voice.tts_worker"],
+                capture_output=True, text=True, timeout=10)
+            orphans = len([line for line in
+                           (proc.stdout or "").splitlines()
+                           if line.strip()])
+        except (OSError, subprocess.SubprocessError):
+            orphans = 0
+    parts = [f"protocol v1 (stdio JSONL)",
+             f"runtime {'found' if exe_ok else 'missing'}"]
+    if orphans:
+        parts.append(f"{orphans} stray worker(s) — "
+                     "stop their owner process")
+    else:
+        parts.append("no stray workers")
+    return "; ".join(parts)
+
+
 def _voice_model_detail() -> str:
     """Weights cached in the HF hub → ready for lazy load; else not."""
     hub = Path.home() / ".cache" / "huggingface" / "hub"
@@ -232,6 +266,8 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
             "voice:chatterbox", provider.available(),
             f"{cb_mode or 'missing'}: "
             + ("import ok" if cb_mode == "direct"
+               else "persistent worker via ~/.config/jarvis/chatterbox-venv"
+               if cb_mode == "persistent"
                else "bridge via ~/.config/jarvis/chatterbox-venv"
                if cb_mode == "bridge"
                else "NOT AVAILABLE (isolated venv missing; see "
@@ -240,6 +276,10 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
         checks.append(HealthCheck(
             "voice:model", True,
             _voice_model_detail(),
+            required=False))
+        checks.append(HealthCheck(
+            "voice:worker", True,
+            _voice_worker_detail(config),
             required=False))
         checks.append(HealthCheck(
             "voice:microphone", mic_ok,

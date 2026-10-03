@@ -243,11 +243,15 @@ class ChatterboxTTSProvider(TTSProvider):
     def __init__(self, model: str = "chatterbox-turbo",
                  reference_audio: str = "",
                  device: str = "cpu",
-                 python_executable: str = "") -> None:
+                 python_executable: str = "",
+                 persistent: bool = True,
+                 worker_dir: str = "") -> None:
         self.model = model
         self.reference_audio = reference_audio
         self.device = device
         self.python_executable = python_executable or ""
+        self.persistent = persistent
+        self.worker_dir = worker_dir or ""
         self._engine: Any = None
         self._load_error = ""
         self._generate_params: set[str] = set()
@@ -273,15 +277,17 @@ class ChatterboxTTSProvider(TTSProvider):
         return ""
 
     def mode(self) -> str:
+        bridge = self.bridge_python()
+        if self.persistent and bridge and _venv_has_chatterbox(bridge):
+            return "persistent"
         if self._direct_importable():
             return "direct"
-        bridge = self.bridge_python()
         if bridge and _venv_has_chatterbox(bridge):
             return "bridge"
         return "unavailable"
 
     def available(self) -> bool:
-        return self.mode() in ("direct", "bridge")
+        return self.mode() in ("direct", "bridge", "persistent")
 
     def _ensure_engine(self) -> bool:
         if self._engine is not None:
@@ -314,14 +320,28 @@ class ChatterboxTTSProvider(TTSProvider):
     def health(self) -> dict[str, Any]:
         ref = Path(self.reference_audio).expanduser() \
             if self.reference_audio else None
+        mode = self.mode()
+        worker: dict[str, Any] = {}
+        if mode == "persistent":
+            try:
+                from .persistent import get_client
+                worker = get_client(
+                    python=self.bridge_python(), model=self.model,
+                    reference_audio=self.reference_audio,
+                    device=self.device,
+                    workdir=self.worker_dir or
+                    "~/.config/jarvis/tts-worker").health()
+            except Exception:
+                worker = {}
         return {"provider": self.name, "available": self.available(),
-                "mode": self.mode(),
+                "mode": mode,
                 "bridge_python": self.bridge_python(),
                 "model": self.model,
                 "reference_ok": bool(ref and ref.exists()),
                 "reference": str(ref) if ref else "",
                 "load_error": self._load_error,
-                "loaded": self._engine is not None}
+                "loaded": self._engine is not None,
+                "worker": worker}
 
     def metadata(self) -> dict[str, Any]:
         return {"provider": self.name, "model": self.model,
@@ -331,6 +351,8 @@ class ChatterboxTTSProvider(TTSProvider):
     def synthesize(self, request: TTSRequest,
                    dest: str | Path | None = None) -> TTSResult:
         started = time.perf_counter()
+        if self.persistent and self.bridge_python():
+            return self._synthesize_persistent(request, dest, started)
         if self._direct_importable():
             return self._synthesize_direct(request, dest, started)
         bridge = self.bridge_python()
@@ -344,6 +366,90 @@ class ChatterboxTTSProvider(TTSProvider):
                   "~/.config/jarvis/chatterbox-venv (see "
                   "docs/VOICE_AUDIO_INTELLIGENCE.md)",
             sample_rate=request.sample_rate)
+
+    def _synthesize_persistent(
+            self, request: TTSRequest, dest: str | Path | None,
+            started: float) -> TTSResult:
+        from .persistent import get_client
+        ref = request.reference_audio or self.reference_audio
+        if not ref or not Path(ref).expanduser().exists():
+            return TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="failed",
+                error="reference voice missing; run: "
+                      "jarvis voice setup",
+                sample_rate=request.sample_rate)
+        client = get_client(
+            python=self.bridge_python(), model=self.model,
+            reference_audio=str(Path(ref).expanduser()),
+            device=self.device,
+            workdir=self.worker_dir or
+            "~/.config/jarvis/tts-worker")
+        if client.state.value not in ("ready", "busy"):
+            started_client = client.start()
+            if not started_client.get("ok"):
+                return self._synthesize_direct_fallback(
+                    request, dest, started, started_client.get(
+                        "error", "persistent worker failed"))
+        out = client.synthesize(
+            request.text, request_id=request.request_id,
+            exaggeration=request.exaggeration,
+            temperature=request.temperature,
+            cfg_weight=request.cfg_weight,
+            language=request.language)
+        if not out.get("ok"):
+            return self._synthesize_direct_fallback(
+                request, dest, started,
+                str(out.get("error", "persistent synthesis failed")))
+        if dest is not None and out.get("audio_path") != str(dest):
+            try:
+                import shutil as _shutil
+                Path(dest).parent.mkdir(parents=True, exist_ok=True)
+                _shutil.copyfile(out["audio_path"], str(dest))
+                audio_path = str(dest)
+            except OSError:
+                audio_path = str(out.get("audio_path", ""))
+            # The worker-dir original is transient: drop it now that
+            # the caller-owned copy exists (best effort).
+            try:
+                if audio_path == str(dest):
+                    Path(out["audio_path"]).unlink(missing_ok=True)
+            except OSError:
+                pass
+        else:
+            audio_path = str(out.get("audio_path", ""))
+        return TTSResult(
+            request_id=request.request_id, provider=self.name,
+            status="success", audio_path=audio_path,
+            audio_bytes=int(out.get("audio_bytes", 0)),
+            duration_s=float(out.get("duration_s", 0.0)),
+            sample_rate=int(out.get("sample_rate",
+                                    request.sample_rate)),
+            latency_ms=float(out.get(
+                "latency_ms", round(
+                    (time.perf_counter() - started) * 1000, 2))),
+            metadata={"model": self.model, "local": True,
+                      "mode": "persistent"})
+
+    def _synthesize_direct_fallback(
+            self, request: TTSRequest, dest: str | Path | None,
+            started: float, error: str) -> TTSResult:
+        """Persistent path failed: fall back down the existing chain
+        (direct -> one-shot bridge), reporting the actual mode."""
+        if self._direct_importable():
+            return self._synthesize_direct(request, dest, started)
+        bridge = self.bridge_python()
+        if bridge:
+            return self._synthesize_bridge(request, dest, started,
+                                           bridge)
+        return TTSResult(
+            request_id=request.request_id, provider=self.name,
+            status="failed", error=error[:300],
+            sample_rate=request.sample_rate,
+            metadata={"model": self.model, "local": True,
+                      "mode": "persistent-attempted"},
+            latency_ms=round(
+                (time.perf_counter() - started) * 1000, 2))
 
     def _synthesize_bridge(self, request: TTSRequest,
                            dest: str | Path | None, started: float,
@@ -539,7 +645,8 @@ def provider_for(name: str, config: Any = None) -> TTSProvider:
         return ChatterboxTTSProvider(
             model=str(get("model", "chatterbox-turbo")),
             reference_audio=str(get("reference_audio", "")),
-            python_executable=str(get("chatterbox_python", "")))
+            python_executable=str(get("chatterbox_python", "")),
+            persistent=bool(get("persistent", True)))
     return UnavailableTTSProvider(f"unknown TTS provider: {name}")
 
 
