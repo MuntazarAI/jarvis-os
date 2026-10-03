@@ -42,8 +42,13 @@ This roadmap tracks the engineering direction of JARVIS OS. The project prioriti
 ### Device integration
 - [x] Device Fabric architecture
 - [x] Android node architecture/skeleton
-- [x] Android socket transport implementation on the parked 3.10 branch
-- [ ] Real Android APK ↔ JARVIS host E2E lifecycle is still incomplete
+- [x] Android socket transport implementation (3.10, PR #37)
+- [x] Real Android APK ↔ JARVIS host E2E lifecycle (3.10, emulator-proven)
+- [x] Persistent device intelligence: durable grants, durable approvals,
+  durable command outbox + drainer, DeviceCommandService, operator CLI,
+  audit log (4.2 device track, emulator-proven end to end)
+- [ ] Async operator command UX (persistent policy grants, approval
+  notification flow) — mechanism proven, operator ergonomics follow
 
 ## 4.2 — End-to-End Cognitive Loop
 

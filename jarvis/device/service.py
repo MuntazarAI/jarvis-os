@@ -393,7 +393,7 @@ class DeviceCommandService:
                 live["approval_id"] = token
                 live["updated_at"] = now()
                 live.setdefault("history", []).append(
-                    {"at": live["updated_at"], "event": "approval_refreshed",
+                    {"at": live["updated_at"], "event": "approval_attached",
                      "detail": token[:12] + "…"})
 
 
