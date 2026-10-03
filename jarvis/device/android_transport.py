@@ -510,6 +510,16 @@ class AndroidSocketHost:
             return router._deny(actor, device_id, command,
                                  checked["args"],
                                  ["device has no live socket lane"])
+        # Single-use durable approvals are consumed exactly once, here at
+        # delivery (authorize() only peeked). Lane first so a dead lane
+        # never burns the token.
+        if (approval_token and not router.policy.approved(approval_token)
+                and not router._consume_durable(
+                    actor, device_id, capability, checked["args"],
+                    approval_token)):
+            return router._deny(actor, device_id, command,
+                                 checked["args"],
+                                 [router._durable_deny_reason])
         message = router.build_command_message(actor, device, capability,
                                                checked["args"])
         # The Kotlin allowlist matches bare command names; the declared

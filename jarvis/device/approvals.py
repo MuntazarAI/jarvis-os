@@ -237,13 +237,48 @@ class ApprovalStore:
                           extra={"approval_id": token})
         return True
 
+    @staticmethod
+    def _bindings_ok(record: dict[str, Any], *, actor: str,
+                     device_id: str, capability: str,
+                     args: dict[str, Any] | None) -> tuple[bool, str]:
+        if record.get("actor") != actor:
+            return False, "approval token bound to another actor"
+        if record.get("device_id") != device_id:
+            return False, "approval token bound to another device"
+        if record.get("capability") != capability:
+            return False, "approval token bound to another capability"
+        if record.get("args_hash") != _args_hash(args):
+            return False, "approval token bound to other arguments"
+        return True, "approved"
+
+    def peek(self, token: str, *, actor: str, device_id: str,
+             capability: str,
+             args: dict[str, Any] | None = None) -> tuple[bool, str]:
+        """Check a token WITHOUT consuming it. Never raises."""
+        try:
+            self._maybe_reload()
+            record = self._tokens.get(token)
+            if record is None:
+                return False, "unknown approval token"
+            if self._expired(record, now()):
+                return False, "approval token expired"
+            if record.get("state") != APPROVED:
+                return False, f"approval token is {record.get('state')}"
+            return self._bindings_ok(record, actor=actor,
+                                     device_id=device_id,
+                                     capability=capability, args=args)
+        except Exception as exc:
+            return False, f"approval check failed (fail closed): {exc}"[:160]
+
     def consume(self, token: str, *, actor: str, device_id: str,
                 capability: str,
                 args: dict[str, Any] | None = None) -> tuple[bool, str]:
         """Atomically consume an APPROVED token iff every binding matches.
 
         Single use: the first consumer transitions APPROVED -> CONSUMED
-        and wins; every later attempt sees CONSUMED and loses. Never raises.
+        and wins; every later attempt loses. Bindings are re-verified
+        after the reload so a concurrent mutation cannot slip through.
+        Never raises.
         """
         try:
             self._maybe_reload()
@@ -256,14 +291,11 @@ class ApprovalStore:
                 return False, "approval token expired"
             if record.get("state") != APPROVED:
                 return False, f"approval token is {record.get('state')}"
-            if record.get("actor") != actor:
-                return False, "approval token bound to another actor"
-            if record.get("device_id") != device_id:
-                return False, "approval token bound to another device"
-            if record.get("capability") != capability:
-                return False, "approval token bound to another capability"
-            if record.get("args_hash") != _args_hash(args):
-                return False, "approval token bound to other arguments"
+            ok, reason = self._bindings_ok(
+                record, actor=actor, device_id=device_id,
+                capability=capability, args=args)
+            if not ok:
+                return False, reason
             record["state"] = CONSUMED
             record.setdefault("history", []).append(
                 {"at": now(), "event": "consumed", "by": actor[:64]})

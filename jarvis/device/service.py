@@ -124,7 +124,14 @@ class DeviceCommandService:
     def request_command(self, actor: str, device_id: str, command: str,
                         args: dict[str, Any] | None = None, *,
                         approval_id: str = "") -> dict[str, Any]:
-        """Authorize, enqueue durably, and attempt immediate delivery."""
+        """Shape-check, enqueue durably, and attempt immediate delivery.
+
+        Authorization happens exactly once, inside _deliver(): the
+        single-use approval (if any) is consumed at most once per call.
+        Hard denials still produce a FAILED record (auditable) rather
+        than a silent refusal; only malformed commands are refused
+        without a record.
+        """
         if not actor or not device_id or not command:
             raise CommandServiceError(
                 "actor, device_id and command are required")
@@ -137,48 +144,14 @@ class DeviceCommandService:
                               extra={"command": command})
             return {"ok": False, "device_id": device_id, "command": command,
                     "error": checked["error"]}
-        capability = checked["capability"]
-        clean_args = checked["args"]
-        gate = self.router.authorize(
-            actor, device_id, capability, clean_args,
-            approval_token=approval_id) if self.router is not None else {
-                "authorized": False, "reasons": ["no router"],
-                "approval_token": ""}
-        if gate["authorized"]:
-            record = self.outbox.enqueue(
-                device_id, capability, command, clean_args, actor=actor,
-                approval_id=approval_id)
-            self.audit.record("device.command.requested", actor=actor,
-                              device_id=device_id, ok=True,
-                              extra={"command_id": record["command_id"],
-                                     "capability": capability})
-            return self._deliver(record)
-        reasons = list(gate.get("reasons", []))
-        if gate.get("approval_token") and not approval_id:
-            # First denial: mint a durable approval and park the command.
-            approval = self.approvals.request(
-                actor, device_id, capability, clean_args, by=actor,
-                reason="; ".join(reasons)[:200])
-            record = self.outbox.enqueue(
-                device_id, capability, command, clean_args, actor=actor,
-                approval_id=approval["token"])
-            self.audit.record("device.command.awaiting_approval", actor=actor,
-                              device_id=device_id, ok=True,
-                              reasons=reasons,
-                              extra={"command_id": record["command_id"],
-                                     "approval_id": approval["token"],
-                                     "capability": capability})
-            return {"ok": False, "device_id": device_id, "command": command,
-                    "command_id": record["command_id"],
-                    "requires_approval": True,
-                    "approval_id": approval["token"],
-                    "error": "; ".join(reasons)[:300]}
-        self.audit.record("device.command.rejected", actor=actor,
-                          device_id=device_id, ok=False, reasons=reasons,
-                          extra={"command": command,
-                                 "capability": capability})
-        return {"ok": False, "device_id": device_id, "command": command,
-                "error": "; ".join(reasons)[:500]}
+        record = self.outbox.enqueue(
+            device_id, checked["capability"], command, checked["args"],
+            actor=actor, approval_id=approval_id)
+        self.audit.record("device.command.requested", actor=actor,
+                          device_id=device_id, ok=True,
+                          extra={"command_id": record["command_id"],
+                                 "capability": checked["capability"]})
+        return self._deliver(record)
 
     def approve_command(self, approval_id: str, *, by: str = "") -> bool:
         """Human approval for a parked command. Returns transitioned or not."""
@@ -354,31 +327,51 @@ class DeviceCommandService:
 
     def _handle_deny(self, record: dict[str, Any], reasons: list[str],
                      fresh_token: str) -> dict[str, Any]:
-        """Gate denial at drain time: refresh approvals, defer the rest."""
+        """Gate denial at drain time: approval flow, deferral, or fail."""
         command_id = str(record.get("command_id", ""))
+        actor = str(record.get("actor", ""))
         joined = "; ".join(reasons)
-        if "needs approval" in joined:
-            if record.get("approval_id"):
-                # Token spent/invalid and still required: mint a fresh one.
-                approval = self.approvals.request(
-                    str(record.get("actor", "")),
-                    str(record.get("device_id", "")),
-                    str(record.get("capability", "")),
-                    dict(record.get("args") or {}),
-                    by=str(record.get("actor", "")),
-                    reason=joined[:200])
-                self._set_approval(command_id, approval["token"])
-                self.outbox.defer(command_id, APPROVAL_DEFER_S,
-                                  detail="approval refreshed")
-                return {"ok": False, "command_id": command_id,
-                        "deferred": True, "requires_approval": True,
-                        "approval_id": approval["token"],
-                        "error": joined[:300]}
+        if "needs approval" in joined or "durable approval denied" in joined:
+            presented = str(record.get("approval_id", ""))
+            if presented:
+                try:
+                    known = self.approvals.status(presented)
+                except Exception:
+                    known = None
+                state = (known or {}).get("state", "")
+                if state == "pending":
+                    # Approval requested, human has not decided: wait.
+                    self.outbox.defer(command_id, APPROVAL_DEFER_S,
+                                      detail="awaiting approval")
+                    return {"ok": False, "command_id": command_id,
+                            "deferred": True, "requires_approval": True,
+                            "approval_id": presented,
+                            "error": joined[:300]}
+                if known is None:
+                    # Unknown token: hard deny, never mint on junk.
+                    failed = self.outbox.fail(
+                        command_id, "unknown approval token",
+                        retryable=False)
+                    return {"ok": False, "command_id": command_id,
+                            "error": str(failed.get("error", ""))[:300]}
+            # First request, or a spent/expired/denied token: mint a fresh
+            # durable approval and park the command for the human.
+            approval = self.approvals.request(
+                actor, str(record.get("device_id", "")),
+                str(record.get("capability", "")),
+                dict(record.get("args") or {}), by=actor,
+                reason=joined[:200])
+            self._set_approval(command_id, approval["token"])
             self.outbox.defer(command_id, APPROVAL_DEFER_S,
                               detail="awaiting approval")
+            self.audit.record("device.command.awaiting_approval", actor=actor,
+                              device_id=str(record.get("device_id", "")),
+                              ok=True, reasons=reasons,
+                              extra={"command_id": command_id,
+                                     "approval_id": approval["token"]})
             return {"ok": False, "command_id": command_id,
                     "deferred": True, "requires_approval": True,
-                    "approval_id": str(record.get("approval_id", "")),
+                    "approval_id": approval["token"],
                     "error": joined[:300]}
         if "suspended" in joined or "not online" in joined \
                 or "no live socket lane" in joined:

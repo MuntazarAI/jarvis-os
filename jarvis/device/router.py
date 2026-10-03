@@ -66,7 +66,15 @@ class DeviceRouter:
                               decision=authorized.get("decision"),
                               approval_token=authorized.get("approval_token"))
         device = authorized["device"]
-        # 5. Dispatch over the transport to the node's handler.
+        # 5. Single-use durable approvals are consumed exactly once, here
+        # at delivery (authorize() only peeks). A lost race fails closed.
+        if (approval_token and self.approval_store is not None
+                and not self.policy.approved(approval_token)
+                and not self._consume_durable(
+                    actor, device_id, capability, args, approval_token)):
+            return self._deny(actor, device_id, capability, args,
+                              [self._durable_deny_reason])
+        # 6. Dispatch over the transport to the node's handler.
         message = self.build_command_message(actor, device, capability, args)
         try:
             reply = self.transport.send(message)
@@ -149,9 +157,9 @@ class DeviceRouter:
         if decision.requires_approval:
             if approval_token and self.policy.approved(approval_token):
                 approval_token = ""  # in-memory approval (compat path)
-            elif approval_token and self.approval_store is not None and self._consume_durable(
+            elif approval_token and self.approval_store is not None and self._peek_durable(
                     actor, device_id, capability, args, approval_token):
-                approval_token = ""  # durable token consumed: single use
+                pass  # durable approval verified; consumed at delivery
             elif approval_token and self.approval_store is not None:
                 denied["reasons"] = [self._durable_deny_reason]
                 return denied
@@ -177,6 +185,25 @@ class DeviceRouter:
         except Exception as exc:
             self._durable_deny_reason = (
                 f"approval consume failed (fail closed): {exc}"[:160])
+            return False
+        if not ok:
+            self._durable_deny_reason = f"durable approval denied: {reason}"[:200]
+        return ok
+
+    def _peek_durable(self, actor: str, device_id: str, capability: str,
+                      args: dict[str, Any], approval_token: str) -> bool:
+        """Check a durable approval WITHOUT consuming it (for authorize)."""
+        self._durable_deny_reason = "durable approval rejected"
+        if self.approval_store is None:
+            self._durable_deny_reason = "no approval store attached"
+            return False
+        try:
+            ok, reason = self.approval_store.peek(
+                approval_token, actor=actor, device_id=device_id,
+                capability=capability, args=args)
+        except Exception as exc:
+            self._durable_deny_reason = (
+                f"approval check failed (fail closed): {exc}"[:160])
             return False
         if not ok:
             self._durable_deny_reason = f"durable approval denied: {reason}"[:200]
