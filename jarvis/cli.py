@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import subprocess
 from typing import Any
@@ -146,6 +147,48 @@ def build_parser() -> argparse.ArgumentParser:
     dev.add_argument("--json", action="store_true",
                      help="machine-readable output")
 
+    pinode = sub.add_parser("pi", help="raspberry pi edge node")
+    pinode.add_argument("action", nargs="?", default="status",
+                        choices=["list", "show", "pair", "trust", "revoke",
+                                 "status", "health", "capabilities",
+                                 "sensors", "telemetry", "events", "queue",
+                                 "doctor", "camera", "gpio", "logs",
+                                 "command", "serve", "approve"])
+    pinode.add_argument("--device", default="", help="device id")
+    pinode.add_argument("--name", default="", help="node name for register")
+    pinode.add_argument("--code", default="", help="6-digit pairing code")
+    pinode.add_argument("--node", default="",
+                        help="node id the Pi asserts during pair")
+    pinode.add_argument("--reason", default="", help="reason for decisions")
+    pinode.add_argument("--by", default="user", help="actor for decisions")
+    pinode.add_argument("--model", default="",
+                        help="pi model for register")
+    pinode.add_argument("--os", default="", help="os version for register")
+    pinode.add_argument("--arch", default="",
+                        help="architecture for register")
+    pinode.add_argument("--capability", default="",
+                        help="capability list (comma-separated) for declare")
+    pinode.add_argument("--command", dest="node_command", default="",
+                        help="typed command to send")
+    pinode.add_argument("--args", default="",
+                        help="JSON object of command args")
+    pinode.add_argument("--approve", default="",
+                        help="policy approval token for command")
+    pinode.add_argument("--pin", type=int, default=-1,
+                        help="gpio pin number")
+    pinode.add_argument("--value", type=int, default=-1,
+                        help="gpio value 0|1")
+    pinode.add_argument("--mode", default="",
+                        help="gpio mode read|write for gpio read")
+    pinode.add_argument("--sensor", default="",
+                        help="sensor id for sensors read")
+    pinode.add_argument("--port", type=int, default=0,
+                        help="port for transport serve (0 = ephemeral)")
+    pinode.add_argument("--host", default="",
+                        help="bind address for transport serve")
+    pinode.add_argument("--json", action="store_true",
+                        help="machine-readable output")
+
     bench = sub.add_parser("benchmark", help="latency + resource benchmark")
     bench.add_argument("--samples", type=int, default=3)
 
@@ -268,6 +311,285 @@ def _make_jarvis(home: str) -> Jarvis:
     if home:
         config.paths.home = Path(home)
     return Jarvis(config=config)
+
+
+def _pi_action(adapter: Any, jarvis: Any, args: Any, _out: Any) -> int:
+    """Raspberry Pi node operations. Read paths never actuate."""
+    from .device import pi_hardware as _hw
+    from .device.pi_adapter import pi_health
+    from .device.service import DeviceCommandService
+    action = args.action
+    if action == "list":
+        nodes = adapter.list_pi()
+        return _out({"nodes": nodes},
+                    "\n".join(
+                        f"{n['device_id'][:12]:14} {n['name']:20} "
+                        f"{'online' if n['connected'] else 'offline'}"
+                        for n in nodes) or "no pi nodes")
+    if action in ("show", "status", "health"):
+        if not args.device:
+            print(f"usage: jarvis pi {action} --device <id>")
+            jarvis.close()
+            return 2
+        info = adapter.status(args.device)
+        if action == "health":
+            health = pi_health(info.get("telemetry", {}))
+            return _out({"device_id": args.device, **health},
+                        f"{health['health']}: "
+                        f"{'; '.join(health['reasons']) or 'nominal'}")
+        return _out(info, f"{info['name']} lifecycle={info['lifecycle']} "
+                           f"trust={info['trust']} "
+                           f"connected={info['connected']}")
+    if action == "pair":
+        if not (args.device and args.code):
+            print("usage: jarvis pi pair --device <id> --code 123456 "
+                  "[--node <node-id>]")
+            jarvis.close()
+            return 2
+        result = adapter.pair(args.device, args.code, by=args.by,
+                              reason=args.reason, node_id=args.node)
+        return _out(result, f"paired {result['name']} "
+                            f"trust={result['trust']}")
+    if action == "trust":
+        if not args.device:
+            print("usage: jarvis pi trust --device <id> [--reason R]")
+            jarvis.close()
+            return 2
+        result = adapter.trust_pi(args.device, by=args.by,
+                                  reason=args.reason)
+        return _out(result, f"trusted {result['name']} "
+                            f"trust={result['trust']}")
+    if action == "revoke":
+        if not args.device:
+            print("usage: jarvis pi revoke --device <id> [--reason R]")
+            jarvis.close()
+            return 2
+        result = adapter.revoke_pi(args.device, by=args.by,
+                                   reason=args.reason)
+        return _out(result, f"revoked {result['name']}")
+    if action == "capabilities":
+        if not args.device:
+            print("usage: jarvis pi capabilities --device <id> "
+                  "[--capability a.b,c]")
+            jarvis.close()
+            return 2
+        if args.capability:
+            declared = [c.strip() for c in args.capability.split(",")
+                        if c.strip()]
+            result = adapter.declare_pi_capabilities(
+                args.device, declared, by=args.by)
+            return _out(result, f"granted={result['granted']} "
+                                f"withheld={len(result['withheld'])}")
+        result = adapter.status(args.device)
+        return _out({"capabilities": result["capabilities"]},
+                    ", ".join(sorted(result["capabilities"]))
+                    or "no capabilities")
+    if action == "sensors":
+        providers = {"temperature": _hw.TemperatureProvider(),
+                     "network": _hw.NetworkProvider(),
+                     "system": _hw.SystemProvider()}
+        try:
+            if args.sensor:
+                if args.sensor == "temperature":
+                    value = providers["temperature"].temperature_c()
+                    return _out({"sensor_id": "temperature",
+                                 "value": value, "unit": "C"},
+                                f"temperature={value}C"
+                                if value is not None
+                                else "temperature: UNAVAILABLE")
+                if args.sensor == "network":
+                    return _out(providers["network"].status(),
+                                str(providers["network"].status()))
+                print(f"unknown sensor {args.sensor} "
+                      f"(temperature|network)")
+                jarvis.close()
+                return 2
+            return _out({name: provider.health()
+                         for name, provider in providers.items()},
+                        "\n".join(
+                            f"{name:12} "
+                            f"{'available' if providers[name].health().get('available') else 'unavailable'}"
+                            for name in providers))
+        finally:
+            for provider in providers.values():
+                try:
+                    provider.close()
+                except Exception:
+                    pass
+    if action == "telemetry":
+        providers = {"system": _hw.SystemProvider(),
+                     "temperature": _hw.TemperatureProvider(),
+                     "network": _hw.NetworkProvider()}
+        try:
+            report: dict[str, Any] = {}
+            report.update(providers["system"].telemetry())
+            temperature = providers["temperature"].temperature_c()
+            if temperature is not None:
+                report["temperature_c"] = temperature
+            report["network"] = ",".join(
+                f"{name}={state}" for name, state in
+                providers["network"].status().items())[:120]
+            return _out(report, " ".join(
+                f"{key}={value}" for key, value in report.items()))
+        finally:
+            for provider in providers.values():
+                try:
+                    provider.close()
+                except Exception:
+                    pass
+    if action == "events":
+        from .device.audit import DeviceAudit
+        home = str(jarvis.config.paths.home)
+        found = DeviceAudit(home).tail(50)
+        rows = [e for e in found
+                if args.device in ("", e.get("device_id", ""))]
+        return _out({"events": rows[:20]},
+                    "\n".join(str(e.get("event", "")) for e in rows[:20])
+                    or "no pi events recorded")
+    if action == "queue":
+        if not args.device:
+            print("usage: jarvis pi queue --device <id>")
+            jarvis.close()
+            return 2
+        result = adapter.queue_depth(args.device)
+        return _out(result, f"queued={result['queued']} "
+                            f"dropped={result['dropped_while_offline']}")
+    if action == "doctor":
+        checks = adapter.doctor()
+        if args.device:
+            info = adapter.status(args.device)
+            health = pi_health(info.get("telemetry", {}))
+            checks.append({"name": "node-health",
+                           "ok": health["health"] in ("HEALTHY", "UNKNOWN"),
+                           "detail": "; ".join(health["reasons"])
+                           or "nominal"})
+        failed = [c for c in checks if not c.get("ok")]
+        lines = [f"[{'ok' if c.get('ok') else 'FAIL'}] {c['name']}: "
+                 f"{c.get('detail', '')}" for c in checks]
+        return _out({"checks": checks},
+                    "\n".join(lines) + f"\n{len(checks) - len(failed)}/"
+                    f"{len(checks)} checks passed")
+    if action == "camera":
+        provider = _hw.CameraProvider()
+        try:
+            started = provider.start()
+            if not started.get("started"):
+                return _out({"ok": False, **started},
+                            f"camera unavailable: {started.get('detail')}")
+            import tempfile as _tempfile
+            dest = f"{_tempfile.gettempdir()}/pi-cam-{os.getpid()}.jpg"
+            try:
+                result = provider.capture(dest)
+            finally:
+                try:
+                    os.unlink(dest)
+                except OSError:
+                    pass
+            if not result.get("ok"):
+                return _out(result, f"capture failed: {result.get('error')}")
+            return _out({k: v for k, v in result.items() if k != "path"},
+                        f"captured {result.get('bytes', 0)} bytes "
+                        f"sha={result.get('sha256', '')[:12]} "
+                        "(frame deleted, metadata only)")
+        finally:
+            provider.close()
+    if action == "gpio":
+        if not args.device:
+            print("usage: jarvis pi gpio --device <id> --pin N "
+                  "[--mode read|write] [--value 0|1]")
+            jarvis.close()
+            return 2
+        if args.pin < 0:
+            current = adapter.gpio_pins
+            return _out({"allowlisted_pins": sorted(current)},
+                        f"allowlisted pins: {sorted(current) or 'none (all denied)'}")
+        svc = DeviceCommandService(adapter)
+        if args.mode == "write":
+            if args.value not in (0, 1):
+                print("usage: jarvis pi gpio --device <id> --pin N "
+                      "--mode write --value 0|1")
+                jarvis.close()
+                return 2
+            result = svc.request_command("cli", args.device, "pi.gpio.write",
+                                         {"pin": args.pin,
+                                          "value": args.value})
+        else:
+            result = svc.request_command("cli", args.device, "pi.gpio.read",
+                                         {"pin": args.pin})
+        if result.get("ok"):
+            return _out(result, str(result.get("result", ""))[:300])
+        return _out(result, result.get("error", "denied")[:300])
+    if action == "logs":
+        from .device.audit import DeviceAudit
+        home = str(jarvis.config.paths.home)
+        tail = DeviceAudit(home).tail(50)
+        rows = tail if not args.device else [
+            e for e in tail if e.get("device_id") == args.device]
+        return _out({"events": rows[-20:]},
+                    "\n".join(
+                        f"{e.get('event', '')} ok={e.get('ok')}"
+                        for e in rows[-20:]) or "no log events")
+    if action == "command":
+        if not (args.device and args.node_command):
+            print("usage: jarvis pi command --device <id> "
+                  "--command pi.system.cpu [--args '{...}'] "
+                  "[--approve TOKEN]")
+            jarvis.close()
+            return 2
+        try:
+            cmd_args = json.loads(args.args) if args.args else {}
+        except json.JSONDecodeError as exc:
+            print(f"bad --args JSON: {exc}")
+            jarvis.close()
+            return 2
+        svc = DeviceCommandService(adapter)
+        result = svc.request_command("cli", args.device,
+                                     args.node_command, cmd_args,
+                                     approval_id=args.approve)
+        if result.get("ok"):
+            return _out(result, str(result.get("result", ""))[:500])
+        if result.get("requires_approval"):
+            return _out(result,
+                        f"needs approval {result.get('approval_id')} "
+                        f"(command {result.get('command_id')})")
+        return _out(result, result.get("error", str(result.get(
+            "command_id", result))))
+    if action == "serve":
+        from .device.pi_transport import PiSocketHost
+        host = PiSocketHost(adapter, host=args.host, port=args.port)
+        port = host.start()
+        print(f"serving pi transport on port {port} (Ctrl-C to stop)")
+        try:
+            import time
+            from .device.service import DeviceCommandService as _Svc
+            svc = _Svc(adapter, host=host)
+            tick_at = 0.0
+            while True:
+                time.sleep(1.0)
+                try:
+                    if time.monotonic() >= tick_at:
+                        svc.tick()
+                        tick_at = time.monotonic() + 10.0
+                except Exception:
+                    pass
+        except KeyboardInterrupt:
+            pass
+        finally:
+            host.stop()
+        jarvis.close()
+        return 0
+    if action == "approve":
+        if not args.device:
+            print("usage: jarvis pi approve --device <id> [--reason R]")
+            jarvis.close()
+            return 2
+        result = adapter.trust_pi(args.device, by=args.by,
+                                  reason=args.reason)
+        return _out(result, f"approved {result['name']} "
+                            f"trust={result['trust']}")
+    print(f"pi: unknown action {action}")
+    jarvis.close()
+    return 2
 
 
 def _intel_expansion(jarvis: Any, args: Any, _out: Any) -> int:
@@ -2697,6 +3019,26 @@ def main(argv: list[str] | None = None) -> int:
                                f"dropped={result['dropped_while_offline']}")
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"device: {exc}")
+            jarvis.close()
+            return 1
+
+    if args.command == "pi":
+        from .device.pi_adapter import PiNodeAdapter
+        adapter = PiNodeAdapter(jarvis.device_fabric)
+        as_json = args.json
+
+        def _pi_out(payload: Any, text: str) -> int:
+            if as_json:
+                print(json.dumps(payload, indent=2, default=str))
+            else:
+                print(text)
+            jarvis.close()
+            return 0
+
+        try:
+            return _pi_action(adapter, jarvis, args, _pi_out)
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"pi: {exc}")
             jarvis.close()
             return 1
 

@@ -198,20 +198,23 @@ Target architecture:
 ```
 
 ### Raspberry Pi deliverables
-- [ ] Raspberry Pi node registration in Device Fabric
-- [ ] Secure authenticated transport
-- [ ] Heartbeat/presence
-- [ ] Typed capability discovery
-- [ ] Sensor telemetry
-- [ ] Camera input
-- [ ] Microphone/audio input
-- [ ] GPIO capability layer
-- [ ] Local edge preprocessing
-- [ ] Offline/reconnect behavior
-- [ ] PolicyEngine-gated physical actions
-- [ ] Device health monitoring
-- [ ] Safe shutdown/recovery behavior
-- [ ] Real Pi hardware E2E tests
+- [x] Raspberry Pi node registration in Device Fabric
+- [x] Secure authenticated transport (framing/HMAC/trust, reused model)
+- [x] Heartbeat/presence
+- [x] Typed capability discovery
+- [x] Sensor telemetry
+- [x] Camera input (abstraction + metadata; transfers future)
+- [ ] Microphone/audio input (contracts only; capture/STT future)
+- [x] GPIO capability layer (allowlisted, deny-by-default)
+- [x] Local edge preprocessing (telemetry/anomaly/prediction on-node capable)
+- [x] Offline/reconnect behavior (durable queue, TTL, replay dedupe)
+- [x] PolicyEngine-gated physical actions
+- [x] Device health monitoring
+- [x] Safe shutdown/recovery behavior (fail closed, corrupt recovery)
+- [ ] Real Pi hardware E2E tests (no physical Pi 5 available; fake-provider E2E green)
+
+See `docs/RASPBERRY_PI_NODE.md`. Physical-Pi pairing over a real
+network remains explicitly hardware-pending.
 
 ### Intended role split
 
