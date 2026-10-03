@@ -73,6 +73,7 @@ class Belief:
     contradictions: list[str] = field(default_factory=list)
     revision: int = 0
     expires_at: float = 0.0  # 0 = no expiry
+    privacy_class: str = "local"
     schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -86,6 +87,10 @@ class Belief:
         self.confidence = clamp_confidence(self.confidence)
         if len(self.evidence_refs) > MAX_EVIDENCE:
             raise BeliefError("too many evidence refs")
+        if self.privacy_class not in ("public", "local", "sensitive",
+                                      "private"):
+            raise BeliefError(
+                f"invalid privacy class: {self.privacy_class!r}")
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -202,9 +207,14 @@ class BeliefStore:
                evidence: list[str] | None = None,
                sources: list[str] | None = None,
                provenance: dict[str, Any] | None = None,
-               ttl_s: float = 0.0) -> Belief:
+               ttl_s: float = 0.0,
+               privacy_class: str = "local") -> Belief:
         """Create, or revise the live belief with the same statement."""
         self._maybe_reload()
+        if privacy_class not in ("public", "local", "sensitive",
+                                 "private"):
+            raise BeliefError(
+                f"invalid privacy class: {privacy_class!r}")
         stamp = _utcnow()
         for belief in self._beliefs.values():
             if belief.statement == statement and belief.status in (
@@ -236,7 +246,8 @@ class BeliefStore:
             source_refs=[str(s)[:80] for s in (sources or [])],
             provenance={str(k)[:80]: str(v)[:200]
                         for k, v in (provenance or {}).items()},
-            expires_at=(stamp + ttl_s) if ttl_s and ttl_s > 0 else 0.0)
+            expires_at=(stamp + ttl_s) if ttl_s and ttl_s > 0 else 0.0,
+            privacy_class=privacy_class)
         self._beliefs[belief.belief_id] = belief
         self._prune()
         self.save()
@@ -310,6 +321,25 @@ class BeliefStore:
                and b.confidence >= min_confidence]
         out.sort(key=lambda b: (b.updated_at, b.belief_id), reverse=True)
         return out[:max(1, limit)]
+
+    def search(self, query: str, *, limit: int = 10,
+               min_confidence: float = 0.0) -> list[Belief]:
+        """Substring belief lookup for context enrichment. Bounded."""
+        self._maybe_reload()
+        terms = [t.lower() for t in str(query).split() if len(t) > 2][:8]
+        if not terms:
+            return []
+        scored: list[tuple[int, Belief]] = []
+        for belief in self._beliefs.values():
+            if belief.confidence < min_confidence:
+                continue
+            text = belief.statement.lower()
+            hits = sum(1 for term in terms if term in text)
+            if hits:
+                scored.append((hits, belief))
+        scored.sort(key=lambda pair: (pair[0], pair[1].confidence,
+                                      pair[1].updated_at), reverse=True)
+        return [belief for _, belief in scored[:max(1, limit)]]
 
     def sweep_expired(self, at: float = 0.0) -> int:
         """Mark past-TTL beliefs EXPIRED. Returns count changed."""

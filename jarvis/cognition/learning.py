@@ -72,6 +72,10 @@ class LearningEngine:
                            *, by: str = "learning-engine") -> LearningReport:
         """One bounded pass over an evaluated experience."""
         report = LearningReport(experience_id=experience.experience_id)
+        if experience.privacy_class == "private":
+            report.reasons.append("private experience: never learned")
+            self.metrics["skipped"] += 1
+            return report
         if not evaluation.should_learn:
             report.reasons.append("evaluation says nothing to learn")
             self.metrics["skipped"] += 1
@@ -237,6 +241,8 @@ class LearningEngine:
         out: list[dict[str, Any]] = []
         for belief in self.beliefs.find(status="active", limit=1000):
             if belief.confidence < min_confidence:
+                continue
+            if belief.privacy_class in ("sensitive", "private"):
                 continue
             if len(belief.evidence_refs) < 2:
                 continue
