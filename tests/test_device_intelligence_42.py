@@ -158,19 +158,28 @@ def test_default_deny_without_grant(tmp_path):
 
 
 def test_grant_allows_and_revoke_blocks(tmp_path):
-    fabric, router, store = _router_with_store(tmp_path, _permissive_policy())
+    # No policy grants at all: the durable device grant alone must
+    # satisfy the permission check (risk/approval stay authoritative,
+    # so default-threshold policy still demands approval first).
+    fabric, router, store = _router_with_store(tmp_path)
     adapter = AndroidNodeAdapter(fabric)
     device_id = _online_device(adapter)
     store.grant(device_id, "device.battery", by="op")
-    assert router.authorize("op", device_id, "device.battery", {})[
+    asked = router.authorize("op", device_id, "device.battery", {})
+    assert asked["authorized"] is False
+    assert asked.get("approval_token")
+    assert router.policy.approve(asked["approval_token"], by="op") is True
+    assert router.authorize("op", device_id, "device.battery", {},
+                            approval_token=asked["approval_token"])[
         "authorized"] is True
     store.revoke(device_id, "device.battery", by="op")
     out = router.authorize("op", device_id, "device.battery", {})
     assert out["authorized"] is False
+    assert "device grant" in " ".join(out["reasons"])
 
 
 def test_suspend_blocks_and_restore_works(tmp_path):
-    fabric, router, store = _router_with_store(tmp_path, _permissive_policy())
+    fabric, router, store = _router_with_store(tmp_path)
     adapter = AndroidNodeAdapter(fabric)
     device_id = _online_device(adapter)
     store.grant(device_id, "device.battery", by="op")
@@ -178,8 +187,10 @@ def test_suspend_blocks_and_restore_works(tmp_path):
     assert router.authorize("op", device_id, "device.battery", {})[
         "authorized"] is False
     assert store.restore_device(device_id, by="op") is True
-    assert router.authorize("op", device_id, "device.battery", {})[
-        "authorized"] is True
+    # Restored: grant substitutes permission; approval still required.
+    asked = router.authorize("op", device_id, "device.battery", {})
+    assert asked["authorized"] is False
+    assert asked.get("approval_token")
 
 
 def test_expired_grant_blocks(tmp_path):
@@ -367,16 +378,22 @@ def test_service_approval_flow_then_completes(tmp_path):
 
 
 def test_service_malformed_never_enqueues_but_denials_are_recorded(tmp_path):
-    svc, _, device_id = _lab_service(tmp_path)
+    svc, adapter, device_id = _lab_service(tmp_path)
     bad = svc.request_command("op", device_id, "device.self_destruct", {})
     assert bad["ok"] is False and bad.get("command_id") is None
-    denied = svc.request_command("intruder", device_id,
+    # Wildcard grant covers any actor: a stranger's request parks for
+    # human approval (the approver sees actor=intruder and can deny).
+    parked = svc.request_command("intruder", device_id,
                                  "device.get_battery", {})
-    assert denied["ok"] is False
-    # Hard denials produce an auditable FAILED record (not silence).
-    assert denied.get("command_id")
-    assert svc.command_status(denied["command_id"])["state"] == "failed"
-    assert svc.outbox_status()["total"] == 1
+    assert parked["ok"] is False
+    assert parked.get("requires_approval") is True
+    assert svc.command_status(parked["command_id"])["state"] == "queued"
+    # No grant at all: hard FAILED record (auditable, not silent).
+    naked = svc.request_command("op", "dev-unknown", "device.get_battery",
+                                {})
+    assert naked["ok"] is False
+    assert naked.get("command_id")
+    assert svc.command_status(naked["command_id"])["state"] == "failed"
 
 
 def test_service_offline_defers_for_reconnect(tmp_path):

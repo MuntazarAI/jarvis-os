@@ -151,9 +151,14 @@ class DeviceRouter:
         decision = self.policy.evaluate(actor, plan)
         denied["decision"] = decision
         if not decision.allow:
-            denied["reasons"] = [
-                f"blocked by policy: {'; '.join(decision.reasons)}"]
-            return denied
+            if (decision.risk < 1.0 and self.grant_store is not None
+                    and self._grant_substitutes_permission(
+                        actor, device_id, capability)):
+                denied["reasons"] = []
+            else:
+                denied["reasons"] = [
+                    f"blocked by policy: {'; '.join(decision.reasons)}"]
+                return denied
         if decision.requires_approval:
             if approval_token and self.policy.approved(approval_token):
                 approval_token = ""  # in-memory approval (compat path)
@@ -170,6 +175,24 @@ class DeviceRouter:
                 return denied
         return {"authorized": True, "reasons": [], "device": device,
                 "decision": decision, "approval_token": approval_token}
+
+    def _grant_substitutes_permission(self, actor: str, device_id: str,
+                                        capability: str) -> bool:
+        """True when an active device grant covers this exact call.
+
+        A durable grant binds actor+device+capability, which is strictly
+        narrower than the global ``device.<capability>`` permission — so
+        it may satisfy the permission-membership test. Risk, emergency
+        stop, and approval stay fully authoritative (checked elsewhere).
+        """
+        if self.grant_store is None:
+            return False
+        try:
+            allowed, _ = self.grant_store.is_allowed(
+                actor, device_id, capability)
+        except Exception:
+            return False
+        return allowed
 
     def _consume_durable(self, actor: str, device_id: str, capability: str,
                          args: dict[str, Any], approval_token: str) -> bool:
