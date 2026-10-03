@@ -166,6 +166,78 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
                                   else "ydotoold not running"))
     except Exception as exc:
         checks.append(HealthCheck("computer", False, str(exc)[:100]))
+    try:
+        from ..voice.output import output_for
+        from ..voice.setup import verify_reference
+        from ..voice.tts import provider_for
+        voice = getattr(config, "voice", None) if config else None
+        provider_name = getattr(voice, "tts_provider", "chatterbox") \
+            if voice else "chatterbox"
+        cfg = voice.__dict__ if voice is not None else {}
+        provider = provider_for(provider_name, cfg)
+        ref_path = getattr(voice, "reference_audio", "") if voice \
+            else ""
+        ref = verify_reference(ref_path) if ref_path else {
+            "ok": False, "error": "unconfigured"}
+        out = output_for(getattr(voice, "playback_backend", "auto")
+                         if voice else "auto")
+        try:
+            from ..voice.runtime import EnergyVAD, MicRecorder, Transcriber
+            mic_ok = MicRecorder().available()
+            stt_backend = Transcriber().backend
+            vad_ok = bool(EnergyVAD().segment(b"\x00" * 3200))
+        except Exception:
+            mic_ok, stt_backend, vad_ok = False, "unknown", False
+        try:
+            from ..voice.pipeline import WakeWordDetector
+            wake_ok = True
+            wake_detail = WakeWordDetector().status().get("word", "")
+        except Exception:
+            wake_ok, wake_detail = False, ""
+        checks.append(HealthCheck(
+            "voice:provider", True,
+            f"{provider_name} ({'available' if provider.available() else 'not installed'})",
+            required=False))
+        checks.append(HealthCheck(
+            "voice:profile", True,
+            f"{getattr(voice, 'profile', 'jarvis')} calm/mature/controlled; "
+            "chatterbox reference, not an official voice",
+            required=False))
+        checks.append(HealthCheck(
+            "voice:reference", bool(ref.get("ok")),
+            f"{ref_path} ({ref.get('format', ref.get('error', ''))})",
+            required=False))
+        checks.append(HealthCheck(
+            "voice:chatterbox", provider.available(),
+            "import ok" if provider.available()
+            else "NOT AVAILABLE (pip install chatterbox-tts once; local after)",
+            required=False))
+        checks.append(HealthCheck(
+            "voice:model", True,
+            "NOT TESTED (lazy-load on first synthesis; see voice benchmark)",
+            required=False))
+        checks.append(HealthCheck(
+            "voice:microphone", mic_ok,
+            "arecord/sounddevice ready" if mic_ok
+            else "no capture backend",
+            required=False))
+        checks.append(HealthCheck(
+            "voice:stt", True,
+            f"{stt_backend} (independent of TTS)",
+            required=False))
+        checks.append(HealthCheck(
+            "voice:vad", vad_ok, "energy VAD ready",
+            required=False))
+        checks.append(HealthCheck(
+            "voice:wake", wake_ok, f"wake word '{wake_detail}' (not auth)",
+            required=False))
+        checks.append(HealthCheck(
+            "voice:output", out.available(),
+            getattr(out, "backend", out.name),
+            required=False))
+    except Exception as exc:
+        checks.append(HealthCheck("voice", False, str(exc)[:120],
+                                  required=False))
     return checks
 
 
