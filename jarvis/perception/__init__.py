@@ -24,12 +24,19 @@ from .contract import (
     PerceptionError,
     PrivacyClass,
     ScreenPayload,
+    redact_secret_spans,
     summarize_text,
     validate_confidence,
     validate_object,
 )
 from .objects import FakeObjects, ObjectPerceptionProvider, UnavailableObjects
 from .ocr import FakeOCR, OCRProvider, TesseractOCR, UnavailableOCR
+from .android import (
+    ANDROID_PERCEPTION_CAPABILITIES,
+    ANDROID_PERCEPTION_EVENTS,
+    android_capability_for,
+    observation_from_device_event,
+)
 from .pipeline import (
     ChangeDetector,
     ObservationStore,
@@ -45,6 +52,8 @@ from .providers import (
 )
 
 __all__ = [
+    "ANDROID_PERCEPTION_CAPABILITIES",
+    "ANDROID_PERCEPTION_EVENTS",
     "CameraProvider",
     "ChangeDetector",
     "DetectedObject",
@@ -68,6 +77,9 @@ __all__ = [
     "TesseractOCR",
     "UnavailableOCR",
     "UnavailableObjects",
+    "android_capability_for",
+    "observation_from_device_event",
+    "redact_secret_spans",
     "summarize_observation",
     "validate_confidence",
     "validate_object",

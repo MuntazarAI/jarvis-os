@@ -270,6 +270,34 @@ def summarize_text(text: str, limit: int = MAX_TEXT_CHARS) -> str:
     return text[:limit]
 
 
+_SECRET_SPAN_RES = (
+    re.compile(r"-----BEGIN (?:RSA )?PRIVATE KEY-----.*?-----END "
+               r"(?:RSA )?PRIVATE KEY-----", re.DOTALL),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"\bghp_[A-Za-z0-9]{16,}\b"),
+    re.compile(r"\bxox[bap]-[A-Za-z0-9\-]{8,}\b"),
+)
+
+
+def redact_secret_spans(text: str) -> tuple[str, list[str]]:
+    """Redact high-precision credential spans (PEM blocks, AWS keys,
+    GitHub/Slack tokens). Returns (clean_text, matched_kinds) — kinds
+    only, never values. Ordinary prose (including the word 'password'
+    without a credential shape) passes through untouched; that case
+    stays a documented limitation of key-based scrubbing."""
+    if not isinstance(text, str):
+        return "", []
+    kinds: list[str] = []
+    clean = text
+    for pattern in _SECRET_SPAN_RES:
+        if pattern.search(clean):
+            kinds.append(pattern.pattern[:24])
+            clean = pattern.sub("[redacted credentials]", clean)
+    if len(clean) > MAX_TEXT_CHARS:
+        clean = clean[:MAX_TEXT_CHARS]
+    return clean, kinds
+
+
 __all__ = [
     "Observation",
     "Modality",
@@ -283,6 +311,7 @@ __all__ = [
     "validate_object",
     "validate_confidence",
     "summarize_text",
+    "redact_secret_spans",
     "MAX_OCR_CHARS",
     "MAX_OBJECTS",
     "MAX_METADATA_KEYS",

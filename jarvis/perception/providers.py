@@ -31,6 +31,7 @@ from .contract import (
     Observation,
     PerceptionError,
     PrivacyClass,
+    redact_secret_spans,
     summarize_text,
     validate_confidence,
     validate_object,
@@ -209,6 +210,14 @@ class ScreenProvider(PerceptionProvider):
         except OSError:
             pass
         text = str(ocr.get("text", ""))[:4000]
+        text, secret_kinds = redact_secret_spans(text)
+        provenance: dict[str, Any] = {
+            "provider": self.name,
+            "ocr_engine": str(ocr.get("engine", "")),
+            "confidence_basis": str(ocr.get(
+                "confidence_basis", "capture succeeded"))}
+        if secret_kinds:
+            provenance["spans_redacted"] = True
         return Observation(
             source="screen-provider", modality=Modality.SCREEN,
             payload={"status": "ok", "visible_text": text,
@@ -216,12 +225,10 @@ class ScreenProvider(PerceptionProvider):
                      "active_app": "", "window_title": meta.get(
                          "window_title", ""),
                      "width_px": 0, "height_px": 0,
-                     "ocr_confidence": float(ocr.get("confidence", 0.0) or 0.0)},
+                     "ocr_confidence": float(ocr.get("confidence", 0.0)
+                                             or 0.0)},
             confidence=0.6 if text else 0.3,
-            provenance={"provider": self.name, "ocr_engine": str(
-                ocr.get("engine", "")),
-                "confidence_basis": str(ocr.get(
-                    "confidence_basis", "capture succeeded"))},
+            provenance=provenance,
             privacy_class=PrivacyClass.LOCAL)
 
 
@@ -372,14 +379,18 @@ class ImageProvider(PerceptionProvider):
         ocr = self._ocr.recognize(target)
         objects = self._objects.detect(target)
         text = str(ocr.get("text", ""))[:4000]
-        return Observation(
-            source="image-provider", modality=Modality.IMAGE,
-            payload={"status": "ok", "path": str(target),
+        text, secret_kinds = redact_secret_spans(text)
+        payload: dict[str, Any] = {"status": "ok", "path": str(target),
                      "width_px": width, "height_px": height,
                      "objects": objects, "ocr_text": text,
                      "ocr_confidence": float(ocr.get("confidence", 0.0)
                                              or 0.0),
-                     "content_hash": _sha256_file(target)},
+                     "content_hash": _sha256_file(target)}
+        if secret_kinds:
+            payload["spans_redacted"] = True
+        return Observation(
+            source="image-provider", modality=Modality.IMAGE,
+            payload=payload,
             confidence=0.7 if (text or objects) else 0.4,
             provenance={"provider": self.name, "format": kind,
                         "ocr_engine": str(ocr.get("engine", ""))},
@@ -416,6 +427,31 @@ class FileProvider(PerceptionProvider):
 
     SUPPORTED_SUFFIXES = (".txt", ".md", ".markdown", ".json", ".csv",
                           ".log", ".yaml", ".yml", ".toml", ".ini")
+    MAX_CSV_ROWS = 5000
+    MAX_CSV_ROWS = 5000
+
+    #: Credential stores and equivalent are never readable, even when
+    #: explicitly requested (fail closed; observing them would launder
+    #: secrets into memory/world through summaries).
+    BLOCKED_PATHS = ("/etc/shadow", "/etc/sudoers", "/etc/gshadow",
+                     "/etc/master.passwd")
+    BLOCKED_NAMES = ("id_rsa", "id_ed25519", "id_ecdsa", ".pem", ".key",
+                     ".p12", ".pfx", "secrets.json", ".env", ".netrc",
+                     "_history", "credentials.json", "cookies.sqlite",
+                     "Login Data", "keystore", "wallet.dat")
+
+    @classmethod
+    def _refuse_sensitive(cls, resolved: Path, original: str) -> None:
+        text = str(resolved)
+        for blocked in cls.BLOCKED_PATHS:
+            if text == blocked or text.startswith(blocked + "/"):
+                raise PerceptionError(
+                    f"refusing credential store: {original}")
+        name = resolved.name
+        for blocked in cls.BLOCKED_NAMES:
+            if blocked in name:
+                raise PerceptionError(
+                    f"refusing credential store: {original}")
 
     def capabilities(self) -> dict[str, Any]:
         return {"text": True, "json": True, "csv": True, "markdown": True,
@@ -433,6 +469,7 @@ class FileProvider(PerceptionProvider):
             raise PerceptionError(f"cannot resolve path: {path}")
         if not resolved.is_file():
             raise PerceptionError(f"not a file: {path}")
+        self._refuse_sensitive(resolved, path)
         try:
             size = resolved.stat().st_size
         except OSError:
@@ -490,14 +527,23 @@ class FileProvider(PerceptionProvider):
             return (f"JSON {type(data).__name__}"[:200], {})
         if suffix == ".csv":
             try:
-                rows = list(csv.reader(text.splitlines()))
+                reader = csv.reader(text.splitlines())
+                header: list[str] = []
+                count = 0
+                for i, row in enumerate(reader):
+                    if i == 0:
+                        header = [str(c)[:64] for c in row][:MAX_METADATA_KEYS]
+                    count += 1
+                    if count > FileProvider.MAX_CSV_ROWS:
+                        break
             except csv.Error as exc:
                 raise PerceptionError(f"invalid CSV: {exc}"[:160])
-            header = [str(c)[:64] for c in rows[0]][:MAX_METADATA_KEYS] \
-                if rows else []
-            return (f"CSV {len(rows)} rows, "
+            truncated = count > FileProvider.MAX_CSV_ROWS
+            return (f"CSV {count} rows"
+                    f"{'+' if truncated else ''}, "
                     f"columns: {', '.join(header)}"[:500],
-                    {"columns": header, "rows": len(rows)})
+                    {"columns": header, "rows": count,
+                     "truncated": truncated})
         if suffix in (".md", ".markdown"):
             headings = [line.strip("# ").strip()[:120]
                         for line in text.splitlines()

@@ -594,3 +594,52 @@ def test_android_seam_typed_only():
         {"objects": [{"label": "person name John"}]})
     assert only_bad.payload.get("objects", []) == []
     assert only_bad.payload.get("dropped_items") == 1
+
+
+def test_sensitive_paths_refused(tmp_path):
+    provider = FileProvider()
+    key = tmp_path / "id_rsa"
+    key.write_text("fake-key-material")
+    with pytest.raises(PerceptionError):
+        provider.observe(path=str(key))
+    env = tmp_path / ".env"
+    env.write_text("TOKEN=abc")
+    with pytest.raises(PerceptionError):
+        provider.observe(path=str(env))
+    hist = tmp_path / ".bash_history"
+    hist.write_text("ls\n")
+    with pytest.raises(PerceptionError):
+        provider.observe(path=str(hist))
+    ok_file = tmp_path / "notes.txt"
+    ok_file.write_text("hello\n")
+    assert provider.observe(path=str(ok_file)).payload["status"] == "ok"
+
+
+def test_csv_row_cap(tmp_path):
+    provider = FileProvider()
+    big = tmp_path / "big.csv"
+    with open(big, "w") as handle:
+        handle.write("a,b\n")
+        for i in range(6000):
+            handle.write(f"{i},{i}\n")
+    assert "rows" in provider.observe(path=str(big)).payload["metadata"]
+    meta = provider.observe(path=str(big)).payload["metadata"]
+    assert meta["truncated"] is True
+    assert meta["rows"] == 5001
+
+
+def test_secret_spans_redacted_at_source():
+    from jarvis.perception.contract import redact_secret_spans
+    pem = "-----BEGIN PRIVATE KEY-----\nABCDEF\n-----END PRIVATE KEY-----"
+    clean, kinds = redact_secret_spans(f"config {pem} done")
+    assert "ABCDEF" not in clean and kinds
+    clean2, kinds2 = redact_secret_spans("key AKIAIOSFODNN7EXAMPLE ok")
+    assert "AKIAIOSFODNN7EXAMPLE" not in clean2 and kinds2
+    plain, kinds3 = redact_secret_spans("the password policy is strict")
+    assert plain == "the password policy is strict" and not kinds3
+    fake = FakeOCR(text=f"token ghp_abcdefghijklmnop ok")
+    provider = ScreenProvider(ocr=fake)
+    provider._capture = _FakeCapture()
+    obs = provider.observe()
+    assert "ghp_abcdefghijklmnop" not in obs.payload["visible_text"]
+    assert obs.provenance.get("spans_redacted") is True
