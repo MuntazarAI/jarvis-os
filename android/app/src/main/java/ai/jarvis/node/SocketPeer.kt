@@ -7,6 +7,26 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.math.min
 
+/** Logging indirection: android.util.Log on device, but android.jar is a
+ *  throwing stub under plain JVM unit tests — so every call is
+ *  stub-safe (and the hook is swappable for test observation). */
+object PeerLog {
+    var debug: (tag: String, msg: String) -> Unit = { tag, msg ->
+        try {
+            android.util.Log.d(tag, msg)
+        } catch (_: Throwable) {
+            // JVM unit-test stub: drop, never crash the peer.
+        }
+    }
+    var error: (tag: String, msg: String) -> Unit = { tag, msg ->
+        try {
+            android.util.Log.e(tag, msg)
+        } catch (_: Throwable) {
+            // JVM unit-test stub: drop, never crash the peer.
+        }
+    }
+}
+
 /**
  * Blocking TCP client for the JARVIS fabric socket transport.
  *
@@ -102,24 +122,24 @@ class SocketPeer(
         while (running.get()) {
             onState(ConnState.CONNECTING)
             try {
-                android.util.Log.d("SocketPeer", "dial $host:$port")
+                PeerLog.debug("SocketPeer", "dial $host:$port")
                 val sock = Socket()
                 sock.tcpNoDelay = true
                 sock.soTimeout = READ_TIMEOUT_MS
                 sock.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
                 socket = sock
                 backoffMs = 1_000L
-                android.util.Log.d("SocketPeer", "connected $host:$port")
+                PeerLog.debug("SocketPeer", "connected $host:$port")
                 onState(ConnState.CONNECTED)
                 readerDone.set(false)
                 readLoop(sock)
                 readerDone.set(true)
             } catch (e: IOException) {
-                android.util.Log.d("SocketPeer", "dial failed: ${e.javaClass.simpleName}: ${e.message}")
+                PeerLog.debug("SocketPeer", "dial failed: ${e.javaClass.simpleName}: ${e.message}")
                 // fall through to backoff
             } catch (e: Exception) {
                 // Non-IO failure (e.g. SecurityException): never spin silently.
-                android.util.Log.e("SocketPeer", "fatal dial error: ${e.javaClass.simpleName}: ${e.message}")
+                PeerLog.error("SocketPeer", "fatal dial error: ${e.javaClass.simpleName}: ${e.message}")
                 running.set(false)
                 onState(ConnState.DISCONNECTED)
                 break

@@ -1,11 +1,13 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    // Kotlin support is built into AGP 9+: no kotlin.android plugin.
 }
 
 android {
     namespace = "ai.jarvis.node"
-    compileSdk = 34
+    // core-ktx 1.19.x requires compiling against API 37+; targetSdk
+    // stays 34 to avoid opting into new runtime behavior.
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "ai.jarvis.node"
@@ -25,9 +27,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // AGP 9 built-in Kotlin: jvmTarget defaults to targetCompatibility.
 }
 
 dependencies {

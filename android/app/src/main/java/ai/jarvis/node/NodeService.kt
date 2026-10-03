@@ -97,12 +97,12 @@ class NodeService : Service() {
                     return@execute
                 }
                 store.saveEndpoint(host, port)
-                android.util.Log.d("NodeService", "PAIR dial $host:$port dev=$devId")
+                PeerLog.debug("NodeService", "PAIR dial $host:$port dev=$devId")
                 try {
                     connection.connect(host, port)
-                    android.util.Log.d("NodeService", "PAIR connect() returned")
+                    PeerLog.debug("NodeService", "PAIR connect() returned")
                 } catch (t: Throwable) {
-                    android.util.Log.e("NodeService", "PAIR connect() failed: ${t.message}", t)
+                    PeerLog.error("NodeService", "PAIR connect() failed: ${t.message}")
                     broadcast(error = "connect failed: ${t.message}")
                     return@execute
                 }
@@ -111,7 +111,7 @@ class NodeService : Service() {
                     Thread.sleep(500)
                     waited++
                 }
-                android.util.Log.d("NodeService", "PAIR waited=$waited state=${connection.connState}")
+                PeerLog.debug("NodeService", "PAIR waited=$waited state=${connection.connState}")
                 if (connection.connState != SocketPeer.ConnState.CONNECTED) {
                     broadcast(error = "cannot reach host $host:$port — check network")
                     return@execute
@@ -119,7 +119,7 @@ class NodeService : Service() {
                 val pending = connection.pairRequest(devId, code)
                 // Never log the reply body: it carries the single-use
                 // pending_token when pairing succeeds.
-                android.util.Log.d("NodeService", "pairRequest ok=${pending != null}")
+                PeerLog.debug("NodeService", "pairRequest ok=${pending != null}")
                 val token = pending?.optString("pending_token").orEmpty()
                 if (token.isEmpty()) {
                     broadcast(error = "pairing rejected — wrong code or expired")
