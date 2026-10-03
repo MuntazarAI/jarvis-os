@@ -28,6 +28,9 @@ MODULES = [
     "jarvis.policy.policy",
     "jarvis.intelligence.loop",
     "jarvis.cognition.goals",
+    "jarvis.worldintel",
+    "jarvis.worldintel.research",
+    "jarvis.worldintel.sources",
     "jarvis.api",
 ]
 

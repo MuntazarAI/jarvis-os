@@ -338,6 +338,18 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="deterministic voice self-test (no mic/GPU/net)")
     voice_test.add_argument("--json", action="store_true",
                             help="machine-readable output")
+
+    world = sub.add_parser("world", help="world intelligence: status, sources, search, events, research")
+    world.add_argument("action", nargs="?", default="status",
+                       choices=["status", "sources", "search", "events",
+                                "changes", "refresh", "research",
+                                "briefing", "health", "diagnostics"])
+    world.add_argument("--text", default="",
+                       help="query for search/research/briefing")
+    world.add_argument("--kind", default="morning",
+                       help="briefing kind: morning, evening, topic, project, change")
+    world.add_argument("--json", action="store_true",
+                       help="machine-readable output")
     return parser
 
 
@@ -506,6 +518,251 @@ def _approval_next_steps(token: str, command_id: str = "") -> str:
             f"  jarvis device approvals approve --approval {prefix}\n"
             f"  jarvis device approvals deny --approval {prefix} --reason R\n"
             f"  jarvis device approvals watch   # wait for new requests")
+
+
+def _world_action(jarvis: Any, args: Any) -> int:
+    """World intelligence: evidence-driven live knowledge. Read paths
+    never actuate; research is bounded and budgeted."""
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "status")
+
+    def _out(payload: Any, text: str) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print(text)
+        jarvis.close()
+        return 0
+
+    from .worldintel.cache import EvidenceCache
+    from .worldintel.sources import SourceRegistry
+    home = str(jarvis.config.paths.home)
+    cfg = jarvis.config.world
+    registry = SourceRegistry()
+    cache = EvidenceCache(home, max_entries=cfg.cache_entries)
+
+    if action == "status":
+        from .worldintel.health import check as world_check
+        report = world_check(cfg.__dict__, registry, cache)
+        lines = [f"state={report['state']}",
+                 f"sources={len(report['sources'])}",
+                 f"cache={report['cache'].get('entries', 0)} entries",
+                 f"project={cfg.default_project or '(none)'}",
+                 f"topics={', '.join(cfg.topics) or '(none)'}"]
+        return _out({"health": report,
+                     "project": cfg.default_project,
+                     "topics": list(cfg.topics)},
+                    "WORLD\n" + "\n".join(lines))
+    if action == "sources":
+        payload = registry.to_dict()
+        lines = [f"{s['source_id']:12} {s['kind']:8} "
+                 f"{s['freshness_domain']:16} "
+                 f"{'on' if s['enabled'] else 'off'}  "
+                 f"{s['trust_basis']}" for s in payload["sources"]]
+        return _out(payload, "SOURCES\n" + "\n".join(lines))
+    if action == "health":
+        from .worldintel.health import check as world_check
+        report = world_check(cfg.__dict__, registry, cache)
+        return _out(report, "WORLD HEALTH\n" +
+                    json.dumps(report, indent=2, default=str))
+    if action == "diagnostics":
+        from .worldintel.telemetry import TELEMETRY
+        payload = {"telemetry": TELEMETRY.summary(),
+                   "recent": TELEMETRY.recent(10),
+                   "cache": cache.stats()}
+        return _out(payload, "WORLD DIAGNOSTICS\n" +
+                    json.dumps(payload, indent=2, default=str))
+    if action in ("search", "research"):
+        import time as _time
+        from .worldintel.research import Researcher
+        from .worldintel.telemetry import TELEMETRY
+        from .worldintel.worldsync import sync_answer
+        query = getattr(args, "text", "") or (
+            "What is happening in AI today?" if action == "search"
+            else "Research recent AI developments")
+        started = _time.monotonic()
+        researcher = Researcher(
+            registry, cache, max_searches=cfg.max_searches,
+            max_evidence=cfg.max_evidence, budget_s=cfg.budget_s)
+        answer = researcher.research(
+            query, active_project=cfg.default_project,
+            topics=list(cfg.topics))
+        synced = sync_answer(answer, registry=jarvis.world_registry,
+                             graph=jarvis.graph)
+        try:
+            jarvis.world_registry.save(jarvis.world_store)
+        except Exception:
+            pass
+        try:
+            _world_snapshot_append(home, answer)
+        except Exception:
+            pass
+        TELEMETRY.record(
+            "world.research", status="ok",
+            latency_ms=round(
+                (_time.monotonic() - started) * 1000, 1),
+            provider=",".join(
+                sorted({p.get("source_id", "") for p in
+                        answer.provenance}))[:64],
+            count=len(answer.provenance), query_len=len(query),
+            detail=answer.scope)
+        payload = answer.to_dict()
+        payload["synced"] = synced
+        lines = [f"scope={answer.scope}",
+                 answer.summary,
+                 f"conflicts={len(answer.conflicts)}",
+                 (f"uncertainty: {'; '.join(answer.uncertainty)}"
+                  if answer.uncertainty else "uncertainty: none listed"),
+                 f"synced={synced}"]
+        return _out(payload, "\n".join(lines))
+    if action == "events":
+        items = _world_recent_evidence(home, limit=10)
+        if not items:
+            return _out({"events": []},
+                        "no cached evidence yet — run: "
+                        "jarvis world research --text \"...\"")
+        lines = [f"{e.get('retrieved_at', 0):.0f} "
+                 f"{e.get('source_id', '?'):14} "
+                 f"{e.get('freshness', '?'):8} "
+                 f"{str(e.get('title', '')).replace(chr(10), ' ')[:70]}"
+                 for e in items]
+        return _out({"events": items},
+                    "RECENT EVIDENCE (cached, labeled)\n"
+                    + "\n".join(lines))
+    if action == "changes":
+        snaps = _world_snapshots(home)
+        if len(snaps) < 2:
+            return _out({"changes": []},
+                        "need 2+ research runs to diff — run: "
+                        "jarvis world research --text \"...\" twice")
+        from .worldintel.changes import diff_snapshots
+        old = snaps[-2].get("claims", {}) if isinstance(
+            snaps[-2], dict) else snaps[-2]
+        new = snaps[-1].get("claims", {}) if isinstance(
+            snaps[-1], dict) else snaps[-1]
+        changes = diff_snapshots(old, new)
+        lines = [f"{c['status']:10} {c['key'][:80]}" for c in changes]
+        return _out({"changes": changes},
+                    "CHANGES\n" + ("\n".join(lines) or "no changes"))
+    if action == "refresh":
+        from .geospatial.live import LiveIntelligenceService
+        try:
+            service = LiveIntelligenceService(home=home)
+            # Explicit operator consent: refresh means network egress.
+            result = service.sync(allow_remote=True)
+            return _out({"refreshed": True, "result": result},
+                        f"refreshed: ingested="
+                        f"{result.get('ingested', 0)} "
+                        f"alerts={result.get('alerts', 0)}")
+        except Exception as exc:
+            return _out({"refreshed": False,
+                         "error": f"{type(exc).__name__}: {exc}"},
+                        f"refresh failed: {type(exc).__name__}")
+    if action == "briefing":
+        from .worldintel.briefing import build_briefing
+        snaps = _world_snapshots(home)
+        answers = []
+        for s in snaps[-3:]:
+            claims = s.get("claims", {}) if isinstance(
+                s, dict) else s
+            answers.append({"claims": [
+                {"subject": k.split("|")[0],
+                 "predicate": k.split("|")[1] if "|" in k else "",
+                 "object": v.get("object", ""),
+                 "corroboration": {}} for k, v in claims.items()],
+                "evidence": s.get("evidence", []) if isinstance(
+                    s, dict) else []})
+        kind = getattr(args, "kind", "morning")
+        query = getattr(args, "text", "")
+        if query:
+            from .worldintel.research import Researcher
+            researcher = Researcher(
+                registry, cache, max_searches=cfg.max_searches,
+                max_evidence=cfg.max_evidence, budget_s=cfg.budget_s)
+            live = researcher.research(
+                query, active_project=cfg.default_project,
+                topics=list(cfg.topics))
+            answers.append(live)
+        briefing = build_briefing(
+            kind, answers,
+            title=f"{kind.title()} briefing")
+        return _out(briefing, briefing["title"].upper() + "\n" +
+                    "\n".join(f"- {line}"
+                              for line in briefing["lines"]) +
+                    (f"\nconflicts={briefing['conflicts']}" if
+                     briefing["conflicts"] else "") +
+                    (f"\nuncertain: {'; '.join(briefing['uncertainty'])}"
+                     if briefing["uncertainty"] else ""))
+    print(f"world: unknown action {action}")
+    jarvis.close()
+    return 2
+
+
+def _world_snapshot_path(home: str) -> Any:
+    from pathlib import Path as _Path
+    return _Path(home) / "worldintel-snapshots.jsonl"
+
+
+def _world_snapshot_append(home: str, answer: Any) -> None:
+    import json as _json
+    import time as _time
+    path = _world_snapshot_path(home)
+    claims = {f"{c['subject']}|{c['predicate']}": {
+        "object": c["object"], "confidence": c["confidence"],
+        "conflicting": False} for c in (answer.claims or [])}
+    evidence = [{"title": p.get("title", "")[:120],
+                 "source_id": p.get("source_id", "?"),
+                 "url": p.get("url", "")[:200]}
+                for p in (answer.provenance or [])[:10]]
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(_json.dumps(
+            {"at": _time.time(), "claims": claims,
+             "evidence": evidence},
+            sort_keys=True, default=str) + "\n")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if len(lines) > 10:
+        path.write_text("\n".join(lines[-10:]) + "\n",
+                        encoding="utf-8")
+
+
+def _world_snapshots(home: str) -> list[Any]:
+    import json as _json
+    path = _world_snapshot_path(home)
+    if not path.exists():
+        return []
+    out = []
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines()[-10:]:
+            try:
+                loaded = _json.loads(raw)
+                out.append({"claims": loaded.get("claims", {}),
+                            "evidence": loaded.get("evidence", []),
+                            "at": loaded.get("at", 0.0)})
+            except ValueError:
+                continue
+    except OSError:
+        pass
+    return out
+
+
+def _world_recent_evidence(home: str, limit: int = 10) -> list[Any]:
+    from .worldintel.cache import EvidenceCache
+    from .worldintel.freshness import assess
+    cache = EvidenceCache(home)
+    items = []
+    for key, item in list(cache._items.items())[-limit:]:
+        payload = item.get("payload", {})
+        for entry in payload.get("items", [])[:3]:
+            items.append({
+                "source_id": item.get("source_id", "?"),
+                "title": entry.get("title", ""),
+                "retrieved_at": item.get("retrieved_at", 0.0),
+                "freshness": assess(
+                    entry.get("published_at", 0.0),
+                    item.get("retrieved_at", 0.0),
+                    domain=item.get(
+                        "freshness_domain", "general"))["state"]})
+    return items[-limit:]
 
 
 def _audio_spool_depth(jarvis: Any) -> dict[str, Any]:
@@ -3483,6 +3740,9 @@ def main(argv: list[str] | None = None) -> int:
         return _voice_action(jarvis, SimpleNamespace(
             action="test", path="", text="Good evening. How can I "
             "assist you?", no_play=True, json=args.json))
+
+    if args.command == "world":
+        return _world_action(jarvis, args)
 
     parser.print_help()
     jarvis.close()

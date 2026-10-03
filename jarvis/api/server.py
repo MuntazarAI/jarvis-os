@@ -90,6 +90,42 @@ class JarvisAPI:
                 mode.hypothesize([f"interpretation A: {text[:60]}",
                                   f"interpretation B (alternative): {text[:60]}"])
                 return 200, {"report": mode.render()}
+            if method == "GET" and api_path == "/api/world/health":
+                from ..worldintel.cache import EvidenceCache
+                from ..worldintel.health import check as world_check
+                from ..worldintel.sources import SourceRegistry
+                home = str(self.jarvis.config.paths.home)
+                report = world_check(
+                    self.jarvis.config.world.__dict__,
+                    SourceRegistry(), EvidenceCache(home))
+                return 200, report
+            if method == "POST" and api_path == "/api/world/research":
+                payload = json.loads(body.decode() or "{}")
+                text = str(payload.get("input", ""))
+                if not text:
+                    return 400, {"error": "missing 'input'"}
+                from ..worldintel.cache import EvidenceCache
+                from ..worldintel.research import Researcher
+                from ..worldintel.sources import SourceRegistry
+                from ..worldintel.worldsync import sync_answer
+                home = str(self.jarvis.config.paths.home)
+                cfg = self.jarvis.config.world
+                researcher = Researcher(
+                    SourceRegistry(),
+                    EvidenceCache(home,
+                                  max_entries=cfg.cache_entries),
+                    max_searches=cfg.max_searches,
+                    max_evidence=cfg.max_evidence,
+                    budget_s=cfg.budget_s)
+                answer = researcher.research(
+                    text, active_project=cfg.default_project,
+                    topics=list(cfg.topics))
+                synced = sync_answer(
+                    answer, registry=self.jarvis.world_registry,
+                    graph=self.jarvis.graph)
+                result = answer.to_dict()
+                result["synced"] = synced
+                return 200, result
             return 404, {"error": f"no route {method} {path}"}
         except json.JSONDecodeError:
             return 400, {"error": "invalid JSON"}

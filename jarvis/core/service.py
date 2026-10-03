@@ -217,6 +217,25 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
     except Exception as exc:
         checks.append(HealthCheck("computer", False, str(exc)[:100]))
     try:
+        from ..worldintel.health import check as world_check
+        from ..worldintel.sources import SourceRegistry
+        report = world_check(
+            getattr(config, "world", None),
+            SourceRegistry())
+        state = str(report.get("state", "UNKNOWN"))
+        checks.append(HealthCheck(
+            "world:intel",
+            state in ("HEALTHY", "DEGRADED"),
+            f"{state}: {report.get('detail', '')}",
+            required=False))
+        checks.append(HealthCheck(
+            "world:sources",
+            bool(report.get("sources")),
+            f"{len(report.get('sources', {}))} source(s) registered",
+            required=False))
+    except Exception as exc:
+        checks.append(HealthCheck("world", False, str(exc)[:100]))
+    try:
         from ..voice.output import output_for
         from ..voice.setup import verify_reference
         from ..voice.tts import provider_for
