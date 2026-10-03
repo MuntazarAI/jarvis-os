@@ -36,3 +36,16 @@ python -m pydoc jarvis.neural
 ```
 
 A generated API site may be added later once module import requirements are suitable for deterministic documentation builds.
+
+## Generated reference
+
+That condition now holds: boundary modules import cleanly on stock
+Python with no heavy dependencies. The deterministic reference lives in
+[`docs/api/`](api/index.md), built stdlib-only and offline:
+
+```bash
+python3 docs/generate_api.py
+```
+
+Two runs produce byte-identical Markdown (no timestamps, no absolute
+paths); `tests/test_api_docs.py` enforces both properties.

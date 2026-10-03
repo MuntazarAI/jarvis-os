@@ -71,6 +71,20 @@ A future fruit-fly-inspired model may contain roughly the scale of the relevant
 fly nervous-system dataset, but the exact neuron count depends on the biological
 dataset and model resolution chosen.
 
+## Measured results (2026-10-03, deterministic seeds)
+
+Temporal benchmark (`jarvis/neural/temporal_bench.py`, coincidence
+detection |dt|<=2 over 24 ticks, 60–500 seeded trials): the 3-neuron
+spiking detector scores **1.0**; memoryless threshold 0.59; moving
+average 0.86. Spikes + leak + delay solve exactly what rate coding
+only approximates.
+
+Topology prototypes (`jarvis/neural/prototypes.py`, 30-tick drive,
+structural sketches only — no biological claims): hub reaches 1.0
+(mean first spike 0.94 ticks), layered 0.92, sparse small-world 0.23
+(too sparse to propagate in 30 ticks). Reach costs spikes: hub 1860,
+layered 1271, small-world 192.
+
 ## Safety boundary
 
 Neural activity can **suggest** a typed output event. It cannot directly execute

@@ -1,0 +1,19 @@
+# API Reference (generated)
+
+Deterministic output of `docs/generate_api.py`.
+
+- [`jarvis.api`](./jarvis.api.md)
+- [`jarvis.cli`](./jarvis.cli.md)
+- [`jarvis.cognition.goals`](./jarvis.cognition.goals.md)
+- [`jarvis.core.config`](./jarvis.core.config.md)
+- [`jarvis.core.service`](./jarvis.core.service.md)
+- [`jarvis.device.fabric`](./jarvis.device.fabric.md)
+- [`jarvis.intelligence.loop`](./jarvis.intelligence.loop.md)
+- [`jarvis.neural.prototypes`](./jarvis.neural.prototypes.md)
+- [`jarvis.neural.scale`](./jarvis.neural.scale.md)
+- [`jarvis.neural.temporal_bench`](./jarvis.neural.temporal_bench.md)
+- [`jarvis.neural.topology`](./jarvis.neural.topology.md)
+- [`jarvis.policy.policy`](./jarvis.policy.policy.md)
+- [`jarvis.voice.speak`](./jarvis.voice.speak.md)
+- [`jarvis.voice.tts`](./jarvis.voice.tts.md)
+- [`jarvis.voice.voice_profile`](./jarvis.voice.voice_profile.md)

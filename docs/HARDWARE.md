@@ -36,3 +36,9 @@ Do not mark a device as fully supported because code merely imports on it.
 - **Validated** — sustained or benchmarked real-world testing exists.
 
 See the Android and device-fabric documentation for node-specific details.
+
+## Collected reports
+
+- [Primary laptop, 2026-10-03](hardware/laptop-2026-10-03.md) — first
+  reproducible report (CPU-only Chatterbox voice benchmarks, suite
+  results, peripheral status). Android / Pi / GPU remain NOT TESTED.

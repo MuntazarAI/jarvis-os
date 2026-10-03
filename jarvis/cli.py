@@ -489,6 +489,22 @@ def _audio_action(jarvis: Any, args: Any) -> int:
     return 2
 
 
+def _approval_next_steps(token: str, command_id: str = "") -> str:
+    """Actionable operator hint for a parked approval (no secrets dumped).
+
+    Listings show truncated IDs; approve/deny/revoke/show accept the
+    unique prefix, so the operator can act from another process with
+    only what is printed here.
+    """
+    prefix = str(token or "")[:12]
+    where = f" (command {command_id})" if command_id else ""
+    return (f"needs approval {prefix}…{where}\n"
+            f"  jarvis device approvals show --approval {prefix}\n"
+            f"  jarvis device approvals approve --approval {prefix}\n"
+            f"  jarvis device approvals deny --approval {prefix} --reason R\n"
+            f"  jarvis device approvals watch   # wait for new requests")
+
+
 def _audio_spool_depth(jarvis: Any) -> dict[str, Any]:
     try:
         from .voice.spool import TranscriptSpool
@@ -864,9 +880,9 @@ def _pi_action(adapter: Any, jarvis: Any, args: Any, _out: Any) -> int:
         if result.get("ok"):
             return _out(result, str(result.get("result", ""))[:500])
         if result.get("requires_approval"):
-            return _out(result,
-                        f"needs approval {result.get('approval_id')} "
-                        f"(command {result.get('command_id')})")
+            return _out(result, _approval_next_steps(
+                str(result.get("approval_id", "")),
+                str(result.get("command_id", ""))))
         return _out(result, result.get("error", str(result.get(
             "command_id", result))))
     if action == "serve":
@@ -1629,7 +1645,7 @@ def _device_approvals(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
                     "\n".join(lines) if found else "no pending approvals")
     if action == "show":
         if not args.approval:
-            print("usage: jarvis device approvals show --approval <token>")
+            print("usage: jarvis device approvals show --approval <token|prefix>")
             jarvis.close()
             return 2
         info = svc.approval_status(args.approval)
@@ -1646,7 +1662,7 @@ def _device_approvals(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
                           f"actor={info['actor']}")
     if action == "approve":
         if not args.approval:
-            print("usage: jarvis device approvals approve --approval <token>")
+            print("usage: jarvis device approvals approve --approval <token|prefix>")
             jarvis.close()
             return 2
         ok = svc.approve_command(args.approval, by=args.by)
@@ -1655,7 +1671,7 @@ def _device_approvals(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
                     else f"cannot approve {args.approval[:12]}")
     if action == "deny":
         if not args.approval:
-            print("usage: jarvis device approvals deny --approval <token> "
+            print("usage: jarvis device approvals deny --approval <token|prefix> "
                   "[--reason R]")
             jarvis.close()
             return 2
@@ -1666,7 +1682,7 @@ def _device_approvals(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
                     else f"cannot deny {args.approval[:12]}")
     if action == "revoke":
         if not args.approval:
-            print("usage: jarvis device approvals revoke --approval <token> "
+            print("usage: jarvis device approvals revoke --approval <token|prefix> "
                   "[--reason R]")
             jarvis.close()
             return 2
@@ -1754,6 +1770,10 @@ def _device_commands(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
                  f"approval={str(info.get('approval_id', ''))[:12]} "
                  f"approval_state={info.get('approval_state', '')}",
                  f"result={info.get('result_summary', '')}"]
+        if str(info.get("approval_state", "")) == "pending":
+            lines.append(_approval_next_steps(
+                str(info.get("approval_id", "")),
+                str(info.get("command_id", ""))))
         return _out(info, "\n".join(lines))
     print(f"device commands: unknown action {action} (list|show)")
     jarvis.close()
@@ -3294,9 +3314,9 @@ def main(argv: list[str] | None = None) -> int:
                 if result.get("ok"):
                     return _out(result, str(result.get("result", ""))[:500])
                 if result.get("requires_approval"):
-                    return _out(result,
-                                f"needs approval {result.get('approval_id')} "
-                                f"(command {result.get('command_id')})")
+                    return _out(result, _approval_next_steps(
+                        str(result.get("approval_id", "")),
+                        str(result.get("command_id", ""))))
                 return _out(result, result.get("error", str(result.get(
                     "command_id", result))))
             if args.action == "connect":

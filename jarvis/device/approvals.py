@@ -44,6 +44,11 @@ class ApprovalError(ValueError):
     """Raised for approval misuse (unknown tokens, invalid input)."""
 
 
+#: Minimum prefix length for operator token resolution. Full tokens stay
+#: out of listings; operators act via unique prefixes instead.
+MIN_PREFIX_LEN = 4
+
+
 def _new_token() -> str:
     # Distinct prefix from in-memory PolicyEngine (appr-) tokens.
     return "apd-" + secrets.token_hex(16)
@@ -176,9 +181,10 @@ class ApprovalStore:
         return {k: v for k, v in record.items()}
 
     def _transition(self, token: str, *, expect: str, to: str,
-                    by: str = "", event: str) -> bool:
+                     by: str = "", event: str) -> bool:
         self._maybe_reload()
-        record = self._tokens.get(token)
+        full = self.resolve_prefix(token) or token
+        record = self._tokens.get(full)
         if record is None:
             return False
         if self._expired(record, now()):
@@ -194,34 +200,37 @@ class ApprovalStore:
         return True
 
     def approve(self, token: str, *, by: str = "") -> bool:
-        """PENDING -> APPROVED. Returns False unless it transitioned."""
+        """PENDING -> APPROVED. Accepts a full token or unique prefix."""
         ok = self._transition(token, expect=PENDING, to=APPROVED,
                               by=by, event="approved")
         if ok:
-            record = self._tokens[token]
+            full = self.resolve_prefix(token) or token
+            record = self._tokens[full]
             self.audit.record("device.approval.approved", actor=by,
                               device_id=str(record.get("device_id", "")),
                               ok=True,
-                              extra={"approval_id": token,
-                                     "capability": str(record.get("capability", ""))})
+                              extra={"approval_id": full,
+                                      "capability": str(record.get("capability", ""))})
         return ok
 
     def deny(self, token: str, *, by: str = "", reason: str = "") -> bool:
-        """PENDING -> DENIED."""
+        """PENDING -> DENIED. Accepts a full token or unique prefix."""
         ok = self._transition(token, expect=PENDING, to=DENIED,
                               by=by, event="denied")
         if ok:
-            record = self._tokens[token]
+            full = self.resolve_prefix(token) or token
+            record = self._tokens[full]
             self.audit.record("device.approval.denied", actor=by,
                               device_id=str(record.get("device_id", "")),
                               ok=True, reasons=[reason[:200]] if reason else [],
-                              extra={"approval_id": token})
+                              extra={"approval_id": full})
         return ok
 
     def revoke(self, token: str, *, by: str = "", reason: str = "") -> bool:
-        """PENDING/APPROVED -> REVOKED. Terminal states are untouched."""
+        """PENDING/APPROVED -> REVOKED. Accepts full token or prefix."""
         self._maybe_reload()
-        record = self._tokens.get(token)
+        full = self.resolve_prefix(token) or token
+        record = self._tokens.get(full)
         if record is None:
             return False
         if record.get("state") not in (PENDING, APPROVED):
@@ -234,7 +243,7 @@ class ApprovalStore:
         self.audit.record("device.approval.revoked", actor=by,
                           device_id=str(record.get("device_id", "")),
                           ok=True, reasons=[reason[:200]] if reason else [],
-                          extra={"approval_id": token})
+                          extra={"approval_id": full})
         return True
 
     @staticmethod
@@ -310,10 +319,30 @@ class ApprovalStore:
 
     def status(self, token: str) -> dict[str, Any] | None:
         self._maybe_reload()
-        record = self._tokens.get(token)
+        full = self.resolve_prefix(token) or token
+        record = self._tokens.get(full)
         if record is None:
             return None
         return {k: v for k, v in record.items()}
+
+    def resolve_prefix(self, prefix: str) -> str | None:
+        """Resolve an operator token prefix to the full token.
+
+        Returns the token iff exactly one stored token starts with the
+        prefix (minimum length enforced). Ambiguous, too-short, or
+        unknown prefixes resolve to None — the caller reports the
+        failure without dumping tokens. Listings stay truncated; this
+        is what makes them actionable without leaking secrets.
+        """
+        self._maybe_reload()
+        prefix = str(prefix or "")
+        if len(prefix) < MIN_PREFIX_LEN:
+            return None
+        matches = [token for token in self._tokens
+                   if token.startswith(prefix)]
+        if len(matches) != 1:
+            return None
+        return matches[0]
 
     def list(self, state: str | None = None,
              limit: int = 100) -> list[dict[str, Any]]:
