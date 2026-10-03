@@ -488,7 +488,19 @@ class CognitiveSupervisor:
         if (self.enable_learning and not dry_run
                 and not outcome.replayed
                 and outcome.state == CognitiveStage.COMPLETED):
-            self._learn_from_outcome(outcome)
+            try:
+                self._learn_from_outcome(outcome)
+            except Exception as exc:
+                # Defense in depth: even a bug inside the learning
+                # path itself must never corrupt a completed outcome.
+                self.total_learning_failures += 1
+                try:
+                    outcome.stages.append(
+                        {"stage": "learn", "ok": False,
+                         "error": f"learning failed: "
+                                  f"{type(exc).__name__}"[:200]})
+                except Exception:
+                    pass
         return outcome
 
     def _consult_beliefs(self, event: CognitiveEvent) -> list[dict[str, Any]]:
@@ -779,15 +791,29 @@ class CognitiveSupervisor:
         return out
 
     def status(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "stage": self.stage.value,
             "total_cycles": self.total_cycles,
             "total_duplicates": self.total_duplicates,
             "total_failures": self.total_failures,
+            "total_experiences": self.total_experiences,
+            "total_learning_failures": self.total_learning_failures,
             "transitions": len(self.transitions),
             "loop": self.loop.status(),
-            "stored_cycles": len(self.store.read(limit=100000)),
         }
+        try:
+            payload["stored_cycles"] = len(self.store.read(limit=100000))
+        except Exception:
+            payload["stored_cycles"] = 0
+        try:
+            store, _, learner = self._learning_stack()
+            payload["stored_experiences"] = store.count()
+            payload["learning_metrics"] = dict(
+                getattr(learner, "metrics", {}))
+        except Exception:
+            payload["stored_experiences"] = 0
+            payload["learning_metrics"] = {}
+        return payload
 
 
 def outcome_action(action_detail: dict[str, Any]) -> dict[str, Any]:
