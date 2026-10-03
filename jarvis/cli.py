@@ -99,8 +99,14 @@ def build_parser() -> argparse.ArgumentParser:
                               "trust", "revoke", "unpair", "capabilities",
                               "permissions", "command", "connect",
                               "disconnect", "queue", "serve", "peers",
-                              "approve"])
+                              "approve", "inspect", "grants", "grant",
+                              "suspend", "restore", "deny", "command-status",
+                              "cancel", "outbox", "audit"])
     dev.add_argument("--device", default="", help="device id")
+    dev.add_argument("--command-id", default="",
+                     help="durable command id (command-status, cancel)")
+    dev.add_argument("--approval", default="",
+                     help="durable approval token (approve, deny)")
     dev.add_argument("--name", default="", help="node name for register")
     dev.add_argument("--code", default="", help="6-digit pairing code")
     dev.add_argument("--node", default="",
@@ -238,6 +244,137 @@ def _make_jarvis(home: str) -> Jarvis:
     if home:
         config.paths.home = Path(home)
     return Jarvis(config=config)
+
+
+def _device_service_action(svc: Any, adapter: Any, args: Any,
+                           jarvis: Any, _out: Any) -> int:
+    """4.2 durable authorization/control actions (android area)."""
+    action = args.action
+    if action == "inspect":
+        if not args.device:
+            print("usage: jarvis device android inspect --device <id>")
+            jarvis.close()
+            return 2
+        info = adapter.status(args.device)
+        result = {"device": info,
+                  "grants": svc.grants.grants_for(args.device),
+                  "suspended": svc.grants.is_suspended(args.device),
+                  "outbox": svc.outbox_status()}
+        return _out(result,
+                    f"{info['name']} lifecycle={info['lifecycle']} "
+                    f"trust={info['trust']} "
+                    f"suspended={result['suspended']} "
+                    f"grants={len(result['grants'])}")
+    if action == "grants":
+        if not args.device:
+            print("usage: jarvis device android grants --device <id>")
+            jarvis.close()
+            return 2
+        found = svc.grants.grants_for(args.device)
+        return _out({"device_id": args.device, "grants": found,
+                     "suspended": svc.grants.is_suspended(args.device)},
+                    "\n".join(
+                        f"{g['grant_id'][:12]:14} {g['capability']:24} "
+                        f"actor={g['actor']:12} {g['status']}"
+                        for g in found) or "no grants (default deny)")
+    if action == "grant":
+        if not (args.device and args.capability):
+            print("usage: jarvis device android grant --device <id> "
+                  "--capability device.battery [--reason R]")
+            jarvis.close()
+            return 2
+        try:
+            result = svc.grants.grant(args.device, args.capability,
+                                      by=args.by, reason=args.reason)
+        except ValueError as exc:
+            print(f"device: {exc}")
+            jarvis.close()
+            return 1
+        return _out(result, f"granted {result['grant_id']} "
+                            f"{args.device} {args.capability}")
+    if action == "suspend":
+        if not args.device:
+            print("usage: jarvis device android suspend --device <id> "
+                  "[--reason R]")
+            jarvis.close()
+            return 2
+        svc.grants.suspend_device(args.device, by=args.by,
+                                  reason=args.reason)
+        return _out({"device_id": args.device, "suspended": True},
+                    f"suspended {args.device}")
+    if action == "restore":
+        if not args.device:
+            print("usage: jarvis device android restore --device <id>")
+            jarvis.close()
+            return 2
+        ok = svc.grants.restore_device(args.device, by=args.by,
+                                       reason=args.reason)
+        return _out({"device_id": args.device, "restored": ok},
+                    f"restored {args.device}" if ok
+                    else f"{args.device} was not suspended")
+    if action == "approve":
+        if not args.approval:
+            print("usage: jarvis device android approve "
+                  "--approval <token>")
+            jarvis.close()
+            return 2
+        ok = svc.approve_command(args.approval, by=args.by)
+        return _out({"approval_id": args.approval, "approved": ok},
+                    f"approved {args.approval}" if ok
+                    else f"cannot approve {args.approval}")
+    if action == "deny":
+        if not args.approval:
+            print("usage: jarvis device android deny --approval <token> "
+                  "[--reason R]")
+            jarvis.close()
+            return 2
+        ok = svc.deny_command(args.approval, by=args.by,
+                              reason=args.reason)
+        return _out({"approval_id": args.approval, "denied": ok},
+                    f"denied {args.approval}" if ok
+                    else f"cannot deny {args.approval}")
+    if action == "command-status":
+        if not args.command_id:
+            print("usage: jarvis device android command-status "
+                  "--command-id <id>")
+            jarvis.close()
+            return 2
+        result = svc.command_status(args.command_id)
+        if result is None:
+            print(f"unknown command {args.command_id}")
+            jarvis.close()
+            return 1
+        return _out(result, f"{result['command_id']} state={result['state']} "
+                            f"device={result['device_id']} "
+                            f"capability={result['capability']}")
+    if action == "cancel":
+        if not args.command_id:
+            print("usage: jarvis device android cancel --command-id <id>")
+            jarvis.close()
+            return 2
+        try:
+            result = svc.cancel_command(args.command_id, by=args.by,
+                                        reason=args.reason)
+        except ValueError as exc:
+            print(f"device: {exc}")
+            jarvis.close()
+            return 1
+        return _out(result, f"{result['command_id']} state={result['state']}")
+    if action == "outbox":
+        result = svc.outbox_status()
+        return _out(result, f"total={result['total']} "
+                            f"by_state={result['by_state']}")
+    if action == "audit":
+        found = svc.audit_tail(30)
+        return _out({"events": found},
+                    "\n".join(
+                        f"{e.get('at', 0):.0f} {e['event']:28} "
+                        f"dev={str(e.get('device_id', ''))[:12]:14} "
+                        f"{'ok' if e.get('ok') else 'FAIL'}"
+                        for e in found) or "no audit events")
+    print(f"device: unknown action {action}")
+    jarvis.close()
+    return 2
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1470,8 +1607,20 @@ def main(argv: list[str] | None = None) -> int:
                           f"(Ctrl-C to stop)")
                     try:
                         import time
+                        from .device.service import DeviceCommandService
+                        svc = DeviceCommandService(adapter, host=host)
+                        tick_at = 0.0
                         while True:
                             time.sleep(1.0)
+                            # Drain the durable outbox while serving so
+                            # CLI-enqueued commands reach live lanes.
+                            # Best-effort and throttled; never kills serve.
+                            try:
+                                if time.monotonic() >= tick_at:
+                                    svc.tick()
+                                    tick_at = time.monotonic() + 10.0
+                            except Exception:
+                                pass
                     except KeyboardInterrupt:
                         pass
                     finally:
@@ -1562,9 +1711,18 @@ def main(argv: list[str] | None = None) -> int:
             if args.action == "revoke":
                 if not args.device:
                     print("usage: jarvis device android revoke --device <id> "
-                          "[--reason R]")
+                          "[--capability a.b] [--reason R]")
                     jarvis.close()
                     return 2
+                if args.capability:
+                    # Grant-level revoke (4.2 durable authorization).
+                    from .device.service import DeviceCommandService
+                    svc = DeviceCommandService(adapter)
+                    result = svc.grants.revoke(args.device, args.capability,
+                                              by=args.by, reason=args.reason)
+                    return _out(result,
+                                f"revoked {len(result['revoked'])} grant(s) "
+                                f"for {args.device} {args.capability}")
                 result = adapter.revoke_android(args.device, by=args.by,
                                                  reason=args.reason)
                 return _out(result, f"revoked {result['name']}")
@@ -1626,9 +1784,18 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"bad --args JSON: {exc}")
                     jarvis.close()
                     return 2
-                result = adapter.send_command("cli", args.device,
-                                              args.node_command, cmd_args,
-                                              approval_token=args.approve)
+                # Durable path (4.2): authorize, enqueue, drain, verify.
+                from .device.service import DeviceCommandService
+                svc = DeviceCommandService(adapter)
+                result = svc.request_command("cli", args.device,
+                                             args.node_command, cmd_args,
+                                             approval_id=args.approve)
+                if result.get("ok"):
+                    return _out(result, str(result.get("result", ""))[:500])
+                if result.get("requires_approval"):
+                    return _out(result,
+                                f"needs approval {result.get('approval_id')} "
+                                f"(command {result.get('command_id')})")
                 return _out(result, result.get("error", str(result.get(
                     "command_id", result))))
             if args.action == "connect":
@@ -1649,6 +1816,13 @@ def main(argv: list[str] | None = None) -> int:
                 result = adapter.disconnect(args.device, by=args.by)
                 return _out(result,
                             f"connected={result['connected']}")
+            if args.action in ("inspect", "grants", "grant", "suspend",
+                               "restore", "approve", "deny", "command-status",
+                               "cancel", "outbox", "audit"):
+                from .device.service import DeviceCommandService
+                svc = DeviceCommandService(adapter)
+                return _device_service_action(svc, adapter, args,
+                                              jarvis, _out)
             # queue
             if not args.device:
                 print("usage: jarvis device android queue --device <id>")
