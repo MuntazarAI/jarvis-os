@@ -406,6 +406,36 @@ def test_pairing_code_expiry_manager_level(tmp_path):
         pm.confirm("dev-1", started["pairing_code"])
 
 
+def test_confirm_sees_codes_issued_by_another_process(tmp_path):
+    """Cross-process pairing: a long-running host's manager starts empty;
+    a short-lived CLI process issues the code afterwards. confirm() must
+    reload from disk and succeed (single-use consumption included)."""
+    path = str(tmp_path / "pairings.json")
+    host_manager = PairingManager(path=path)  # serve starts, empty
+    cli_manager = PairingManager(path=path)   # later CLI register process
+    issued = cli_manager.begin("dev-x", by="user")
+    assert "dev-x" not in host_manager._pending  # stale view, as in prod
+    host_manager.confirm("dev-x", issued["pairing_code"])
+    assert "dev-x" not in host_manager._pending  # consumed, single-use
+    import json as _json
+    on_disk = _json.loads(open(path, encoding="utf-8").read())["pending"]
+    assert "dev-x" not in on_disk  # consumption persisted for others
+
+
+def test_pair_request_sees_devices_registered_by_another_process(tmp_path):
+    """Cross-process register: a long-running host's adapter starts with
+    an empty registry view; a later CLI process registers the device.
+    pair_request_approval must reload from disk and reach code
+    verification (not fail with 'unknown device')."""
+    host = _adapter(tmp_path)  # serve starts, empty view
+    cli = _adapter(tmp_path)   # later CLI register process
+    device_id, code = _register(cli, name="XProc")
+    assert device_id not in host.fabric.registry.devices  # stale, as in prod
+    out = host.pair_request_approval(device_id, code, node_id="node-x")
+    assert out["trust"] != "trusted"  # verified, still pending approval
+    assert host.fabric.registry.require(device_id).node_id == "node-x"
+
+
 # -- heartbeat / events ----------------------------------------------------------
 
 def test_heartbeat_authed_goes_online(tmp_path):

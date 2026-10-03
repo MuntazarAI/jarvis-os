@@ -454,6 +454,11 @@ class PairingManager:
                 "expires_in_s": self.ttl_s}
 
     def confirm(self, device_id: str, code: str) -> None:
+        # Reload first: codes are routinely issued by a short-lived CLI
+        # process while a long-running host holds this manager. load()
+        # merges per-device entries and never deletes live in-memory
+        # state (except expired), so this is safe mid-session.
+        self.load()
         pending = self._pending.get(device_id)
         if pending is None:
             raise PairingError("no pending pairing for this device")
@@ -661,6 +666,14 @@ class AndroidNodeAdapter:
         ``trust_android`` (human approval) is still required before the
         host issues a device secret. Never raises for wrong codes."""
         from .model import LifecycleState
+        # Refresh from disk: the device may have been registered by a
+        # short-lived CLI process while this host runs. load() merges
+        # per-device state and never deletes, so this is safe mid-session
+        # (same rationale as the pair_status trust check on the host).
+        try:
+            self.fabric.registry.load()
+        except Exception:
+            pass
         self._require_android(device_id)
         self.pairing.confirm(device_id, code)
         if node_id:
