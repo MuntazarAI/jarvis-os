@@ -15,6 +15,9 @@
   <a href="https://github.com/MuntazarAI/jarvis-os/issues"><img src="https://img.shields.io/github/issues/MuntazarAI/jarvis-os?style=flat-square" alt="GitHub issues"></a>
   <a href="https://github.com/MuntazarAI/jarvis-os/commits/main"><img src="https://img.shields.io/github/last-commit/MuntazarAI/jarvis-os?style=flat-square" alt="Last commit"></a>
   <a href="https://github.com/MuntazarAI/jarvis-os/actions/workflows/project-health.yml"><img src="https://github.com/MuntazarAI/jarvis-os/actions/workflows/project-health.yml/badge.svg?branch=main" alt="Project health"></a>
+  <a href="https://github.com/MuntazarAI/jarvis-os/actions/workflows/codeql.yml"><img src="https://github.com/MuntazarAI/jarvis-os/actions/workflows/codeql.yml/badge.svg?branch=main" alt="CodeQL"></a>
+  <a href="https://github.com/MuntazarAI/jarvis-os/actions/workflows/scorecard.yml"><img src="https://github.com/MuntazarAI/jarvis-os/actions/workflows/scorecard.yml/badge.svg?branch=main" alt="OpenSSF Scorecard"></a>
+  <a href="https://muntazarai.github.io/jarvis-os/"><img src="https://img.shields.io/website?url=https%3A%2F%2Fmuntazarai.github.io%2Fjarvis-os%2F&style=flat-square&label=docs%20site" alt="Docs site"></a>
 </p>
 
 <p align="center">

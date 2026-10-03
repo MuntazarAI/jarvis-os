@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose a JARVIS-OS capability
+labels: [enhancement]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should JARVIS be able to do that it cannot today?
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Policy, privacy, hardware, or offline constraints the design must respect
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      description: How will we know it works? (tests, demos, measurements)
+    validations:
+      required: true
