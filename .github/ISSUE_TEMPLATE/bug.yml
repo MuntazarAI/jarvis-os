@@ -1,0 +1,25 @@
+name: Bug report
+description: Something broken in JARVIS-OS
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `git log --oneline -1`, or release tag
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Paste `jarvis doctor` output, logs, or failing test names
+    validations:
+      required: false
