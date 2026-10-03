@@ -133,7 +133,7 @@ def make_policy_hook(policy: Any = None, actor: str = "intelligence-loop",
     itself — only the service can.
     """
     def policy_check(action: str, args: Mapping[str, Any]) -> tuple[bool, str]:
-        if str(action).startswith("device."):
+        if str(action).startswith(("device.", "pi.")):
             return _device_policy_check(action, args)
         if policy is None:
             return False, "no policy bound (fail closed)"
@@ -303,7 +303,7 @@ def make_device_executor(service: Any = None,
     def execute(action: str, args: Mapping[str, Any]) -> dict[str, Any]:
         if service is None:
             return {"ok": False, "error": "no device service bound"}
-        if not str(action).startswith("device."):
+        if not str(action).startswith(("device.", "pi.")):
             return {"ok": False,
                     "error": f"not a device action: {action}"[:160]}
         params = dict(args)

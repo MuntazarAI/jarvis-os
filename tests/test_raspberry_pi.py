@@ -548,3 +548,254 @@ def test_pi_doctor_structured(tmp_path):
     checks = adapter.doctor()
     assert len(checks) == 4
     assert all({"name", "ok", "detail"} <= set(c) for c in checks)
+
+
+def _pi_socket_pair(adapter, host, port, device_id, code, node_id="node-pi",
+                    on_request=None):
+    from jarvis.device.protocol import FabricMessage
+    from jarvis.device.socket_transport import SocketTransport
+    client = SocketTransport(timeout_s=5.0)
+
+    def _msg(type_, sender=node_id, **kw):
+        data = {"message_id": kw.pop("message_id", "msg-1"),
+                "protocol_version": 1, "sender_node": sender,
+                "message_type": type_, "payload": kw.pop("payload", {}),
+                "auth": kw.pop("auth", {})}
+        data.update(kw)
+        return data
+
+    if on_request is None:
+        client.connect("127.0.0.1", port)
+    else:
+        client.connect("127.0.0.1", port, on_request=on_request)
+    rep = client.send(FabricMessage.from_dict(_msg(
+        "pair_request", payload={"device_id": device_id, "code": code,
+                                 "node_id": node_id}))).payload
+    assert rep["ok"] and rep["pair"] == "pending", rep
+    token = rep["pending_token"]
+    adapter.trust_pi(device_id, by="tester", reason="e2e")
+    post = client.send(FabricMessage.from_dict(_msg(
+        "pair_status",
+        payload={"device_id": device_id,
+                 "pending_token": token}))).payload
+    assert post["ok"] and post["pair"] == "approved", post
+    return client, post["device_secret"], _msg
+
+
+def test_pi_socket_e2e(tmp_path):
+    from jarvis.device.pi_transport import PiSocketHost
+    from jarvis.device.protocol import FabricMessage
+    from jarvis.device.socket_transport import (
+        DeviceAuthenticator,
+        SocketTransport,
+    )
+    adapter = _adapter(tmp_path)
+    host = PiSocketHost(adapter)
+    port = host.start()
+    try:
+        info = adapter.register_pi("PiE2E", dict(META), by="tester")
+        device_id = info["device_id"]
+        code = info["pairing"]["pairing_code"]
+        adapter.declare_pi_capabilities(device_id, ["pi.system"], by="tester")
+
+        seen = {}
+
+        def answer(msg):
+            if msg.message_type != "command_request":
+                return None
+            seen["wire"] = msg.capability
+            assert msg.capability == "system.cpu"
+            proof = (msg.auth or {}).get("proof")
+            assert proof, "host proof missing"
+            return FabricMessage(
+                sender_node="node-pi", recipient_node=msg.sender_node,
+                message_type="command_result",
+                correlation_id=msg.message_id, capability=msg.capability,
+                payload={"ok": True, "result": {"cpu_percent": 12.5}})
+
+        client, secret, _msg = _pi_socket_pair(
+            adapter, host, port, device_id, code, on_request=answer)
+        try:
+            # Heartbeat with HMAC proof -> online.
+            chal = client.send(FabricMessage.from_dict(_msg(
+                "auth_challenge",
+                payload={"device_id": device_id}))).payload
+            assert chal["ok"], chal
+            proof = DeviceAuthenticator.answer(
+                secret, chal["challenge"])
+            hb = client.send(FabricMessage.from_dict(_msg(
+                "heartbeat",
+                payload={"device_id": device_id, "cpu_percent": 12.5},
+                auth={"challenge": chal["challenge"],
+                      "response": proof}))).payload
+            assert hb.get("lifecycle") == "online", hb
+            assert host.has_lane(device_id) is True
+            # Typed command over the lane with policy approval flow.
+            policy = adapter.fabric.policy
+            policy.grant("op", "device.pi.system")
+            policy.config.policy.require_approval_above_risk = 0.8
+            out = host.send_command("op", device_id, "pi.system.cpu", {})
+            assert out["ok"], out
+            assert "12.5" in str(out.get("result", ""))
+            assert seen.get("wire") == "system.cpu"
+            # Unauthorized actor denied, lane untouched.
+            denied = host.send_command("intruder", device_id,
+                                       "pi.system.cpu", {})
+            assert denied["ok"] is False
+            # Spoofed hello lane is not routable.
+            from jarvis.device.socket_transport import SocketTransport as _ST
+            spoof = _ST(timeout_s=5.0)
+            spoof.connect("127.0.0.1", port)
+            try:
+                hello = spoof.send(FabricMessage.from_dict(_msg(
+                    "hello", sender="node-pi",
+                    payload={"node_id": "node-pi"}))).payload
+                assert hello.get("hello") is True
+                assert host.has_lane(device_id) is False
+            finally:
+                spoof.close()
+            # Event ingest over the authed lane.
+            chal2 = client.send(FabricMessage.from_dict(_msg(
+                "auth_challenge",
+                payload={"device_id": device_id}))).payload
+            proof2 = DeviceAuthenticator.answer(
+                secret, chal2["challenge"])
+            ev = client.send(FabricMessage.from_dict(_msg(
+                "event",
+                payload={"device_id": device_id, "event": "pi.telemetry",
+                         "temperature_c": 55.0},
+                auth={"challenge": chal2["challenge"],
+                      "response": proof2}))).payload
+            assert ev["ok"] is True, ev
+            # Drop + reconnect + reauth stays coherent.
+            client.close()
+            client2 = SocketTransport(timeout_s=5.0)
+            client2.connect("127.0.0.1", port)
+            try:
+                chal3 = client2.send(FabricMessage.from_dict(_msg(
+                    "auth_challenge", sender="node-pi",
+                    payload={"device_id": device_id}))).payload
+                proof3 = DeviceAuthenticator.answer(
+                    secret, chal3["challenge"])
+                back = client2.send(FabricMessage.from_dict(_msg(
+                    "heartbeat", sender="node-pi",
+                    payload={"device_id": device_id},
+                    auth={"challenge": chal3["challenge"],
+                          "response": proof3}))).payload
+                assert back.get("lifecycle") == "online", back
+            finally:
+                client2.close()
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+    finally:
+        host.stop()
+
+
+def test_pi_cognitive_e2e_experience_learning(tmp_path):
+    """Pi telemetry -> supervisor cycle -> typed Pi command -> verify
+    -> experience -> belief -> learning (in-process transport)."""
+    from jarvis.device.service import DeviceCommandService
+    from jarvis.device.transport import LocalNode
+    from jarvis.device.protocol import FabricMessage, MessageType
+    from jarvis.intelligence.cognitive import CognitiveSupervisor
+    from jarvis.intelligence.loop import IntelligenceLoop
+    from jarvis.intelligence import wiring
+    from jarvis.planning.planner import MissionPlanner
+    from jarvis.cognition.beliefs import BeliefStore
+    from jarvis.cognition.experience import (
+        EvidenceRef,
+        Experience,
+        ExperienceStore,
+        OutcomeEvaluator,
+        OutcomeState,
+    )
+    from jarvis.cognition.learning import LearningEngine
+    from jarvis.perception.contract import Observation, Modality
+    from jarvis.perception.pipeline import PerceptionPipeline
+    from jarvis.world.registry import WorldRegistry
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    adapter = _adapter(tmp_path)
+    info = adapter.register_pi("PiE2E", dict(META), by="tester")
+    dev = info["device_id"]
+    adapter.trust_pi(dev, by="tester", reason="e2e")
+    adapter.declare_pi_capabilities(dev, ["pi.system"], by="tester")
+    adapter.connect(dev, by="tester")
+    node = LocalNode(dev)
+
+    def handle(msg):
+        assert msg.capability == "pi.system"
+        return FabricMessage(
+            sender_node=dev, recipient_node=msg.sender_node,
+            message_type=MessageType.COMMAND_RESULT.value,
+            capability="pi.system",
+            correlation_id=msg.message_id,
+            payload={"ok": True, "result": {"cpu_percent": 12.5}})
+
+    node.on("pi.system", handle)
+    adapter.fabric.transport.register_node(node)
+    policy = adapter.fabric.policy
+    policy.grant("cognitive-loop", "device.pi.system")
+    policy.config.policy.require_approval_above_risk = 0.8
+    svc = DeviceCommandService(adapter)
+    svc.grants.grant(dev, "pi.system", by="e2e")
+    # Pi telemetry becomes a perception observation (SENSOR modality).
+    obs_dict = observation_from_pi_telemetry(
+        dev, {"temperature_c": 55.0, "cpu_percent": 12.5})
+    world = WorldRegistry()
+    pipe = PerceptionPipeline(world=world, home=home)
+    from jarvis.perception.contract import Observation as _O
+    obs = _O(source="pi-telemetry", source_device=dev,
+             modality=Modality.SENSOR, payload=obs_dict["payload"],
+             confidence=0.7,
+             provenance={"provider": "pi-telemetry"})
+    assert pipe.ingest(obs)["ok"] is True
+    assert len(world.observations) == 1
+    # Supervised cycle drives the typed Pi command to VERIFIED.
+    planner = MissionPlanner()
+    planner.register("telemetry", "pi.system.cpu", {"device_id": dev})
+    loop = IntelligenceLoop(
+        normalize=lambda e: {"payload": dict(e)
+                             if isinstance(e, dict) else {}},
+        reason=lambda ctx: {"concluded": True,
+                            "summary": "pi telemetry check"},
+        plan=planner.plan,
+        policy_check=wiring.make_policy_hook(
+            policy, "cognitive-loop", device_service=svc),
+        executor=wiring.make_device_executor(svc, "cognitive-loop"),
+        verify=wiring.make_verify_hook())
+    loop.start()
+    supervisor = CognitiveSupervisor(loop, home=home)
+    out = supervisor.process({"source": "pi-telemetry", "type": "sensor",
+                              "payload": {"text": "pi telemetry check"}})
+    assert out.action.action == "pi.system.cpu"
+    assert out.verification.verdict == "VERIFIED"
+    assert out.result.ok is True
+    # Experience -> belief -> learning from the verified outcome.
+    beliefs = BeliefStore(home)
+    exp = Experience(
+        cycle_id=out.cycle_id, outcome=OutcomeState.SUCCESS,
+        confidence=0.7,
+        observation_refs=[EvidenceRef(kind="observation",
+                                      ref_id=obs.observation_id)],
+        provenance={"device": dev})
+    evaluation = OutcomeEvaluator.evaluate(
+        prediction_made=False, action_ok=True, verification="VERIFIED",
+        evidence_count=2)
+    assert evaluation.should_learn is True
+    learned = False
+    for i in range(3):
+        cycle_exp = Experience(
+            cycle_id=f"{out.cycle_id}-{i}", outcome=OutcomeState.SUCCESS,
+            confidence=0.7,
+            observation_refs=[EvidenceRef(kind="observation",
+                                         ref_id=obs.observation_id)],
+            provenance={"device": dev})
+        report = LearningEngine(beliefs).learn_from_outcome(
+            cycle_exp, evaluation)
+        learned = learned or report.learned
+    assert learned is True
+    assert ExperienceStore(home).count() >= 1
