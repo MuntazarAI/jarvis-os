@@ -399,6 +399,7 @@ class ExperienceStore:
         return out
 
     def count(self) -> int:
+        self._sync_from_disk()
         return len(self._index)
 
 

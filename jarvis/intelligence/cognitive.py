@@ -150,6 +150,7 @@ class CognitivePrediction:
     confidence: float | None = None
     basis: list[str] = field(default_factory=list)
     expires_at: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def made(self) -> bool:
@@ -308,18 +309,71 @@ class CognitiveSupervisor:
 
     def __init__(self, loop: IntelligenceLoop, *,
                  home: str | Path | None = None,
-                 actor: str = "cognitive-loop") -> None:
+                 actor: str = "cognitive-loop",
+                 enable_learning: bool = True) -> None:
         if loop is None:
             raise CognitiveError("supervisor requires a loop engine")
         self.loop = loop
         self.store = CycleStore(home)
         self.actor = actor
+        self.enable_learning = bool(enable_learning)
         self.stage = CognitiveStage.IDLE
         self.transitions: list[dict[str, Any]] = []
         self._seen_events: list[str] = []
         self.total_cycles = 0
         self.total_duplicates = 0
         self.total_failures = 0
+        self.total_experiences = 0
+        self.total_learning_failures = 0
+        # Lazily built learning stack (home-backed when available).
+        self._experience_store: Any = None
+        self._beliefs: Any = None
+        self._learner: Any = None
+        self._world: Any = None
+        self._palace: Any = None
+        self._dots: Any = None
+        self._neural: Any = None
+        self._neural_init_done = False
+        self._home = Path(home) if home else None
+
+    def bind_learning(self, *, world: Any = None, palace: Any = None,
+                      dots: Any = None, neural: Any = None) -> None:
+        """Attach live subsystems for learning (world/palace/dots).
+
+        The engine's own hooks stay untouched; learning reads through
+        these references only. Pass neural=False to disable, None for
+        a default bounded signal, or an object with compute()/adjust().
+        """
+        self._world = world
+        self._palace = palace
+        self._dots = dots
+        if neural is not None:
+            self._neural = neural if neural is not False else None
+            self._neural_init_done = True
+            return
+        self._neural_init_done = False
+
+    def _ensure_neural(self) -> None:
+        if getattr(self, "_neural_init_done", False):
+            return
+        self._neural_init_done = True
+        try:
+            from ..cognition.neural import NeuralSignal
+            self._neural = NeuralSignal()
+        except Exception:
+            self._neural = None
+
+    def _learning_stack(self) -> tuple[Any, Any, Any]:
+        """Lazily construct (experience store, beliefs, learner)."""
+        if self._experience_store is None:
+            from ..cognition.experience import ExperienceStore
+            from ..cognition.beliefs import BeliefStore
+            from ..cognition.learning import LearningEngine
+            beliefs = BeliefStore(self._home)
+            self._experience_store = ExperienceStore(self._home)
+            self._beliefs = beliefs
+            self._learner = LearningEngine(beliefs)
+        return self._experience_store, self._beliefs, self._learner
 
     # -- state machine -----------------------------------------------------
 
@@ -395,6 +449,11 @@ class CognitiveSupervisor:
             cycle_id="", event=cognitive_event, replayed=dry_run)
         try:
             self._enter(CognitiveStage.OBSERVING)
+            beliefs = self._consult_beliefs(cognitive_event)
+            if beliefs:
+                payload = dict(cognitive_event.payload or {})
+                payload["beliefs"] = beliefs[:3]
+                cognitive_event.payload = payload
             record = self._run_engine(engine, cognitive_event, timeout_s)
             outcome.cycle_id = record.cycle_id
             self._map_record(record, outcome)
@@ -426,7 +485,140 @@ class CognitiveSupervisor:
             self.store.append(outcome)
         except Exception:
             pass
+        if (self.enable_learning and not dry_run
+                and not outcome.replayed
+                and outcome.state == CognitiveStage.COMPLETED):
+            self._learn_from_outcome(outcome)
         return outcome
+
+    def _consult_beliefs(self, event: CognitiveEvent) -> list[dict[str, Any]]:
+        """Form beliefs: public/local belief matches enrich the event.
+
+        Runs inside CONTEXTUALIZING (no new lifecycle state). Only
+        public/local beliefs are ever injected; sensitive/private stay
+        out of the cycle. Best-effort, never raises.
+        """
+        try:
+            _, beliefs, _ = self._learning_stack()
+            query = str((event.payload or {}).get("text", ""))[:300]
+            if not query:
+                return []
+            found = []
+            for belief in beliefs.search(query, limit=3,
+                                         min_confidence=0.3):
+                if belief.privacy_class in ("sensitive", "private"):
+                    continue
+                found.append({"statement": belief.statement,
+                              "confidence": belief.confidence,
+                              "belief_id": belief.belief_id})
+            return found
+        except Exception:
+            return []
+
+    def _learn_from_outcome(self, outcome: CognitiveOutcome) -> None:
+        """Build experience, evaluate, learn, mirror. Isolated: learning
+        failure is recorded on the outcome and never corrupts it."""
+        try:
+            from ..cognition import integration as cog_integration
+            from ..cognition.experience import (
+                EvidenceRef,
+                Experience,
+                OutcomeEvaluator,
+                OutcomeState,
+            )
+            store, beliefs, learner = self._learning_stack()
+            event = outcome.event
+            experience = Experience(
+                cycle_id=outcome.cycle_id,
+                outcome=self._outcome_state_of(outcome),
+                confidence=float(outcome.decision.confidence or 0.0),
+                observation_refs=[EvidenceRef(
+                    kind="event", ref_id=event.event_id,
+                    note=f"{event.source}:{event.type}")],
+                provenance={"supervisor": True,
+                            "policy_allowed": outcome.policy_allowed,
+                            "verification": outcome.verification.verdict},
+                privacy_class="local")
+            evaluation = OutcomeEvaluator.evaluate(
+                prediction_made=outcome.prediction.made,
+                expected=outcome.prediction.prediction,
+                actual=outcome.verification.observed,
+                action_ok=outcome.result.ok
+                if outcome.action.action else None,
+                verification=outcome.verification.verdict,
+                evidence_count=len(experience.observation_refs) + (
+                    1 if outcome.decision.decided else 0))
+            stored = store.append(experience)
+            if not stored:
+                return
+            self.total_experiences += 1
+            report = learner.learn_from_outcome(
+                experience, evaluation, by="cognitive-supervisor")
+            if self._neural is not None and outcome.prediction.made:
+                self._apply_neural_signal(outcome, experience)
+            dot_id = ""
+            if isinstance(event.payload, dict):
+                dot_id = str(event.payload.get("dot_id", ""))[:64]
+            cog_integration.mirror_experience(
+                experience, evaluation, dots=self._dots,
+                world=self._world, dot_id=dot_id)
+            if report.learned:
+                outcome.learning = CognitiveLearningRecord(
+                    cycle_id=outcome.cycle_id,
+                    outcome=f"learned {len(report.updates)} update(s)",
+                    audit_refs=[u.target[:32] for u in report.updates[:5]])
+        except Exception as exc:
+            self.total_learning_failures += 1
+            try:
+                outcome.stages.append(
+                    {"stage": "learn", "ok": False,
+                     "error": f"learning failed: {type(exc).__name__}"[:200]})
+            except Exception:
+                pass
+
+    @staticmethod
+    def _outcome_state_of(outcome: CognitiveOutcome) -> "OutcomeState":
+        from ..cognition.experience import OutcomeState
+        if not outcome.action.action:
+            return OutcomeState.NO_ACTION
+        if not outcome.decision.decided:
+            return OutcomeState.NO_DECISION
+        verdict = outcome.verification.verdict
+        if verdict == "VERIFIED":
+            return OutcomeState.SUCCESS
+        if verdict == "PARTIALLY_VERIFIED":
+            return OutcomeState.PARTIAL
+        if verdict == "FAILED":
+            return OutcomeState.FAILED
+        return OutcomeState.UNKNOWN
+
+    def _apply_neural_signal(self, outcome: CognitiveOutcome,
+                             experience: Any) -> None:
+        """Optional bounded confidence nudge, fully provenanced."""
+        try:
+            self._ensure_neural()
+            neural = self._neural
+            if neural is None or not getattr(neural, "available", False):
+                return
+            from ..cognition.neural import feature_vector
+            features = feature_vector(
+                outcome.result.ok,
+                float(outcome.decision.confidence or 0.0),
+                len(experience.observation_refs or []) + 1,
+                0.5, True, False,
+                outcome.verification.verdict not in ("VERIFIED", "FAILED"),
+                outcome.verification.verdict == "VERIFIED")
+            computed = neural.compute(features)
+            adjusted = neural.adjust(
+                float(outcome.prediction.confidence or 0.5),
+                float(computed.get("signal", 0.0)))
+            outcome.prediction.confidence = adjusted
+            outcome.prediction.metadata = {
+                "neural_adjusted": True,
+                "neural_signal": computed.get("signal", 0.0),
+                "neural_spikes": computed.get("spikes", 0)}
+        except Exception:
+            pass
 
     def _run_engine(self, engine: IntelligenceLoop,
                     event: CognitiveEvent, timeout_s: float) -> CycleRecord:
