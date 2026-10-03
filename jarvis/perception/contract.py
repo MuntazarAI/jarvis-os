@@ -40,6 +40,7 @@ class Modality(str, Enum):
     IMAGE = "image"
     DOCUMENT = "document"
     SENSOR = "sensor"
+    AUDIO = "audio"
 
 
 class PrivacyClass(str, Enum):

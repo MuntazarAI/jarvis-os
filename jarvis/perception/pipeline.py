@@ -262,6 +262,13 @@ class PerceptionPipeline:
     def _to_world(self, obs: Observation) -> dict[str, Any]:
         if self.world is None:
             return {"recorded": False, "reason": "no world bound"}
+        if obs.privacy_class in (PrivacyClass.SENSITIVE,
+                                 PrivacyClass.PRIVATE):
+            # Sensitive claims stay in working context (bus event);
+            # durable world state must not silently absorb them.
+            return {"recorded": False,
+                    "reason": f"privacy {obs.privacy_class.value}: "
+                              "working context only"}
         summary = summarize_observation(obs)
         try:
             record = self.world.observe(
