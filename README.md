@@ -262,6 +262,25 @@ pytest tests/ -q
 
 ## Voice
 
+JARVIS voice = **Chatterbox** (local-first) + the Chatterbox reference
+sample `male_old_movie.flac`, selected as the JARVIS voice identity
+(a reference prompt, not an official voice).
+Reference: `https://storage.googleapis.com/chatterbox-demo-samples/prompts/male_old_movie.flac`
+
+```bash
+jarvis voice status
+jarvis voice setup     # explicit reference-voice install + verify
+jarvis voice test      # deterministic, no mic/GPU/net
+jarvis say "Voice online"
+jarvis listen --always --no-speak
+```
+
+Transcripts are untrusted input through the normal
+perception → cognition → policy path; TTS only speaks finished
+responses (Chatterbox → existing local fallback → text-only).
+Raw audio is transient by default. See
+[docs/VOICE_AUDIO_INTELLIGENCE.md](docs/VOICE_AUDIO_INTELLIGENCE.md).
+
 Offline voice support can be installed into the project environment:
 
 ```bash
