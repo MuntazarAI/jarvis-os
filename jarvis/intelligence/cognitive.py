@@ -247,7 +247,9 @@ class CycleStore:
         if path is None:
             return False
         try:
-            line = json.dumps(outcome.to_dict(), sort_keys=True, default=str)
+            from .snapshot import scrub
+            clean = scrub(outcome.to_dict())
+            line = json.dumps(clean, sort_keys=True, default=str)
         except (TypeError, ValueError):
             return False
         if len(line.encode("utf-8")) > MAX_LINE_BYTES:
@@ -395,8 +397,16 @@ class CognitiveSupervisor:
             record = self._run_engine(engine, cognitive_event, timeout_s)
             outcome.cycle_id = record.cycle_id
             self._map_record(record, outcome)
-            self._enter(CognitiveStage.COMPLETED)
-            outcome.state = CognitiveStage.COMPLETED
+            if record.failed_stage:
+                try:
+                    self._enter(CognitiveStage.FAILED)
+                except CognitiveError:
+                    pass
+                outcome.state = CognitiveStage.FAILED
+                self.total_failures += 1
+            else:
+                self._enter(CognitiveStage.COMPLETED)
+                outcome.state = CognitiveStage.COMPLETED
         except CognitiveError:
             raise
         except Exception as exc:
@@ -409,6 +419,7 @@ class CognitiveSupervisor:
                 pass
             self.total_failures += 1
         outcome.duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
+        outcome.transitions = list(self.transitions)
         self.total_cycles += 1
         try:
             self.store.append(outcome)
@@ -444,7 +455,7 @@ class CognitiveSupervisor:
             if by_stage.get("reason") else {}
         outcome.decision = CognitiveDecision(
             decided=bool(reason_detail.get("concluded")),
-            conclusion=str(reason_detail.get("conclusion", ""))[:500],
+            conclusion=str(reason_detail.get("summary", ""))[:500],
             evidence_refs=list(reason_detail.get("evidence_refs", []) or []),
             confidence=float(reason_detail.get("confidence", 0.0) or 0.0),
             uncertainty=list(reason_detail.get("uncertainty", []) or []),
@@ -461,7 +472,7 @@ class CognitiveSupervisor:
         action_detail = self._action_from_record(record)
         outcome.plan = CognitivePlan(
             goal=str(action_detail.get("reason", ""))[:300],
-            steps=[{"action": outcome_action(action_detail)}],
+            steps=[outcome_action(action_detail)],
             expected=str(action_detail.get("expected", ""))[:300],
             verification_conditions=dict(
                 action_detail.get("verification_conditions", {}) or {}),
@@ -488,6 +499,14 @@ class CognitiveSupervisor:
             evidence=list(verify_detail.get("evidence", []) or []),
             expected=str(verify_detail.get("expected", ""))[:300],
             observed=str(verify_detail.get("observed", ""))[:300])
+        learn_detail = by_stage.get("learn").detail \
+            if by_stage.get("learn") else {}
+        if learn_detail.get("stored") or learn_detail.get("learned"):
+            outcome.learning = CognitiveLearningRecord(
+                cycle_id=record.cycle_id,
+                outcome=("ok" if outcome.result.ok else "failed"),
+                memory_id=str(learn_detail.get("memory_id", ""))[:64],
+                audit_refs=[])
         if record.failed_stage:
             outcome.state = CognitiveStage.FAILED
 

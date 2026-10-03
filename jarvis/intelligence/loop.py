@@ -12,11 +12,25 @@ caller's PolicyEngine before execution.
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Mapping
+
+
+_TOKEN_RE = re.compile(r"\bap(?:pr|d)-[0-9a-f]{8,}\b")
+
+
+def scrub_token_strings(text: str) -> str:
+    """Redact in-memory/durable approval tokens from free text.
+
+    Cycle records persist to disk; approval tokens (``appr-``/``apd-`` +
+    hex) must never land in them. Fixed formats keep this precise —
+    ordinary prose never matches.
+    """
+    return _TOKEN_RE.sub("[approval redacted]", str(text))
 
 
 class LoopState(str, Enum):
@@ -342,14 +356,22 @@ class IntelligenceLoop:
                 return {"skipped": True}
             conclusion = self.reason(context)
             context["conclusion"] = conclusion
-            return {"concluded": bool(conclusion)}
+            summary = ""
+            if isinstance(conclusion, dict):
+                summary = str(conclusion.get("summary",
+                                             conclusion.get("decision", "")))[:300]
+            return {"concluded": bool(conclusion), "summary": summary}
         if stage == "predict":
             if self.predict is None:
                 return {"prediction": "NO_PREDICTION", "skipped": True}
             prediction = self.predict(context)
             context["prediction"] = prediction
-            return {"predicted": bool(prediction)
-                    and prediction.get("prediction") != "NO_PREDICTION"}
+            made = bool(prediction) and prediction.get("prediction") \
+                != "NO_PREDICTION"
+            return {"predicted": made,
+                    "prediction": str(prediction.get("prediction", ""))[:300],
+                    "confidence": prediction.get("confidence"),
+                    "basis": list(prediction.get("basis", []) or [])[:5]}
         if stage == "plan":
             if self.plan is None:
                 return {"skipped": True}
@@ -370,9 +392,12 @@ class IntelligenceLoop:
                 context["policy_allowed"] = False
                 return {"allowed": False, "reason": "no policy bound"}
             allowed, reason = self.policy_check(name, action.get("args", {}))
-            context["policy"] = {"allowed": bool(allowed), "reason": reason[:300]}
+            context["policy"] = {"allowed": bool(allowed),
+                                 "reason": scrub_token_strings(reason)[:300]}
             record_stage = self._current_record_policy(context, bool(allowed))
-            return {"allowed": bool(allowed), "reason": reason[:300], **record_stage}
+            return {"allowed": bool(allowed),
+                    "reason": scrub_token_strings(reason)[:300],
+                    **record_stage}
         if stage == "act":
             if self.dry_run:
                 # Defense in depth: dry-run loops are constructed without an
@@ -407,7 +432,10 @@ class IntelligenceLoop:
             if self.learn is None:
                 return {"skipped": True}
             update = self.learn(context)
-            return {"learned": bool(update)}
+            memory_id = ""
+            if isinstance(update, dict):
+                memory_id = str(update.get("memory_id", ""))[:64]
+            return {"learned": bool(update), "memory_id": memory_id}
         raise ValueError(f"unknown stage: {stage}")
 
     @staticmethod

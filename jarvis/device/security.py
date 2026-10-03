@@ -14,6 +14,7 @@ fabric-specific enforcement:
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ..core.types import now
@@ -39,6 +40,18 @@ SECRET_KEY_HINTS = (
 class FabricSecurityError(ValueError):
     """Raised when device-supplied data violates a security rule."""
 
+
+_TOKEN_RE = re.compile(r"\bap(?:pr|d)-[0-9a-f]{8,}\b")
+
+
+def scrub_token_strings(text: str) -> str:
+    """Redact approval tokens (``appr-``/``apd-`` + hex) from free text.
+
+    Outbox records and audit entries persist to disk; tokens minted by
+    the in-memory approval flow must never land in them. Fixed formats
+    keep this precise — ordinary prose never matches.
+    """
+    return _TOKEN_RE.sub("[approval redacted]", str(text))
 
 def _is_secret_key(key: str) -> bool:
     lowered = key.lower()

@@ -423,9 +423,10 @@ class DeviceCommandService:
     def _handle_deny(self, record: dict[str, Any], reasons: list[str],
                      fresh_token: str) -> dict[str, Any]:
         """Gate denial at drain time: approval flow, deferral, or fail."""
+        from .security import scrub_token_strings
         command_id = str(record.get("command_id", ""))
         actor = str(record.get("actor", ""))
-        joined = "; ".join(reasons)
+        joined = scrub_token_strings("; ".join(reasons))
         if "needs approval" in joined or "durable approval denied" in joined:
             presented = str(record.get("approval_id", ""))
             if presented:
