@@ -121,6 +121,27 @@ class DeviceCommandService:
 
     # -- public API ----------------------------------------------------------
 
+    def preview(self, actor: str, device_id: str, command: str,
+                args: dict[str, Any] | None = None, *,
+                approval_id: str = "") -> dict[str, Any]:
+        """Validate + authorize WITHOUT enqueuing or consuming anything.
+
+        Pure check for gates (e.g. the cognitive loop policy stage):
+        durable approvals are peeked, never consumed here.
+        """
+        args = dict(args or {})
+        ok, checked = self._validate(device_id, command, args)
+        if not ok:
+            return {"authorized": False, "reasons": [checked["error"]],
+                    "device": None, "decision": None, "approval_token": ""}
+        if self.router is None:
+            return {"authorized": False, "reasons": ["no router"],
+                    "device": None, "decision": None, "approval_token": ""}
+        gate = self.router.authorize(
+            actor, device_id, checked["capability"], checked["args"],
+            approval_token=approval_id)
+        return gate
+
     def request_command(self, actor: str, device_id: str, command: str,
                         args: dict[str, Any] | None = None, *,
                         approval_id: str = "") -> dict[str, Any]:

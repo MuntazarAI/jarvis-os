@@ -1,8 +1,9 @@
 """IntelligenceLoop: the bounded cognitive cycle for JARVIS.
 
 One cycle: ingest -> normalize -> world update -> recall -> neural ->
-reason -> plan -> policy -> act -> observe -> learn. Every stage is typed,
-traced, failure-isolated, and policy-gated at the action boundary.
+reason -> predict -> plan -> policy -> act -> verify -> observe -> learn.
+Every stage is typed, traced, failure-isolated, and policy-gated at the
+action boundary.
 
 The loop NEVER runs unbounded autonomy: max_cycles bounds every run(),
 each cycle has a timeout, and externally meaningful actions pass the
@@ -30,7 +31,8 @@ class LoopState(str, Enum):
 
 STAGES = (
     "ingest", "normalize", "world", "recall", "neural",
-    "reason", "plan", "policy", "act", "observe", "learn",
+    "reason", "predict", "plan", "policy", "act", "verify",
+    "observe", "learn",
 )
 
 
@@ -97,9 +99,11 @@ class IntelligenceLoop:
         recall: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
         neural_step: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         reason: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        predict: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         plan: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         policy_check: Callable[[str, Mapping[str, Any]], tuple[bool, str]] | None = None,
         executor: ActionExecutor | None = None,
+        verify: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         observe: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         learn: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         max_history: int = 200,
@@ -112,9 +116,11 @@ class IntelligenceLoop:
         self.recall = recall
         self.neural_step = neural_step
         self.reason = reason
+        self.predict = predict
         self.plan = plan
         self.policy_check = policy_check
         self.executor = executor
+        self.verify = verify
         self.observe = observe
         self.learn = learn
         self.state = LoopState.START
@@ -170,9 +176,11 @@ class IntelligenceLoop:
             recall=_recall_stub,
             neural_step=self.neural_step,
             reason=self.reason,
+            predict=_stub,
             plan=self.plan,
             policy_check=None,
             executor=None,
+            verify=_stub,
             observe=_stub,
             learn=_stub,
             max_history=self.max_history,
@@ -335,12 +343,23 @@ class IntelligenceLoop:
             conclusion = self.reason(context)
             context["conclusion"] = conclusion
             return {"concluded": bool(conclusion)}
+        if stage == "predict":
+            if self.predict is None:
+                return {"prediction": "NO_PREDICTION", "skipped": True}
+            prediction = self.predict(context)
+            context["prediction"] = prediction
+            return {"predicted": bool(prediction)
+                    and prediction.get("prediction") != "NO_PREDICTION"}
         if stage == "plan":
             if self.plan is None:
                 return {"skipped": True}
             action = self.plan(context)
             context["action"] = action
-            return {"action": str(action.get("action", ""))[:120]}
+            args = action.get("args", {})
+            # Keys only: values may carry secrets and records persist.
+            return {"action": str(action.get("action", ""))[:120],
+                    "args_keys": sorted(map(str, args.keys()))[:12]
+                    if isinstance(args, dict) else []}
         if stage == "policy":
             action = context.get("action") or {}
             name = str(action.get("action", ""))
@@ -369,6 +388,15 @@ class IntelligenceLoop:
             result = self.executor(str(action.get("action", "")), action.get("args", {}))
             context["result"] = result
             return {"ok": bool(result.get("ok", True))}
+        if stage == "verify":
+            action = context.get("action") or {}
+            if not str(action.get("action", "")):
+                return {"skipped": "no action taken"}
+            if self.verify is None:
+                return {"verdict": "UNKNOWN", "skipped": True}
+            verdict = self.verify(context)
+            context["verification"] = verdict
+            return {"verdict": str(verdict.get("verdict", "UNKNOWN"))[:32]}
         if stage == "observe":
             if self.observe is None:
                 return {"skipped": True}
