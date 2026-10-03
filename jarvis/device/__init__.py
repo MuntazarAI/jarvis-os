@@ -51,6 +51,7 @@ from .identity import (
     NodeIdentity,
     current_limitation,
     generate_identity,
+    require_verified_transport,
 )
 from .model import (
     CAPABILITY_VERSION,
@@ -78,6 +79,20 @@ from .transport import (
     get_transport,
     register_transport,
 )
+from .socket_transport import (
+    AuthError,
+    DeviceAuthenticator,
+    FabricServer,
+    FramingError,
+    ServerPeer,
+    SocketTransport,
+    decode_frames,
+    encode_frame,
+    is_verified_transport,
+    verified_auth_context,
+)
+
+register_transport("socket", SocketTransport)
 
 __all__ = [
     "ANDROID_ADAPTER_VERSION",
@@ -98,10 +113,12 @@ __all__ = [
     "AndroidError",
     "AndroidNodeAdapter",
     "AuthContext",
+    "AuthError",
     "Capability",
     "CapabilityError",
     "CapabilityRegistry",
     "Device",
+    "DeviceAuthenticator",
     "DeviceError",
     "DeviceFabric",
     "DeviceRegistry",
@@ -109,6 +126,8 @@ __all__ = [
     "FabricError",
     "FabricMessage",
     "FabricSecurityError",
+    "FabricServer",
+    "FramingError",
     "IdentityError",
     "InProcessTransport",
     "LifecycleError",
@@ -124,6 +143,8 @@ __all__ = [
     "QueuedCommand",
     "RegistryError",
     "RoutingError",
+    "ServerPeer",
+    "SocketTransport",
     "Telemetry",
     "TelemetryError",
     "Transport",
@@ -135,17 +156,22 @@ __all__ = [
     "available_transports",
     "check_transition",
     "current_limitation",
+    "decode_frames",
+    "encode_frame",
     "generate_identity",
     "get_transport",
     "is_stale",
+    "is_verified_transport",
     "make_error",
     "negotiate_capabilities",
     "parse_android_message",
     "register_transport",
+    "require_verified_transport",
     "scrub",
     "validate_android_event",
     "validate_android_metadata",
     "validate_capability_name",
     "validate_command",
     "validate_permission_report",
+    "verified_auth_context",
 ]

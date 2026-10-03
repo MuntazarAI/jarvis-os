@@ -126,6 +126,26 @@ class DeviceFabricConfig:
 
 
 @dataclass
+class DeviceTransportConfig:
+    """Real network transport for the device fabric (3.10).
+
+    Backwards compatible: everything defaults to off/loopback. No
+    credentials live here — device secrets stay in 0600 device-keys.json.
+    """
+
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 0  # 0 = pick an ephemeral port at serve time
+    timeout_s: float = 15.0
+    max_connections: int = 16
+    max_frame_bytes: int = 262144
+    reconnect_initial_s: float = 1.0
+    reconnect_max_s: float = 60.0
+    heartbeat_interval_s: float = 60.0
+    keys_path: str = "device-keys.json"
+
+
+@dataclass
 class JarvisConfig:
     paths: PathsConfig = field(default_factory=PathsConfig)
     cognitive: CognitiveConfig = field(default_factory=CognitiveConfig)
@@ -134,6 +154,7 @@ class JarvisConfig:
     models: ModelConfig = field(default_factory=ModelConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     device_fabric: DeviceFabricConfig = field(default_factory=DeviceFabricConfig)
+    device_transport: DeviceTransportConfig = field(default_factory=DeviceTransportConfig)
     personality: dict[str, Any] = field(
         default_factory=lambda: {
             "formality": "professional",

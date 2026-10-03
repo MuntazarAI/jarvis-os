@@ -133,7 +133,22 @@ honestly reports `UNSUPPORTED` until a real build pipeline exists.
   cannot actually connect yet; LAN/WebSocket/mTLS are future work.
 - The APK has never been compiled or run; the Kotlin skeleton is
   uncompiled-source-reviewed only.
-- Pairing codes are short numeric secrets with attempt limits, appropriate
-  for local enrollment, not for hostile networks.
-- Identity is stable but unauthenticated until a verified transport lands
-  (same limitation as the 3.8 fabric itself).
+
+## 3.10 update: real transport has landed
+
+The 3.9 limitations above are superseded by 3.10 — see
+[ANDROID_TRANSPORT.md](ANDROID_TRANSPORT.md) for the full story:
+
+- Real TCP transport exists (`jarvis/device/socket_transport.py` +
+  `jarvis/device/android_transport.py`); a phone connects via
+  `device transport serve`.
+- Pairing codes remain short numeric secrets for local enrollment, now
+  backed by SHA-256 hashes, single-use semantics, and a hard
+  no-auto-trust rule (`TRUST_PENDING` + explicit CLI approval).
+- Identity is now authenticated per-session via rotating HMAC-SHA256
+  challenges (`require_verified_transport` enforced at the router).
+- The APK compiles (`:app:assembleDebug`, ~3.3 MB), JVM unit tests pass
+  11/11 including a live loopback handshake, and the app has been
+  installed and launched on a real emulator.
+- Remaining honest gaps: plaintext frames (trusted-LAN threat model, no
+  TLS yet), foreground-only `serve`, file-based key store.

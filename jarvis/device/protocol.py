@@ -35,6 +35,11 @@ class MessageType(str, Enum):
     EVENT = "event"
     ERROR = "error"
     GOODBYE = "goodbye"
+    # 3.10 pairing/auth bootstrap (protocol v1, message-set extension:
+    # older peers reject these with an error reply, never misinterpret).
+    PAIR_REQUEST = "pair_request"
+    PAIR_STATUS = "pair_status"
+    AUTH_CHALLENGE = "auth_challenge"
 
 
 class ProtocolError(ValueError):
