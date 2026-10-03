@@ -249,6 +249,11 @@ class PiNodeAdapter:
 
     # -- commands ------------------------------------------------------------------
 
+    def validate_command(self, command: str,
+                         args: dict[str, Any] | None) -> dict[str, Any]:
+        """Validate against this node's GPIO allowlist."""
+        return validate_command(command, args, self.gpio_pins)
+
     def send_command(self, actor: str, device_id: str, command: str,
                      args: dict[str, Any] | None = None,
                      approval_token: str = "") -> dict[str, Any]:

@@ -103,18 +103,20 @@ class DeviceCommandService:
         return True, checked
 
     def _lane_gated(self, command: str) -> bool:
-        """True when delivery needs a live socket lane (Android host)."""
+        """True when delivery needs a live socket lane.
+
+        Namespace-routed (device.* android, pi.* raspberry pi); shape
+        is re-validated with real args at delivery time, so this stays
+        a routing hint, never an authorization decision.
+        """
         if self.host is None:
             return False
-        validator = getattr(self.adapter, "validate_command", None)
-        if validator is None:
-            try:
-                from .android import validate_command as android_validate
-                validator = android_validate
-            except ImportError:
-                return False
+        name = str(command)
+        if name.startswith("pi."):
+            return True
         try:
-            validator(command, {})
+            from .android import validate_command as android_validate
+            android_validate(name, {})
             return True
         except Exception:
             return False
