@@ -34,6 +34,8 @@ class NodeService : Service() {
     @Volatile private var lastHeartbeat: Long = 0L
 
     override fun onCreate() {
+        PeerLog.debug("NodeService",
+            "onCreate t=${Thread.currentThread().name}")
         super.onCreate()
         store = NodeIdentityStore(this)
         val identity = store.loadOrCreate(android.os.Build.MODEL ?: "android")
@@ -55,16 +57,22 @@ class NodeService : Service() {
         )
         try {
             startForeground(NOTIFICATION_ID, buildNotification("JARVIS Node idle — not connected"))
+            PeerLog.debug("NodeService",
+                "onCreate startForeground ok t=${Thread.currentThread().name}")
         } catch (e: Exception) {
             // Android 14+ denies startForeground when the app is backgrounded
             // (e.g. right after install). Do not crash — surface the error and
             // stop; the user retries from the UI with the app in the foreground.
+            PeerLog.error("NodeService",
+                "onCreate startForeground FAILED, calling stopSelf t=${Thread.currentThread().name}: ${e.javaClass.simpleName}: ${e.message}")
             broadcast(error = "foreground start denied: ${e.javaClass.simpleName} — reopen the app and retry")
             stopSelf()
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        PeerLog.debug("NodeService",
+            "onStartCommand t=${Thread.currentThread().name} action=${intent?.action} startId=$startId")
         when (intent?.action) {
             ACTION_CONNECT -> executor.execute {
                 val host = intent.getStringExtra(EXTRA_HOST)?.takeIf { it.isNotBlank() }
@@ -107,10 +115,19 @@ class NodeService : Service() {
                     return@execute
                 }
                 var waited = 0
-                while (connection.connState != SocketPeer.ConnState.CONNECTED && waited < 20) {
-                    Thread.sleep(500)
-                    waited++
+                PeerLog.debug("NodeService",
+                    "PAIR waitloop enter t=${Thread.currentThread().name} state=${connection.connState}")
+                try {
+                    while (connection.connState != SocketPeer.ConnState.CONNECTED && waited < 20) {
+                        Thread.sleep(500)
+                        waited++
+                    }
+                } catch (t: Throwable) {
+                    PeerLog.error("NodeService",
+                        "PAIR waitloop threw t=${Thread.currentThread().name} waited=$waited: ${t.javaClass.simpleName}: ${t.message}")
                 }
+                PeerLog.debug("NodeService",
+                    "PAIR waitloop exit t=${Thread.currentThread().name} waited=$waited state=${connection.connState}")
                 PeerLog.debug("NodeService", "PAIR waited=$waited state=${connection.connState}")
                 if (connection.connState != SocketPeer.ConnState.CONNECTED) {
                     broadcast(error = "cannot reach host $host:$port — check network")
@@ -120,31 +137,60 @@ class NodeService : Service() {
                 // Never log the reply body: it carries the single-use
                 // pending_token when pairing succeeds.
                 PeerLog.debug("NodeService", "pairRequest ok=${pending != null}")
+                val tokenEmpty = pending?.optString("pending_token").isNullOrEmpty()
+                PeerLog.debug("NodeService",
+                    "pairReply analyzed t=${Thread.currentThread().name} tokenEmpty=$tokenEmpty")
                 val token = pending?.optString("pending_token").orEmpty()
                 if (token.isEmpty()) {
+                    PeerLog.error("NodeService",
+                        "pair token EMPTY t=${Thread.currentThread().name} — broadcasting rejection")
                     broadcast(error = "pairing rejected — wrong code or expired")
                     return@execute
                 }
                 deviceId = devId
                 trustState = "trust_pending"
                 broadcast()
+                PeerLog.debug("NodeService",
+                    "scheduling pollPairStatus t=${Thread.currentThread().name}")
                 pollPairStatus(devId, token)
+                PeerLog.debug("NodeService",
+                    "pollPairStatus scheduled t=${Thread.currentThread().name}")
             }
         }
         return START_NOT_STICKY
     }
 
     private fun pollPairStatus(devId: String, token: String) {
+        PeerLog.debug("NodeService",
+            "pollPairStatus entry t=${Thread.currentThread().name} tokenEmpty=${token.isEmpty()}")
         pollExecutor.execute {
-            repeat(40) {
+            PeerLog.debug("NodeService",
+                "poll task running t=${Thread.currentThread().name}")
+            repeat(40) { attempt ->
                 Thread.sleep(5_000)
                 // A null reply is transient (socket hiccup) — keep polling.
-                val status = connection.pairStatus(devId, token)
-                if (status == null) return@repeat
+                val status = try {
+                    connection.pairStatus(devId, token)
+                } catch (t: Throwable) {
+                    PeerLog.error("NodeService",
+                        "poll attempt=$attempt threw t=${Thread.currentThread().name}: ${t.javaClass.simpleName}: ${t.message}")
+                    null
+                }
+                if (status == null) {
+                    PeerLog.debug("NodeService",
+                        "poll attempt=$attempt null reply t=${Thread.currentThread().name} — continuing")
+                    return@repeat
+                }
+                // Never log the body: an approved reply carries the secret.
+                val phase = status.optString("pair").ifEmpty { status.optString("error") }
+                PeerLog.debug("NodeService",
+                    "poll attempt=$attempt phase=$phase t=${Thread.currentThread().name}")
                 // Host keys the phase as "pair": pending|approved (never "state").
                 when (status.optString("pair")) {
                     "approved" -> {
                         val secret = status.optString("device_secret")
+                        PeerLog.debug("NodeService",
+                            "poll approved secretPresent=${secret.isNotEmpty()} t=${Thread.currentThread().name}")
                         if (secret.isNotEmpty()) {
                             store.saveDeviceSecret(secret)
                             deviceId = devId
@@ -156,6 +202,8 @@ class NodeService : Service() {
                     }
                     "pending" -> { /* keep polling */ }
                     else -> {
+                        PeerLog.error("NodeService",
+                            "poll terminal phase=$phase t=${Thread.currentThread().name}")
                         broadcast(error = "pairing failed: ${status.optString("error")}")
                         return@execute
                     }
@@ -210,6 +258,8 @@ class NodeService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        PeerLog.debug("NodeService",
+            "onDestroy t=${Thread.currentThread().name}")
         stopHeartbeats()
         connection.disconnect()
         executor.shutdownNow()

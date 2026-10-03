@@ -24,13 +24,19 @@ class NodeConnection(
         private set
 
     fun connect(host: String, port: Int) {
+        PeerLog.debug("NodeConnection",
+            "connect enter t=${Thread.currentThread().name} host=$host port=$port")
         disconnect()
         val p = SocketPeer(
             onRequest = ::onServerFrame,
             onState = { state -> connState = state; onPeerState(state) },
         )
         peer = p
+        PeerLog.debug("NodeConnection",
+            "connect starting peer t=${Thread.currentThread().name} id=${System.identityHashCode(p)}")
         p.start(host, port, nodeId)
+        PeerLog.debug("NodeConnection",
+            "connect exit t=${Thread.currentThread().name} state=$connState")
     }
 
     fun disconnect() {
@@ -84,16 +90,26 @@ class NodeConnection(
         val reply = send("heartbeat", deviceId = deviceId, payload = telemetry, auth = auth)
             ?: return null
         val payload = reply.optJSONObject("payload")
-        if (payload?.optBoolean("ok") != true) {
-            // Only an explicit host auth failure stops reconnecting
-            // (wrong secret, revoked trust). Transient refusals keep
-            // the socket: the next heartbeat retries normally.
-            if (payload?.optBoolean("auth_failed") == true) {
-                peer?.notifyAuthFailed()
-            }
+        if (payload?.optBoolean("ok") == true) return payload
+        if (payload?.optBoolean("auth_failed") != true) {
+            // Transient refusal: keep the socket, retry next heartbeat.
             return null
         }
-        return payload
+        // Auth failure may be mere desync (a rotated challenge whose reply
+        // was lost when the server restarted). Resync ONCE with a fresh
+        // challenge; only persistent failures stop reconnecting.
+        val fresh = authHeaders(deviceId) ?: run {
+            peer?.notifyAuthFailed()
+            return null
+        }
+        val retry = send("heartbeat", deviceId = deviceId, payload = telemetry, auth = fresh)
+            ?: return null
+        val payload2 = retry.optJSONObject("payload")
+        if (payload2?.optBoolean("ok") == true) return payload2
+        if (payload2?.optBoolean("auth_failed") == true) {
+            peer?.notifyAuthFailed()
+        }
+        return null
     }
 
     fun sendEvent(deviceId: String, event: String, payload: Map<String, Any?>, auth: JSONObject): Boolean {
@@ -139,7 +155,10 @@ class NodeConnection(
         payload: Map<String, Any?> = emptyMap(),
         auth: JSONObject = JSONObject(),
     ): JSONObject? {
-        val p = peer ?: return null
+        val p = peer
+        PeerLog.debug("NodeConnection",
+            "send $type t=${Thread.currentThread().name} peer=${if (p == null) "null" else "id=" + System.identityHashCode(p)}")
+        if (p == null) return null
         val id = "msg-" + UUID.randomUUID().toString().replace("-", "").take(16)
         val msg = JSONObject()
             .put("message_id", id)

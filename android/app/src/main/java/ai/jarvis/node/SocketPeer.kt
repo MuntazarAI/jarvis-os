@@ -62,7 +62,10 @@ class SocketPeer(
     }
 
     fun start(host: String, port: Int, nodeId: String) {
-        if (!running.compareAndSet(false, true)) return
+        val admitted = running.compareAndSet(false, true)
+        PeerLog.debug("SocketPeer",
+            "start t=${Thread.currentThread().name} admitted=$admitted id=${System.identityHashCode(this)}")
+        if (!admitted) return
         this.host = host
         this.port = port
         this.nodeId = nodeId
@@ -119,8 +122,16 @@ class SocketPeer(
     }
 
     private fun connectLoop() {
+        PeerLog.debug("SocketPeer",
+            "connectLoop enter t=${Thread.currentThread().name} id=${System.identityHashCode(this)}")
         while (running.get()) {
-            onState(ConnState.CONNECTING)
+            try {
+                onState(ConnState.CONNECTING)
+            } catch (e: Exception) {
+                PeerLog.error("SocketPeer",
+                    "onState CONNECTING threw t=${Thread.currentThread().name}: ${e.javaClass.simpleName}: ${e.message}")
+                break
+            }
             try {
                 PeerLog.debug("SocketPeer", "dial $host:$port")
                 val sock = Socket()
@@ -130,7 +141,13 @@ class SocketPeer(
                 socket = sock
                 backoffMs = 1_000L
                 PeerLog.debug("SocketPeer", "connected $host:$port")
-                onState(ConnState.CONNECTED)
+                try {
+                    onState(ConnState.CONNECTED)
+                } catch (e: Exception) {
+                    PeerLog.error("SocketPeer",
+                        "onState CONNECTED threw t=${Thread.currentThread().name}: ${e.javaClass.simpleName}: ${e.message}")
+                    break
+                }
                 readerDone.set(false)
                 readLoop(sock)
                 readerDone.set(true)

@@ -152,4 +152,68 @@ class NodeConnectionTest {
             acceptThread.join(2000)
         }
     }
+
+    @Test
+    fun heartbeatResyncsOnceAfterAuthFailure() {
+        val listener = ServerSocket(0, 1)
+        val accepted = ArrayBlockingQueue<Socket>(1)
+        val acceptThread = Thread {
+            try { accepted.offer(listener.accept(), 5, TimeUnit.SECONDS) } catch (_: Exception) {}
+        }.also { it.isDaemon = true; it.start() }
+
+        val conn = NodeConnection(
+            nodeId = "node-test-9",
+            secret = { "s3cr3t" },
+            dispatchCommand = { _, _ -> mapOf("ok" to true) },
+        )
+        try {
+            conn.connect("127.0.0.1", listener.localPort)
+            val hostSock = accepted.poll(5, TimeUnit.SECONDS)
+                ?: throw AssertionError("fake host never accepted")
+            val host = FakeHost(hostSock)
+            // Responder: mint challenges; fail the first heartbeat with an
+            // explicit auth failure, accept the resynced retry.
+            var challenges = 0
+            var heartbeats = 0
+            val responder = Thread {
+                try {
+                    while (true) {
+                        val req = host.readFrame()
+                        when (req.optString("message_type")) {
+                            "auth_challenge" -> {
+                                challenges++
+                                host.writeFrame(host.replyEnvelope(req, mapOf(
+                                    "ok" to true, "challenge" to "c$challenges")))
+                            }
+                            "heartbeat" -> {
+                                heartbeats++
+                                if (heartbeats == 1) {
+                                    host.writeFrame(host.replyEnvelope(req, mapOf(
+                                        "ok" to false, "auth_failed" to true)))
+                                } else {
+                                    host.writeFrame(host.replyEnvelope(req, mapOf(
+                                        "ok" to true, "lifecycle" to "online")))
+                                }
+                            }
+                            else -> host.writeFrame(host.replyEnvelope(req, mapOf("ok" to false)))
+                        }
+                    }
+                } catch (_: Exception) { /* socket closed at teardown */ }
+            }.also { it.isDaemon = true; it.start() }
+
+            val auth = conn.authHeaders("dev-9")
+                ?: throw AssertionError("no auth headers")
+            val out = conn.heartbeat("dev-9", mapOf("battery_pct" to 80), auth)
+                ?: throw AssertionError("heartbeat gave up instead of resyncing")
+            assertEquals("online", out.optString("lifecycle"))
+            assertEquals(2, challenges)
+            assertEquals(2, heartbeats)
+            hostSock.close()
+            responder.join(2000)
+        } finally {
+            conn.disconnect()
+            listener.close()
+            acceptThread.join(2000)
+        }
+    }
 }
