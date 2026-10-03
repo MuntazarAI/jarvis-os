@@ -101,3 +101,24 @@ in `device-audit.jsonl`.
   churn; lengthen idle allowance for HMAC-bound lanes).
 - No approval notification channel (operator polls `outbox`).
 - Secrets in plain files (documented 3.10 limitation, unchanged).
+
+## Async operator UX (follow-up milestone)
+
+Durable `PolicyEngine` grants (`<home>/policy-grants.json`, opt-in
+file backing, atomic writes, mtime reload, flock-guarded mutations,
+corrupt fails closed) so CLI and serve share grant state; the
+`device` CLI gains noun areas reusing existing flag conventions:
+
+- `device policy list|show|grant|revoke` (`--actor/--permission`)
+- `device grants list|show|grant|revoke`, `device approvals
+  list|show|approve|deny|revoke|watch`, `device commands list|show`,
+  plus bare `device audit` / `device outbox` aliases
+- `approvals list` prints truncated IDs only (full token shown
+  once at creation); `watch` polls boundedly and exits cleanly
+- commands expose derived `display_state`
+  (WAITING_APPROVAL/APPROVED/DELIVERED) without new stored states
+
+Emulator-proven 2026-10-03: grant → command → WAITING_APPROVAL →
+cross-process `approvals list` → approve → serve-tick drain → typed
+battery result → COMPLETED → host restart survives → revoke →
+denied with zero frames to the node → full audit lifecycle.

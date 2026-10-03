@@ -94,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     dev = sub.add_parser("device", help="device endpoints: android node, socket transport")
     dev.add_argument("area", nargs="?", default="android",
                      choices=["android", "transport", "grants", "approvals",
-                              "commands", "policy"])
+                              "commands", "policy", "audit", "outbox"])
     dev.add_argument("action", nargs="?", default="status",
                      choices=["status", "list", "info", "register", "pair",
                               "trust", "revoke", "unpair", "capabilities",
@@ -1843,6 +1843,11 @@ def main(argv: list[str] | None = None) -> int:
             from .device.service import DeviceCommandService
             svc = DeviceCommandService(adapter)
             return _device_area_collection(svc, adapter, jarvis, args, _out)
+
+        if args.area in ("audit", "outbox"):
+            # Bare aliases: `device audit` == `device android audit`, etc.
+            args.action = args.area
+            args.area = "android"
 
         if args.area == "transport":
             from .device.android_transport import (
