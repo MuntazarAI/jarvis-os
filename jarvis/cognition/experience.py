@@ -258,13 +258,16 @@ class OutcomeEvaluator:
         enough_evidence = evidence_count >= 2
         if not enough_evidence:
             reasons.append("fewer than 2 evidence refs")
+        # Learn when anything is resolvable: failures, verified
+        # successes (pattern material), and confirmed predictions.
+        # Skip only when nothing resolved (unknown throughout).
+        resolvable = (predicted_state_occurred is not None
+                      or action_succeeded is not None)
+        if not resolvable:
+            reasons.append("nothing resolved: unknown throughout")
         ambiguous = (predicted_state_occurred is None
                      or action_succeeded is None)
-        should_learn = enough_evidence and (
-            predicted_state_occurred is False
-            or action_succeeded is False
-            or (predicted_state_occurred is True
-                and action_succeeded is True))
+        should_learn = enough_evidence and resolvable
         return OutcomeEvaluation(
             predicted_state_occurred=predicted_state_occurred,
             action_succeeded=action_succeeded,

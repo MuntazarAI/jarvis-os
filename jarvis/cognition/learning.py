@@ -210,6 +210,10 @@ class LearningEngine:
                                           "occurrences", 1))
             belief.provenance["occurrences"] = count + 1
             belief.provenance["last_seen"] = experience.timestamp
+            if experience.experience_id not in belief.evidence_refs:
+                belief.evidence_refs.append(experience.experience_id)
+                belief.evidence_refs = belief.evidence_refs[-20:]
+            belief.revision += 1
             self.beliefs.save()
             if count + 1 >= PATTERN_MIN_OCCURRENCES:
                 report.updates.append(LearningUpdate(

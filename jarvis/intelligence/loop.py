@@ -357,10 +357,17 @@ class IntelligenceLoop:
             conclusion = self.reason(context)
             context["conclusion"] = conclusion
             summary = ""
+            confidence = 0.0
             if isinstance(conclusion, dict):
                 summary = str(conclusion.get("summary",
                                              conclusion.get("decision", "")))[:300]
-            return {"concluded": bool(conclusion), "summary": summary}
+                try:
+                    confidence = max(0.0, min(
+                        1.0, float(conclusion.get("confidence", 0.0))))
+                except (TypeError, ValueError):
+                    confidence = 0.0
+            return {"concluded": bool(conclusion), "summary": summary,
+                    "confidence": confidence}
         if stage == "predict":
             if self.predict is None:
                 return {"prediction": "NO_PREDICTION", "skipped": True}

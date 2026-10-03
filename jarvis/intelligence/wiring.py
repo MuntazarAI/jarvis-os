@@ -400,6 +400,8 @@ def make_meta_reasoner_adapter(reasoner: Any = None):
     """Adapt MetaReasoner.audit() to the loop's reason hook signature."""
     from ..core.types import Confidence
 
+    _NUMERIC = {"high": 0.8, "medium": 0.5, "low": 0.3, "unknown": 0.0}
+
     def reason(context: dict[str, Any]) -> dict[str, Any]:
         normalized = context.get("normalized", {}) or {}
         payload = normalized.get("payload", {}) or {}
@@ -418,8 +420,10 @@ def make_meta_reasoner_adapter(reasoner: Any = None):
             audit = reasoner.audit(text or "no input text", confidence, assumptions)
         except Exception:
             return {"summary": text, "mode": "fallback"}
+        label = str(audit.get("confidence", "unknown"))
         return {"summary": text, "mode": "meta-audit",
-                "confidence": audit.get("confidence"),
+                "confidence": _NUMERIC.get(label, 0.0),
+                "confidence_label": label,
                 "biases": audit.get("detected_biases", []),
                 "decision": text,
                 "memory_count": len(memories),
