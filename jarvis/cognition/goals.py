@@ -145,16 +145,21 @@ class GoalInterpreter:
 
     def decompose(self, goal: Goal,
                   depth: int = 1) -> list[list[str]]:
-        """Goal -> levels of subgoal lists. Bounded depth."""
+        """Goal -> levels of subgoal lists. Bounded depth.
+
+        Level 0 is the goal itself; criteria distribute round-robin
+        across `depth` refinement levels (deeper levels refine the
+        same objectives, never invent new ones).
+        """
         if depth < 1 or depth > MAX_DEPTH:
             raise PlanningError(f"depth must be 1..{MAX_DEPTH}")
-        levels = [[goal.description]]
-        current = list(goal.success_criteria[:MAX_SUBGOALS])
-        for _ in range(depth):
-            if not current:
+        criteria = list(goal.success_criteria[:MAX_SUBGOALS])
+        levels: list[list[str]] = [[goal.description]]
+        for level in range(depth):
+            chunk = criteria[level::depth]
+            if not chunk:
                 break
-            levels.append(current)
-            current = []
+            levels.append(chunk)
         return levels
 
 
