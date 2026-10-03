@@ -30,6 +30,12 @@ from .contract import (
 )
 from .objects import FakeObjects, ObjectPerceptionProvider, UnavailableObjects
 from .ocr import FakeOCR, OCRProvider, TesseractOCR, UnavailableOCR
+from .pipeline import (
+    ChangeDetector,
+    ObservationStore,
+    PerceptionPipeline,
+    summarize_observation,
+)
 from .providers import (
     CameraProvider,
     FileProvider,
@@ -40,6 +46,7 @@ from .providers import (
 
 __all__ = [
     "CameraProvider",
+    "ChangeDetector",
     "DetectedObject",
     "FakeObjects",
     "FakeOCR",
@@ -50,8 +57,10 @@ __all__ = [
     "Modality",
     "ObjectPerceptionProvider",
     "Observation",
+    "ObservationStore",
     "OCRProvider",
     "PerceptionError",
+    "PerceptionPipeline",
     "PerceptionProvider",
     "PrivacyClass",
     "ScreenPayload",
@@ -59,6 +68,7 @@ __all__ = [
     "TesseractOCR",
     "UnavailableOCR",
     "UnavailableObjects",
+    "summarize_observation",
     "validate_confidence",
     "validate_object",
 ]
