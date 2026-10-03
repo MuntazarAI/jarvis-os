@@ -1,9 +1,20 @@
-# Cognitive Loop (4.1)
+# Cognitive Loop (4.1 engine, 4.3 supervision)
 
 `IntelligenceLoop` (`jarvis/intelligence/loop.py`) is the first-class
-bounded cycle: 11 stages (`STAGES`), explicit lifecycle
+bounded cycle: 13 stages (`STAGES` — ingest, normalize, world, recall,
+neural, reason, **predict**, plan, policy, act, **verify**, observe,
+learn), explicit lifecycle
 (`START → RUNNING ⇄ PAUSED → STOPPING → STOPPED`, plus `ERROR` and
 `TIMEOUT`).
+
+`CognitiveSupervisor` (`jarvis/intelligence/cognitive.py`) conducts
+the engine: typed contract objects per stage, a 12-state lifecycle
+(IDLE … COMPLETED/FAILED) with validated transitions, duplicate-event
+suppression (bounded 1000), append-only JSONL cycle store
+(`<home>/cognitive-cycles.jsonl`, secret-scrubbed), sandbox replay
+(no physical actions, ever), and full observability
+(`status`/`inspect`/`failures`, `intelligence cycle|inspect|replay|
+events|failures` CLI).
 
 ## Timeout contract (real, monotonic)
 
@@ -32,6 +43,23 @@ bounded cycle: 11 stages (`STAGES`), explicit lifecycle
 - `pause()`/`resume()`/`stop()` are honored between cycles.
 - Every cycle is timestamped (`cycle_id`, started/ended) and retained in a
   bounded history (`max_history`, default 200).
+
+## Predict / verify stages (4.3)
+
+- `predict` runs after `reason`: with a `PredictionBoard` bound it
+  forecasts evidence-backed trends (confidence capped at 0.5, status
+  unverified — planning input, never authorization); otherwise it
+  honestly reports `NO_PREDICTION`. Uncertainty is never converted
+  to certainty; `NO_DECISION`/`NO_PREDICTION`/`UNKNOWN` are valid.
+- `verify` runs after `act`: a pure result-vs-expectation check
+  (`VERIFIED` / `PARTIALLY_VERIFIED` / `FAILED` / `UNKNOWN`).
+  Approval-waiting results verify as `UNKNOWN` (not failure).
+  No result is ever marked successful merely for being submitted.
+- Device actions (`device.*`) flow through `DeviceCommandService`
+  (grant + policy + single-use approval at delivery); the loop only
+  pre-checks and records, and replays waiting exactly once per cycle.
+- Stage details carry truncated summaries only (no secret values);
+  approval-token patterns are redacted from persisted reasons.
 
 ## Sensory input
 

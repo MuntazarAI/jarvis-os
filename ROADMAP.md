@@ -85,21 +85,21 @@ Memory + World Model update
 ```
 
 ### 4.2 deliverables
-- [ ] Explicit CognitiveLoop orchestration layer
-- [ ] Typed contracts for sensory state, cognitive state, reasoning, plans, actions, observations and memory updates
-- [ ] Real SensoryBus → Working Memory → World Model integration
-- [ ] Real Neural Core → MetaReasoner integration
-- [ ] Real MetaReasoner → Mission Planner integration
-- [ ] PolicyEngine remains the final authority before every external effect
-- [ ] Action → Observation → Memory/World Model feedback loop
-- [ ] Bounded cycle/stage timeouts and cancellation behavior
-- [ ] Deterministic simulation/demo of a complete cognitive cycle
-- [ ] Side-effect-free cognitive replay
-- [ ] Structured cognitive telemetry
-- [ ] End-to-end security regression tests
-- [ ] Cognitive-loop performance benchmark
-- [ ] `jarvis cognitive demo` or equivalent real CLI demonstration
-- [ ] `docs/COGNITIVE_LOOP.md`
+- [x] Explicit CognitiveLoop orchestration layer (CognitiveSupervisor over IntelligenceLoop)
+- [x] Typed contracts for sensory state, cognitive state, reasoning, plans, actions, observations and memory updates
+- [x] Real SensoryBus → Working Memory → World Model integration (supervised via wiring hooks)
+- [x] Real Neural Core → MetaReasoner integration (supervised)
+- [x] Real MetaReasoner → Mission Planner integration (supervised)
+- [x] PolicyEngine remains the final authority before every external effect
+- [x] Action → Observation → Memory/World Model feedback loop (observe/learn + learning record)
+- [x] Bounded cycle/stage timeouts and cancellation behavior
+- [x] Deterministic simulation/demo of a complete cognitive cycle (dry-run + replay)
+- [x] Side-effect-free cognitive replay (sandbox + cycle store)
+- [x] Structured cognitive telemetry (per-stage durations, outcome records)
+- [x] End-to-end security regression tests (25-case battery)
+- [x] Cognitive-loop performance benchmark (1.6 ms supervised CLI cycle)
+- [x] `jarvis cognitive demo` or equivalent real CLI demonstration (`intelligence cycle|inspect|replay|events|failures`)
+- [x] `docs/COGNITIVE_LOOP.md`
 
 ### 4.2 acceptance criteria
 

@@ -17,7 +17,12 @@ def normalize_event(event: Any) -> dict[str, Any]:
     if isinstance(event, SensoryEvent):
         return event.to_dict()
     if isinstance(event, dict):
-        return dict(event)
+        data = dict(event)
+        if "payload" not in data:
+            # Bare attribute dicts (e.g. supervisor event payloads)
+            # nest under payload so downstream hooks find them.
+            return {"payload": data}
+        return data
     return {"raw": str(event)[:1000]}
 
 

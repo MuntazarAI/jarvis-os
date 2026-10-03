@@ -608,3 +608,11 @@ def test_cognitive_loop_parks_approval_then_completes(tmp_path):
     finally:
         env["client"].close()
         env["host"].stop()
+
+
+def test_normalize_nests_bare_dicts_under_payload():
+    from jarvis.intelligence.wiring import normalize_event
+    assert normalize_event({"text": "hi"}) == {"payload": {"text": "hi"}}
+    already = {"payload": {"text": "hi"}, "source": "user"}
+    assert normalize_event(already) == already
+    assert normalize_event("oops") == {"raw": "oops"}

@@ -151,8 +151,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     intel = sub.add_parser("intelligence", help="unified cognitive loop")
     intel.add_argument("action", nargs="?", default="status",
-                       choices=["status", "cycle"])
+                       choices=["status", "cycle", "inspect", "replay",
+                                "events", "failures"])
     intel.add_argument("text", nargs="*", help="input text for cycle")
+    intel.add_argument("--cycle", default="",
+                       help="cycle id for inspect/replay")
     intel.add_argument("--json", action="store_true",
                        help="machine-readable output")
 
@@ -1605,6 +1608,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "intelligence":
         from .intelligence import wiring as intel_wiring
+        from .intelligence.cognitive import CognitiveSupervisor
         from .intelligence.sensory import event_from_user
         from .inference.reasoning import MetaReasoner
         network, encoder, decoder = intel_wiring.default_neural_stack()
@@ -1613,6 +1617,8 @@ def main(argv: list[str] | None = None) -> int:
             palace=jarvis.palace, network=network, encoder=encoder,
             decoder=decoder, reasoner=MetaReasoner(),
             policy=jarvis.policy, tools=jarvis.tools)
+        home = str(jarvis.config.paths.home)
+        supervisor = CognitiveSupervisor(loop, home=home)
         as_json = args.json
 
         def _intel_out(payload: Any, text: str) -> int:
@@ -1625,13 +1631,68 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.action == "cycle":
             text = " ".join(args.text) if args.text else "status check"
-            loop.start()
-            record = loop.cycle_once(event_from_user(text))
-            payload = record.to_dict()
+            outcome = supervisor.process(event_from_user(text))
+            payload = outcome.to_dict()
             return _intel_out(payload,
-                              f"cycle {record.cycle_id}: ok={record.ok} "
-                              f"action={record.action_taken or '-'} "
-                              f"policy={record.policy_allowed}")
+                              f"cycle {outcome.cycle_id}: "
+                              f"state={outcome.state.value} "
+                              f"action={outcome.action.action or '-'} "
+                              f"policy={outcome.policy_allowed}")
+        if args.action == "inspect":
+            if not args.cycle:
+                print("usage: jarvis intelligence inspect --cycle <id>")
+                jarvis.close()
+                return 2
+            found = supervisor.inspect(args.cycle)
+            if found is None:
+                print(f"unknown cycle {args.cycle}")
+                jarvis.close()
+                return 1
+            stages = found.get("stages", [])
+            summary = [(s.get("stage"), s.get("ok")) for s in stages
+                       if isinstance(s, dict)]
+            return _intel_out(found,
+                              f"{found.get('cycle_id')} "
+                              f"ok={found.get('ok', found.get('state'))} "
+                              f"stages={summary}")
+        if args.action == "replay":
+            if not args.cycle:
+                print("usage: jarvis intelligence replay --cycle <id>")
+                jarvis.close()
+                return 2
+            try:
+                outcome = supervisor.replay(args.cycle)
+            except ValueError as exc:
+                print(f"device: {exc}")
+                jarvis.close()
+                return 1
+            payload = outcome.to_dict()
+            return _intel_out(payload,
+                              f"replay {outcome.cycle_id}: "
+                              f"state={outcome.state.value} "
+                              f"replayed={outcome.replayed}")
+        if args.action == "events":
+            found = supervisor.store.read(limit=20)
+            rows = [(c.get("cycle_id", "")[:16],
+                     (c.get("event") or {}).get("type", "?"),
+                     c.get("state", "?")) for c in found]
+            return _intel_out({"cycles": found},
+                              "\n".join(
+                                  f"{cid:18} {typ:16} {state}"
+                                  for cid, typ, state in rows)
+                              or "no cognitive cycles recorded")
+        if args.action == "failures":
+            found = supervisor.failures(limit=20)
+            rows = [(c.get("cycle_id", "")[:16],
+                     str([s.get("stage") for s in c.get("stages", [])
+                          if isinstance(s, dict)
+                          and not s.get("ok", True)]))
+                    for c in found]
+            return _intel_out({"failures": found},
+                              "\n".join(
+                                  f"{cid:18} failed={stages}"
+                                  for cid, stages in rows)
+                              or "no cognitive failures recorded")
         payload = {"loop": loop.status(),
                    "subsystems": {
                        "world": jarvis.world_registry.stats()
