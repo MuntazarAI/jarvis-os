@@ -158,6 +158,7 @@ class VoiceConfig:
     enabled: bool = True
     stt_provider: str = "faster-whisper"
     tts_provider: str = "chatterbox"
+    chatterbox_python: str = ""
     profile: str = "jarvis"
     reference_audio: str = "~/.config/jarvis/voices/male_old_movie.flac"
     language: str = "en"
@@ -266,6 +267,9 @@ class JarvisConfig:
         provider = os.environ.get("JARVIS_VOICE_PROVIDER")
         if provider:
             self.voice.tts_provider = provider
+        cb_python = os.environ.get("JARVIS_CHATTERBOX_PYTHON")
+        if cb_python:
+            self.voice.chatterbox_python = cb_python
 
     def validate(self) -> list[str]:
         errors: list[str] = []

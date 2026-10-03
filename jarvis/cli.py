@@ -340,6 +340,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _make_jarvis(home: str) -> Jarvis:
     config = JarvisConfig()
+    config.apply_env_overrides()
     if home:
         config.paths.home = Path(home)
     return Jarvis(config=config)
@@ -524,6 +525,10 @@ def _voice_action(jarvis: Any, args: Any) -> int:
         provider = provider_for(cfg.tts_provider, cfg.__dict__)
         ref = verify_reference(cfg.reference_audio)
         out = output_for(cfg.playback_backend)
+        tts_health = provider.health()
+        tts_mode = tts_health.get("mode", "")
+        tts_state = ("OK" if provider.available() else "NOT AVAILABLE") + \
+            (f" ({tts_mode})" if tts_mode else "")
         payload = {"enabled": cfg.enabled,
                    "provider": cfg.tts_provider,
                    "profile": cfg.profile,
@@ -540,7 +545,7 @@ def _voice_action(jarvis: Any, args: Any) -> int:
                  f"Profile: {cfg.profile}",
                  f"Reference: {'OK' if ref.get('ok') else 'MISSING'} "
                  f"({cfg.reference_audio})",
-                 f"Chatterbox: {'OK' if provider.available() else 'NOT AVAILABLE'}",
+                 f"Chatterbox: {tts_state}",
                  f"Output: {getattr(out, 'backend', out.name)}",
                  f"STT: faster-whisper (independent of TTS)"]
         return _out(payload, "VOICE\n" + "\n".join(lines))

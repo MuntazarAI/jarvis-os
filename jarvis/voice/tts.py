@@ -223,34 +223,77 @@ class ChatterboxTTSProvider(TTSProvider):
     to FAILED with a clear error — never a crash, never a silent voice
     switch. Only kwargs supported by the installed generate() are
     passed (inspected at runtime), so unknown versions never break.
+
+    Two modes, same abstraction: `direct` (chatterbox importable in
+    this interpreter) or `bridge` (synthesis runs out-of-process under
+    the dedicated interpreter at `python_executable`, e.g.
+    ~/.config/jarvis/chatterbox-venv/bin/python). The bridge never
+    touches system Python and duplicates no implementation.
     """
 
     name = "chatterbox"
 
+    #: Conventional dedicated runtime; used when no explicit path given.
+    DEFAULT_BRIDGE = "~/.config/jarvis/chatterbox-venv/bin/python"
+
+    #: Upper bound for one bridge synthesis (first call includes ~20s
+    #: model load plus slow CPU sampling).
+    BRIDGE_TIMEOUT_S = 1200.0
+
     def __init__(self, model: str = "chatterbox-turbo",
                  reference_audio: str = "",
-                 device: str = "cpu") -> None:
+                 device: str = "cpu",
+                 python_executable: str = "") -> None:
         self.model = model
         self.reference_audio = reference_audio
         self.device = device
+        self.python_executable = python_executable or ""
         self._engine: Any = None
         self._load_error = ""
         self._generate_params: set[str] = set()
 
-    def available(self) -> bool:
+    @staticmethod
+    def _direct_importable() -> bool:
         try:
             import chatterbox  # noqa: F401
             return True
         except ImportError:
             return False
 
+    def bridge_python(self) -> str:
+        """Explicit path, else the conventional venv (never system)."""
+        import os
+        import sys
+        raw = self.python_executable or os.environ.get(
+            "JARVIS_CHATTERBOX_PYTHON", "") or self.DEFAULT_BRIDGE
+        path = Path(os.path.expanduser(raw))
+        if path.exists() and os.access(path, os.X_OK) and str(path) != \
+                sys.executable:
+            return str(path)
+        return ""
+
+    def mode(self) -> str:
+        if self._direct_importable():
+            return "direct"
+        bridge = self.bridge_python()
+        if bridge and _venv_has_chatterbox(bridge):
+            return "bridge"
+        return "unavailable"
+
+    def available(self) -> bool:
+        return self.mode() in ("direct", "bridge")
+
     def _ensure_engine(self) -> bool:
         if self._engine is not None:
             return True
         try:
-            from chatterbox.tts import ChatterboxTTS
-            loader = getattr(ChatterboxTTS, "from_pretrained",
-                             ChatterboxTTS)
+            if "turbo" in str(self.model).lower():
+                from chatterbox.tts_turbo import ChatterboxTurboTTS
+                cls = ChatterboxTurboTTS
+            else:
+                from chatterbox.tts import ChatterboxTTS
+                cls = ChatterboxTTS
+            loader = getattr(cls, "from_pretrained", cls)
             try:
                 self._engine = loader(device=self.device)
             except TypeError:
@@ -272,6 +315,8 @@ class ChatterboxTTSProvider(TTSProvider):
         ref = Path(self.reference_audio).expanduser() \
             if self.reference_audio else None
         return {"provider": self.name, "available": self.available(),
+                "mode": self.mode(),
+                "bridge_python": self.bridge_python(),
                 "model": self.model,
                 "reference_ok": bool(ref and ref.exists()),
                 "reference": str(ref) if ref else "",
@@ -286,13 +331,110 @@ class ChatterboxTTSProvider(TTSProvider):
     def synthesize(self, request: TTSRequest,
                    dest: str | Path | None = None) -> TTSResult:
         started = time.perf_counter()
-        if not self.available():
+        if self._direct_importable():
+            return self._synthesize_direct(request, dest, started)
+        bridge = self.bridge_python()
+        if bridge:
+            return self._synthesize_bridge(request, dest, started,
+                                           bridge)
+        return TTSResult(
+            request_id=request.request_id, provider=self.name,
+            status="failed",
+            error="chatterbox not installed; isolated runtime at "
+                  "~/.config/jarvis/chatterbox-venv (see "
+                  "docs/VOICE_AUDIO_INTELLIGENCE.md)",
+            sample_rate=request.sample_rate)
+
+    def _synthesize_bridge(self, request: TTSRequest,
+                           dest: str | Path | None, started: float,
+                           bridge: str) -> TTSResult:
+        import json as _json
+        import subprocess as _subprocess
+        import tempfile as _tempfile
+        ref = request.reference_audio or self.reference_audio
+        if not ref or not Path(ref).expanduser().exists():
             return TTSResult(
                 request_id=request.request_id, provider=self.name,
                 status="failed",
-                error="chatterbox not installed; run: pip install "
-                      "chatterbox-tts (once), then inference is local",
+                error="reference voice missing; run: "
+                      "jarvis voice setup",
                 sample_rate=request.sample_rate)
+        out = Path(dest) if dest is not None else Path(
+            _tempfile.mkdtemp(prefix="jarvis-tts-")) / \
+            f"{request.request_id}.wav"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"request_id": request.request_id,
+                   "text": request.text,
+                   "model": self.model,
+                   "reference_audio": str(Path(ref).expanduser()),
+                   "language": request.language,
+                   "exaggeration": request.exaggeration,
+                   "temperature": request.temperature,
+                   "cfg_weight": request.cfg_weight,
+                   "device": self.device}
+        helper = Path(__file__).resolve().parent / \
+            "chatterbox_bridge.py"
+        try:
+            with _tempfile.NamedTemporaryFile(
+                    suffix=".json", delete=False) as tmp:
+                tmp.write(_json.dumps(payload).encode("utf-8"))
+                req_path = tmp.name
+            proc = _subprocess.run(
+                [bridge, str(helper), req_path, str(out)],
+                capture_output=True, text=True,
+                timeout=self.BRIDGE_TIMEOUT_S)
+            try:
+                Path(req_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+            lines = (proc.stdout or "").strip().splitlines()
+            data = _json.loads(lines[-1]) if lines else {}
+            if proc.returncode not in (0,) or \
+                    data.get("status") != "success":
+                return TTSResult(
+                    request_id=request.request_id, provider=self.name,
+                    status="failed",
+                    error=str(data.get("error") or
+                              (proc.stderr or "bridge failed")[-200:]),
+                    sample_rate=request.sample_rate,
+                    latency_ms=round(
+                        (time.perf_counter() - started) * 1000, 2))
+            keep = dest is not None
+            if not keep:
+                # Transient by default; caller got no path, drop bytes.
+                pass
+            result = TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="success",
+                audio_path=str(out) if keep else "",
+                audio_bytes=int(data.get("audio_bytes", 0)),
+                duration_s=float(data.get("duration_s", 0.0)),
+                sample_rate=int(data.get("sample_rate",
+                                         request.sample_rate)),
+                latency_ms=float(data.get(
+                    "latency_ms", round(
+                        (time.perf_counter() - started) * 1000, 2))),
+                metadata={"model": self.model, "local": True,
+                          "mode": "bridge"})
+            if not keep:
+                try:
+                    out.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return result
+        except (_subprocess.TimeoutExpired, OSError,
+                ValueError) as exc:
+            return TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="failed",
+                error=f"{type(exc).__name__}: {exc}"[:300],
+                sample_rate=request.sample_rate,
+                latency_ms=round(
+                    (time.perf_counter() - started) * 1000, 2))
+
+    def _synthesize_direct(self, request: TTSRequest,
+                           dest: str | Path | None,
+                           started: float) -> TTSResult:
         ref = request.reference_audio or self.reference_audio
         if not ref or not Path(ref).expanduser().exists():
             return TTSResult(
@@ -369,6 +511,21 @@ class ChatterboxTTSProvider(TTSProvider):
                     (time.perf_counter() - started) * 1000, 2))
 
 
+def _venv_has_chatterbox(python_exe: str) -> bool:
+    """Fast presence check: chatterbox package dir in the venv's
+    site-packages. Importability is verified for real at synthesis."""
+    try:
+        # No resolve(): bin/python is a symlink to the base interpreter;
+        # resolving would escape the venv.
+        base = Path(python_exe).parent.parent
+        for site in base.glob("lib/python*/site-packages"):
+            if (site / "chatterbox" / "__init__.py").exists():
+                return True
+        return False
+    except OSError:
+        return False
+
+
 def provider_for(name: str, config: Any = None) -> TTSProvider:
     """Resolve a provider by name with graceful fallback to unavailable."""
     cfg = config or {}
@@ -381,7 +538,8 @@ def provider_for(name: str, config: Any = None) -> TTSProvider:
     if name == "chatterbox":
         return ChatterboxTTSProvider(
             model=str(get("model", "chatterbox-turbo")),
-            reference_audio=str(get("reference_audio", "")))
+            reference_audio=str(get("reference_audio", "")),
+            python_executable=str(get("chatterbox_python", "")))
     return UnavailableTTSProvider(f"unknown TTS provider: {name}")
 
 

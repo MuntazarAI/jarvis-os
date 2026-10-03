@@ -30,7 +30,8 @@ def resolve_tts(config: Any = None, provider_name: str = ""):
     if name == "chatterbox":
         return ChatterboxTTSProvider(
             model=str(get("model", "chatterbox-turbo")),
-            reference_audio=str(get("reference_audio", "")))
+            reference_audio=str(get("reference_audio", "")),
+            python_executable=str(get("chatterbox_python", "")))
     if name in ("local-fallback", "espeak", "piper"):
         return LocalFallbackTTSProvider()
     from .tts import UnavailableTTSProvider

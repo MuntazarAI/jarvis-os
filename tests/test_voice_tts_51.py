@@ -342,7 +342,12 @@ def test_cli_voice_commands(tmp_path):
 def test_cli_say_text_only_survives(tmp_path):
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
-    proc = _cli(home, "say", "Hello")
+    import os as _os
+    env = dict(_os.environ, JARVIS_VOICE_PROVIDER="fake")
+    proc = subprocess.run(
+        [_sys.executable, "-m", "jarvis.cli", "--home", str(home),
+         "say", "Hello"], capture_output=True, text=True, timeout=120,
+        env=env)
     assert proc.returncode in (0, 1)  # ok via fallback or honest fail
     assert "Hello" in proc.stdout
 
@@ -414,8 +419,61 @@ def test_e2e_fake_voice_loop(tmp_path):
     assert spoken["response_text"] == "Opening project."
 
 
+def test_bridge_presence_check(tmp_path):
+    import os as _os
+    import stat as _stat
+    from jarvis.voice.tts import _venv_has_chatterbox
+    fake = tmp_path / "cb-venv"
+    (fake / "bin").mkdir(parents=True)
+    exe = fake / "bin" / "python"
+    exe.write_text("#!/bin/sh\n")
+    _os.chmod(exe, _os.stat(exe).st_mode | _stat.S_IXUSR)
+    assert _venv_has_chatterbox(str(exe)) is False
+    site = fake / "lib" / "python3.12" / "site-packages" / "chatterbox"
+    site.mkdir(parents=True)
+    (site / "__init__.py").write_text("")
+    assert _venv_has_chatterbox(str(exe)) is True
+    assert _venv_has_chatterbox(str(tmp_path / "nope")) is False
+
+
+def test_bridge_mode_reported(tmp_path):
+    provider = ChatterboxTTSProvider(
+        reference_audio=str(tmp_path / "missing.flac"),
+        python_executable=str(tmp_path / "no-python"))
+    assert provider.mode() == "unavailable"
+    assert provider.health()["mode"] == "unavailable"
+    assert provider.bridge_python() == ""
+
+
+def test_bridge_missing_reference_fails_fast(tmp_path):
+    import os as _os
+    import stat as _stat
+    fake = tmp_path / "cb-venv"
+    (fake / "bin").mkdir(parents=True)
+    exe = fake / "bin" / "python"
+    exe.write_text("#!/bin/sh\n")
+    _os.chmod(exe, _os.stat(exe).st_mode | _stat.S_IXUSR)
+    site = fake / "lib" / "python3.12" / "site-packages" / "chatterbox"
+    site.mkdir(parents=True)
+    (site / "__init__.py").write_text("")
+    provider = ChatterboxTTSProvider(
+        reference_audio=str(tmp_path / "missing.flac"),
+        python_executable=str(exe))
+    assert provider.mode() == "bridge"
+    out = provider.synthesize(TTSRequest(text="hi"))
+    assert not out.ok and "reference" in out.error.lower()
+
+
 def test_chatterbox_integration_if_available(tmp_path):
-    """Real synthesis when the local runtime exists; else NOT AVAILABLE."""
+    """Real synthesis when the local runtime exists; else NOT AVAILABLE.
+
+    Explicit opt-in only (JARVIS_REAL_TTS=1): real synthesis needs
+    ~100s CPU + model weights, so the default suite stays fast and
+    deterministic everywhere.
+    """
+    import os as _os
+    if _os.environ.get("JARVIS_REAL_TTS") != "1":
+        pytest.skip("real TTS synthesis needs JARVIS_REAL_TTS=1")
     provider = ChatterboxTTSProvider(
         reference_audio=str(tmp_path / "missing.flac"))
     if not provider.available():

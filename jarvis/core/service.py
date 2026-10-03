@@ -29,6 +29,22 @@ class HealthCheck:
                 "required": self.required}
 
 
+def _voice_model_detail() -> str:
+    """Weights cached in the HF hub → ready for lazy load; else not."""
+    hub = Path.home() / ".cache" / "huggingface" / "hub"
+    cached = [p for p in hub.glob("models--ResembleAI--chatterbox*")
+              if p.is_dir()]
+    if cached:
+        try:
+            size = sum(f.stat().st_size for f in cached[0].rglob("*")
+                       if f.is_file())
+            return (f"weights cached (~{size // 1024 // 1024}MiB, "
+                    "lazy-load on synthesis)")
+        except OSError:
+            return "weights cached (lazy-load on synthesis)"
+    return "NOT TESTED (lazy-load on first synthesis; see voice benchmark)"
+
+
 def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
     """Automatic dependency + hardware + model checks."""
     import shutil
@@ -179,6 +195,11 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
             else ""
         ref = verify_reference(ref_path) if ref_path else {
             "ok": False, "error": "unconfigured"}
+        try:
+            cb_health = provider.health()
+        except Exception:
+            cb_health = {}
+        cb_mode = str(cb_health.get("mode", ""))
         out = output_for(getattr(voice, "playback_backend", "auto")
                          if voice else "auto")
         try:
@@ -209,12 +230,16 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
             required=False))
         checks.append(HealthCheck(
             "voice:chatterbox", provider.available(),
-            "import ok" if provider.available()
-            else "NOT AVAILABLE (pip install chatterbox-tts once; local after)",
+            f"{cb_mode or 'missing'}: "
+            + ("import ok" if cb_mode == "direct"
+               else "bridge via ~/.config/jarvis/chatterbox-venv"
+               if cb_mode == "bridge"
+               else "NOT AVAILABLE (isolated venv missing; see "
+                    "docs/VOICE_AUDIO_INTELLIGENCE.md)"),
             required=False))
         checks.append(HealthCheck(
             "voice:model", True,
-            "NOT TESTED (lazy-load on first synthesis; see voice benchmark)",
+            _voice_model_detail(),
             required=False))
         checks.append(HealthCheck(
             "voice:microphone", mic_ok,
