@@ -4,10 +4,10 @@ This roadmap tracks the engineering direction of JARVIS OS. The project prioriti
 
 ## Current state
 
-- **Main:** stable foundation through the 4.0/4.1 intelligence work and subsequent hardening work as those changes are merged.
-- **Primary next milestone:** **4.2 — End-to-End Cognitive Loop**
-- **Android 3.10:** parked in `feature/android-transport-3-10` and tracked by Issue #31 until its real-device E2E work is resumed.
-- **Raspberry Pi:** planned next device-node milestone after the cognitive loop and Android transport are sufficiently mature.
+- **Main:** stable through 4.2 Persistent Device Intelligence; PR #38 is merged and main is green.
+- **Primary next milestone:** **4.2 follow-up — Async Operator Command UX** (persistent policy grants + approval notification flow).
+- **Android 3.10:** complete and emulator-proven; PR #37 merged. Issue #31 is now obsolete.
+- **Raspberry Pi:** planned after the cognitive loop and operator UX are mature.
 
 ## Completed / substantially built
 
@@ -47,10 +47,11 @@ This roadmap tracks the engineering direction of JARVIS OS. The project prioriti
 - [x] Persistent device intelligence: durable grants, durable approvals,
   durable command outbox + drainer, DeviceCommandService, operator CLI,
   audit log (4.2 device track, emulator-proven end to end)
-- [ ] Async operator command UX (persistent policy grants, approval
-  notification flow) — mechanism proven, operator ergonomics follow
+- [ ] Async operator command UX: persistent policy grants + approval notification flow — mechanism proven in 4.2, operator ergonomics next
 
 ## 4.2 — End-to-End Cognitive Loop
+
+> **Sequencing note:** the durable device-control track is complete enough for the next operator UX layer. The cognitive-loop work remains the next major intelligence milestone after that UX hardening.
 
 **Goal:** make the intelligence already built operate as one coherent, testable loop.
 
@@ -134,26 +135,18 @@ After 4.2 is proven:
 
 ## 3.10 — Android real-device transport
 
-This work remains intentionally parked while the cognitive loop is stabilized.
+**Complete.** PR #37 is merged and the real APK ↔ host lifecycle was proven on emulator-5554.
 
-Tracked by **Issue #31**.
+Verified:
+- [x] Pairing and explicit trust
+- [x] Secret/key exchange and HMAC authentication
+- [x] Heartbeat and presence
+- [x] Typed host commands/results
+- [x] Reconnect/auth resync behavior
+- [x] Lane binding and fail-closed authorization
+- [x] Android CI and Kotlin tests
 
-Remaining work:
-
-- [ ] Rebase transport against current main
-- [ ] Complete APK ↔ host pairing
-- [ ] Verify explicit trust approval
-- [ ] Verify secret/key exchange
-- [ ] Verify authenticated transport
-- [ ] Verify heartbeat
-- [ ] Verify events/results
-- [ ] Verify host-issued typed commands
-- [ ] Verify reconnect behavior
-- [ ] Verify offline queue behavior
-- [ ] Resolve foreground-service lifecycle issues
-- [ ] Decide whether TLS/mTLS is required before use beyond a trusted LAN/tunnel
-- [ ] Complete real emulator/device E2E tests
-- [ ] Merge only after focused and full verification
+Known limits remain documented: trusted-LAN transport without TLS, plain-prefs secret storage, and idle reconnect churn.
 
 ## 5.x — Raspberry Pi device node
 
@@ -253,14 +246,13 @@ Target architecture:
 
 The project should follow this order unless new evidence justifies a change:
 
-1. **Merge and verify 4.1 intelligence work**
-2. **Merge and verify foundation hardening**
-3. **Build and prove 4.2 Cognitive Loop**
-4. **Resume Android 3.10 and finish real-device E2E**
-5. **Build the Raspberry Pi node**
-6. **Expand multimodal perception**
-7. **Deepen memory/world-model/autonomous mission capabilities**
-8. **Scale neural/connectome-inspired research only when benchmarks justify it**
+1. **Complete the 4.2 Async Operator Command UX**
+2. **Build and prove the 4.2 Cognitive Loop end to end**
+3. **Build the Raspberry Pi device node**
+4. **Expand multimodal perception**
+5. **Deepen memory/world-model/autonomous mission capabilities**
+6. **Harden distributed-device security for broader-than-LAN use**
+7. **Scale neural/connectome-inspired research only when benchmarks justify it**
 
 ## Engineering principles
 
