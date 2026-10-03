@@ -350,7 +350,8 @@ def test_full_stack_wiring_uses_neural_and_meta_reasoner():
     stages = {s.stage: s for s in record.stages}
     assert record.ok
     assert stages["neural"].ok and stages["neural"].detail.get("signals") is not None
-    assert stages["reason"].detail == {"concluded": True}
+    assert stages["reason"].detail["concluded"] is True
+    assert stages["reason"].detail["summary"] == "definitely urgent"
     reason_stage = next(s for s in record.stages if s.stage == "reason")
     assert reason_stage.ok
 

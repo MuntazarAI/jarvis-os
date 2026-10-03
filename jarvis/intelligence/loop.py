@@ -1,8 +1,9 @@
 """IntelligenceLoop: the bounded cognitive cycle for JARVIS.
 
 One cycle: ingest -> normalize -> world update -> recall -> neural ->
-reason -> plan -> policy -> act -> observe -> learn. Every stage is typed,
-traced, failure-isolated, and policy-gated at the action boundary.
+reason -> predict -> plan -> policy -> act -> verify -> observe -> learn.
+Every stage is typed, traced, failure-isolated, and policy-gated at the
+action boundary.
 
 The loop NEVER runs unbounded autonomy: max_cycles bounds every run(),
 each cycle has a timeout, and externally meaningful actions pass the
@@ -11,11 +12,25 @@ caller's PolicyEngine before execution.
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Mapping
+
+
+_TOKEN_RE = re.compile(r"\bap(?:pr|d)-[0-9a-f]{8,}\b")
+
+
+def scrub_token_strings(text: str) -> str:
+    """Redact in-memory/durable approval tokens from free text.
+
+    Cycle records persist to disk; approval tokens (``appr-``/``apd-`` +
+    hex) must never land in them. Fixed formats keep this precise —
+    ordinary prose never matches.
+    """
+    return _TOKEN_RE.sub("[approval redacted]", str(text))
 
 
 class LoopState(str, Enum):
@@ -30,7 +45,8 @@ class LoopState(str, Enum):
 
 STAGES = (
     "ingest", "normalize", "world", "recall", "neural",
-    "reason", "plan", "policy", "act", "observe", "learn",
+    "reason", "predict", "plan", "policy", "act", "verify",
+    "observe", "learn",
 )
 
 
@@ -97,9 +113,11 @@ class IntelligenceLoop:
         recall: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
         neural_step: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         reason: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        predict: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         plan: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         policy_check: Callable[[str, Mapping[str, Any]], tuple[bool, str]] | None = None,
         executor: ActionExecutor | None = None,
+        verify: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         observe: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         learn: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         max_history: int = 200,
@@ -112,9 +130,11 @@ class IntelligenceLoop:
         self.recall = recall
         self.neural_step = neural_step
         self.reason = reason
+        self.predict = predict
         self.plan = plan
         self.policy_check = policy_check
         self.executor = executor
+        self.verify = verify
         self.observe = observe
         self.learn = learn
         self.state = LoopState.START
@@ -170,9 +190,11 @@ class IntelligenceLoop:
             recall=_recall_stub,
             neural_step=self.neural_step,
             reason=self.reason,
+            predict=_stub,
             plan=self.plan,
             policy_check=None,
             executor=None,
+            verify=_stub,
             observe=_stub,
             learn=_stub,
             max_history=self.max_history,
@@ -334,13 +356,32 @@ class IntelligenceLoop:
                 return {"skipped": True}
             conclusion = self.reason(context)
             context["conclusion"] = conclusion
-            return {"concluded": bool(conclusion)}
+            summary = ""
+            if isinstance(conclusion, dict):
+                summary = str(conclusion.get("summary",
+                                             conclusion.get("decision", "")))[:300]
+            return {"concluded": bool(conclusion), "summary": summary}
+        if stage == "predict":
+            if self.predict is None:
+                return {"prediction": "NO_PREDICTION", "skipped": True}
+            prediction = self.predict(context)
+            context["prediction"] = prediction
+            made = bool(prediction) and prediction.get("prediction") \
+                != "NO_PREDICTION"
+            return {"predicted": made,
+                    "prediction": str(prediction.get("prediction", ""))[:300],
+                    "confidence": prediction.get("confidence"),
+                    "basis": list(prediction.get("basis", []) or [])[:5]}
         if stage == "plan":
             if self.plan is None:
                 return {"skipped": True}
             action = self.plan(context)
             context["action"] = action
-            return {"action": str(action.get("action", ""))[:120]}
+            args = action.get("args", {})
+            # Keys only: values may carry secrets and records persist.
+            return {"action": str(action.get("action", ""))[:120],
+                    "args_keys": sorted(map(str, args.keys()))[:12]
+                    if isinstance(args, dict) else []}
         if stage == "policy":
             action = context.get("action") or {}
             name = str(action.get("action", ""))
@@ -351,9 +392,12 @@ class IntelligenceLoop:
                 context["policy_allowed"] = False
                 return {"allowed": False, "reason": "no policy bound"}
             allowed, reason = self.policy_check(name, action.get("args", {}))
-            context["policy"] = {"allowed": bool(allowed), "reason": reason[:300]}
+            context["policy"] = {"allowed": bool(allowed),
+                                 "reason": scrub_token_strings(reason)[:300]}
             record_stage = self._current_record_policy(context, bool(allowed))
-            return {"allowed": bool(allowed), "reason": reason[:300], **record_stage}
+            return {"allowed": bool(allowed),
+                    "reason": scrub_token_strings(reason)[:300],
+                    **record_stage}
         if stage == "act":
             if self.dry_run:
                 # Defense in depth: dry-run loops are constructed without an
@@ -368,7 +412,29 @@ class IntelligenceLoop:
             action = context.get("action") or {}
             result = self.executor(str(action.get("action", "")), action.get("args", {}))
             context["result"] = result
-            return {"ok": bool(result.get("ok", True))}
+            output = ""
+            waiting = False
+            approval_ref = ""
+            command_ref = ""
+            if isinstance(result, dict):
+                output = str(result.get("output", result.get("result", "")))[:300]
+                waiting = bool(result.get("waiting_approval", False))
+                # Truncated refs only: full ids live in the outbox store.
+                approval_ref = str(result.get("approval_id", ""))[:12]
+                command_ref = str(result.get("command_id", ""))[:24]
+            return {"ok": bool(result.get("ok", True)) if isinstance(
+                result, dict) else bool(result), "output": output,
+                "waiting_approval": waiting, "approval_ref": approval_ref,
+                "command_ref": command_ref}
+        if stage == "verify":
+            action = context.get("action") or {}
+            if not str(action.get("action", "")):
+                return {"skipped": "no action taken"}
+            if self.verify is None:
+                return {"verdict": "UNKNOWN", "skipped": True}
+            verdict = self.verify(context)
+            context["verification"] = verdict
+            return {"verdict": str(verdict.get("verdict", "UNKNOWN"))[:32]}
         if stage == "observe":
             if self.observe is None:
                 return {"skipped": True}
@@ -379,7 +445,10 @@ class IntelligenceLoop:
             if self.learn is None:
                 return {"skipped": True}
             update = self.learn(context)
-            return {"learned": bool(update)}
+            memory_id = ""
+            if isinstance(update, dict):
+                memory_id = str(update.get("memory_id", ""))[:64]
+            return {"learned": bool(update), "memory_id": memory_id}
         raise ValueError(f"unknown stage: {stage}")
 
     @staticmethod
