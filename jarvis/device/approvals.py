@@ -315,6 +315,37 @@ class ApprovalStore:
             return None
         return {k: v for k, v in record.items()}
 
+    def list(self, state: str | None = None,
+             limit: int = 100) -> list[dict[str, Any]]:
+        """Operator-safe listing: tokens and secrets are never included.
+
+        Returns newest-first summaries with id, device, capability,
+        actor, state, timestamps — everything an operator needs except
+        the token itself (passed separately via --approval).
+        """
+        self._maybe_reload()
+        self.prune()
+        records = sorted(self._tokens.values(),
+                         key=lambda r: float(r.get("created_at") or 0.0),
+                         reverse=True)
+        out: list[dict[str, Any]] = []
+        for record in records:
+            if state is not None and record.get("state") != state:
+                continue
+            out.append({
+                "approval_id": str(record.get("token", ""))[:12] + "…",
+                "device_id": str(record.get("device_id", "")),
+                "capability": str(record.get("capability", "")),
+                "actor": str(record.get("actor", "")),
+                "state": str(record.get("state", "")),
+                "created_at": float(record.get("created_at") or 0.0),
+                "expires_at": float(record.get("expires_at") or 0.0),
+                "reason": str(record.get("reason", ""))[:120],
+            })
+            if len(out) >= max(1, limit):
+                break
+        return out
+
     def prune(self) -> int:
         """Mark expired PENDING records EXPIRED. Returns count changed."""
         self._maybe_reload()
@@ -324,6 +355,10 @@ class ApprovalStore:
             if record.get("state") == PENDING and self._expired(record, stamp):
                 self._mark_expired(record)
                 changed += 1
+                self.audit.record("device.approval.expired", actor="",
+                                  device_id=str(record.get("device_id", "")),
+                                  ok=False, reasons=["ttl exceeded"],
+                                  extra={"approval_id": str(record.get("token", ""))})
         if changed:
             self.save()
         return changed

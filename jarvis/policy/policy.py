@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from ..core.config import JarvisConfig
 from ..core.types import ActionPlan, RiskLevel, now
+
+POLICY_GRANTS_FILENAME = "policy-grants.json"
 
 
 @dataclass
@@ -130,26 +135,191 @@ class RiskEngine:
 class PolicyEngine:
     """Permission policies, privacy boundaries, approval workflow, audit."""
 
-    def __init__(self, config: JarvisConfig | None = None) -> None:
+class PolicyEngine:
+    """Permission policies, privacy boundaries, approval workflow, audit."""
+
+    def __init__(self, config: JarvisConfig | None = None, *,
+                 grant_store_path: str | Path | None = None) -> None:
         self.config = config or JarvisConfig()
         self.risk = RiskEngine(self.config)
         self.grants: dict[str, set[str]] = {}
         self.approvals: dict[str, dict[str, Any]] = {}
         self.audit: list[dict[str, Any]] = []
+        # Optional durable backing for grants (<home>/policy-grants.json).
+        # Unset (tests, ephemeral use) means pure memory: zero behavior
+        # change. Set means: load on init, save on mutation, mtime-gated
+        # reload on reads — CLI and serve observe the same state.
+        self.grant_store_path = Path(grant_store_path) \
+            if grant_store_path else None
+        self._grants_mtime: float = 0.0
+        self._grants_error: str = ""
+        if self.grant_store_path is not None:
+            self._load_grants()
 
     # -- permissions -----------------------------------------------------
     def grant(self, actor: str, permission: str) -> None:
-        self.grants.setdefault(actor, set()).add(permission)
+        with self._grant_mutation():
+            self.grants.setdefault(actor, set()).add(permission)
 
     def revoke(self, actor: str, permission: str) -> None:
-        self.grants.get(actor, set()).discard(permission)
+        with self._grant_mutation():
+            self.grants.get(actor, set()).discard(permission)
+
+    def list_grants(self, actor: str | None = None) -> dict[str, list[str]]:
+        """Actor -> sorted permissions (all actors when actor is None)."""
+        self._maybe_reload_grants()
+        if actor is not None:
+            return {actor: sorted(self.grants.get(actor, set()))}
+        return {name: sorted(perms) for name, perms in self.grants.items()}
+
+    def get_grant(self, actor: str) -> list[str]:
+        """Sorted permissions held by one actor (empty when none)."""
+        self._maybe_reload_grants()
+        return sorted(self.grants.get(actor, set()))
+
+    def is_granted(self, actor: str, permission: str) -> bool:
+        """Durable-aware single permission check. Fail closed on error."""
+        self._maybe_reload_grants()
+        if self._grants_error:
+            return False
+        held = self.grants.get(actor, set())
+        return "*" in held or permission in held
 
     def permitted(self, actor: str, required: list[str]) -> tuple[bool, list[str]]:
+        self._maybe_reload_grants()
+        if self._grants_error:
+            return False, ["policy grant store unreadable (fail closed)"]
         held = self.grants.get(actor, set())
         if "*" in held:
             return True, []
         missing = [p for p in required if p not in held]
         return (not missing), missing
+
+    # -- durable grant backing ----------------------------------------------
+    def _grant_lock_path(self) -> Path | None:
+        if self.grant_store_path is None:
+            return None
+        return self.grant_store_path.with_name(
+            self.grant_store_path.name + ".lock")
+
+    @staticmethod
+    def _flock_best_effort(path: Path):
+        """Cross-process exclusive lock; degrades gracefully."""
+        import contextlib
+
+        @contextlib.contextmanager
+        def locked():
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
+            try:
+                import fcntl
+            except ImportError:
+                yield
+                return
+            try:
+                with open(path, "a+b") as handle:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                    try:
+                        yield
+                    finally:
+                        try:
+                            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                        except OSError:
+                            pass
+            except OSError:
+                yield
+        return locked()
+
+    def _grant_mutation(self):
+        """Lock, reload, mutate (caller), persist. Cross-process atomic."""
+        import contextlib
+
+        @contextlib.contextmanager
+        def mutate():
+            lock = self._grant_lock_path()
+            if lock is None:
+                yield
+                return
+            with self._flock_best_effort(lock):
+                self._load_grants()
+                yield
+                self._save_grants()
+        return mutate()
+
+    def _load_grants(self) -> int:
+        """Replace memory with disk state (revokes propagate)."""
+        path = self.grant_store_path
+        self._loaded_grants_ok(path)
+        if path is None or not path.exists():
+            return 0
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            self._grants_error = f"{type(exc).__name__}: {exc}"[:160]
+            return 0
+        if not isinstance(raw, dict):
+            self._grants_error = "ValueError: grant store root is not an object"
+            return 0
+        fresh: dict[str, set[str]] = {}
+        loaded = 0
+        for actor, perms in (raw.get("grants") or {}).items():
+            if not isinstance(actor, str) or not isinstance(perms, list):
+                continue
+            clean = {str(p) for p in perms if isinstance(p, str) and p}
+            if clean:
+                fresh[actor] = clean
+                loaded += len(clean)
+        self.grants = fresh
+        self._grants_error = ""
+        return loaded
+
+    def _loaded_grants_ok(self, path: Path | None) -> None:
+        if path is None:
+            return
+        try:
+            self._grants_mtime = path.stat().st_mtime
+        except OSError:
+            self._grants_mtime = 0.0
+
+    def _maybe_reload_grants(self) -> None:
+        path = self.grant_store_path
+        if path is None:
+            return
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return
+        if mtime != self._grants_mtime:
+            self._load_grants()
+
+    def _save_grants(self) -> None:
+        path = self.grant_store_path
+        if path is None:
+            return
+        payload = {"version": 1,
+                   "grants": {actor: sorted(perms)
+                              for actor, perms in self.grants.items()}}
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(prefix=".policy-grants-",
+                                       dir=str(path.parent))
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(payload, handle, indent=2, sort_keys=True)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp, path)
+            finally:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+            try:
+                self._grants_mtime = path.stat().st_mtime
+            except OSError:
+                pass
+        except OSError:
+            pass
 
     # -- evaluation ------------------------------------------------------
     def evaluate(self, actor: str, plan: ActionPlan) -> PolicyDecision:

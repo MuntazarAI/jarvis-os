@@ -47,7 +47,7 @@ This roadmap tracks the engineering direction of JARVIS OS. The project prioriti
 - [x] Persistent device intelligence: durable grants, durable approvals,
   durable command outbox + drainer, DeviceCommandService, operator CLI,
   audit log (4.2 device track, emulator-proven end to end)
-- [ ] Async operator command UX: persistent policy grants + approval notification flow — mechanism proven in 4.2, operator ergonomics next
+- [x] Async operator command UX: persistent policy grants + approval notification flow — mechanism proven in 4.2, operator ergonomics next
 
 ## 4.2 — End-to-End Cognitive Loop
 

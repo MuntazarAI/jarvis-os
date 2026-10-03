@@ -118,7 +118,12 @@ class Jarvis:
         self.proactive.set_notifier(self.notifier)
         self.models = default_models(self.config)
         self.router = ModelRouter(self.models, self.config)
-        self.policy = PolicyEngine(self.config)
+        from ..policy.policy import POLICY_GRANTS_FILENAME
+        self.policy = PolicyEngine(
+            self.config,
+            grant_store_path=str(
+                self.config.paths.resolve("home")
+                / POLICY_GRANTS_FILENAME))
         self.tools: ToolRegistry = default_tools()
         try:
             from ..computer.computer import ComputerController, computer_tools
