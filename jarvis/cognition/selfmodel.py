@@ -61,8 +61,21 @@ class CapabilityModel:
                 "CAMERA", CapabilityState.AVAILABLE,
                 detail="v4l2 where /dev/video* exists"),
             "AUDIO_STT": Capability(
-                "AUDIO_STT", CapabilityState.UNAVAILABLE,
-                detail="faster-whisper optional dep not wired to loop"),
+                "AUDIO_STT", CapabilityState.DEGRADED,
+                detail="adapter wired; faster-whisper runtime broken "
+                       "by PyAV incompatibility (graceful FAILED)"),
+            "AUDIO_CAPTURE": Capability(
+                "AUDIO_CAPTURE", CapabilityState.AVAILABLE,
+                detail="arecord where installed; mic presence probed"),
+            "AUDIO_VAD": Capability(
+                "AUDIO_VAD", CapabilityState.AVAILABLE,
+                detail="energy VAD, stdlib only"),
+            "MICROPHONE": Capability(
+                "MICROPHONE", CapabilityState.UNAVAILABLE,
+                detail="probed at check time, never assumed"),
+            "PHYSICAL_PI_AUDIO": Capability(
+                "PHYSICAL_PI_AUDIO", CapabilityState.NOT_PRODUCTION_READY,
+                detail="no Pi audio hardware validated"),
             "ANDROID_COMMAND": Capability(
                 "ANDROID_COMMAND", CapabilityState.AVAILABLE,
                 detail="paired trusted lanes via DeviceCommandService"),
@@ -94,8 +107,48 @@ class CapabilityModel:
                 self._static[name] = capability
             except Exception:
                 pass
+        if name == "MICROPHONE":
+            capability = self._probe_microphone()
+            self._static[name] = capability
+        if name == "AUDIO_CAPTURE":
+            capability = self._probe_capture()
+            self._static[name] = capability
         capability.checked_at = time.time()
         return capability
+
+    @staticmethod
+    def _probe_microphone() -> Capability:
+        """arecord device list. No recording, just presence."""
+        import shutil
+        import subprocess
+        if shutil.which("arecord") is None:
+            return Capability("MICROPHONE", CapabilityState.UNAVAILABLE,
+                              detail="arecord not installed")
+        try:
+            proc = subprocess.run(
+                ["arecord", "-l"], capture_output=True, text=True,
+                timeout=10)
+        except (subprocess.TimeoutExpired, OSError):
+            return Capability("MICROPHONE", CapabilityState.UNAVAILABLE,
+                              detail="arecord probe failed")
+        cards = [line.strip()[:80] for line in
+                 (proc.stdout or "").splitlines()
+                 if line.strip().startswith("card ")]
+        if not cards:
+            return Capability("MICROPHONE", CapabilityState.UNAVAILABLE,
+                              detail="no capture hardware listed")
+        return Capability("MICROPHONE", CapabilityState.AVAILABLE,
+                          detail=f"{len(cards)} card(s): "
+                                 f"{cards[0]}")
+
+    @staticmethod
+    def _probe_capture() -> Capability:
+        import shutil
+        if shutil.which("arecord") is None:
+            return Capability("AUDIO_CAPTURE", CapabilityState.UNAVAILABLE,
+                              detail="arecord not installed")
+        return Capability("AUDIO_CAPTURE", CapabilityState.AVAILABLE,
+                          detail="arecord present; device probed per use")
 
     def inventory(self) -> list[Capability]:
         return [self._static[key] for key in sorted(self._static)]

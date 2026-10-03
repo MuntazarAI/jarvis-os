@@ -146,6 +146,40 @@ def event_from_user(text: str, correlation_id: str = "") -> SensoryEvent:
                         payload={"text": text[:1000]}, correlation_id=correlation_id)
 
 
+def event_from_transcript(result: Any) -> SensoryEvent:
+    """Adapter: STT result -> SensoryEvent (type speech, reference only).
+
+    The transcript text rides the bus (bounded) so the cognitive loop
+    can reason over it like any user text — through the same policy
+    funnel, never as trusted instructions. Provenance (source,
+    confidence, language, result id) is preserved; raw audio never is.
+    """
+    get = (lambda key, default="": getattr(result, key, default)
+           if not isinstance(result, dict)
+           else result.get(key, default))
+    text = str(get("transcript", ""))[:1000]
+    try:
+        confidence = float(get("confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+    status = get("status", "")
+    status = getattr(status, "value", status)
+    payload = getattr(result, "provenance", None)
+    source = "stt"
+    if isinstance(payload, dict) and payload.get("source"):
+        source = str(payload["source"])[:80]
+    return SensoryEvent(
+        source=source, type="speech", confidence=confidence,
+        payload={
+            "text": text,
+            "language": str(get("language", ""))[:16],
+            "stt_status": str(status)[:32],
+            "transcript_id": str(get("result_id", ""))[:64],
+        },
+        correlation_id=str(get("correlation_id", "")))
+
+
 _MODALITY_BUS_TYPE = {
     "screen": "screen",
     "camera": "vision",
@@ -153,6 +187,7 @@ _MODALITY_BUS_TYPE = {
     "file": "file",
     "document": "file",
     "sensor": "environment",
+    "audio": "speech",
 }
 
 

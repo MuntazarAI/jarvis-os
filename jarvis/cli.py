@@ -303,6 +303,20 @@ def build_parser() -> argparse.ArgumentParser:
                         help="keep conversing until Ctrl-C")
     listen.add_argument("--no-speak", action="store_true",
                         help="print the reply instead of speaking it")
+
+    audio = sub.add_parser("audio", help="audio perception: sources, VAD, STT, transcripts")
+    audio.add_argument("action", nargs="?", default="status",
+                       choices=["status", "capabilities", "sources", "test",
+                                "replay", "benchmark", "transcript",
+                                "diagnostics"])
+    audio.add_argument("--path", default="",
+                       help="wav file for transcript/test")
+    audio.add_argument("--seconds", type=float, default=3.0,
+                       help="mic record seconds for test")
+    audio.add_argument("--timeout", type=float, default=0.0,
+                       help="watch timeout (reserved)")
+    audio.add_argument("--json", action="store_true",
+                       help="machine-readable output")
     return parser
 
 
@@ -311,6 +325,158 @@ def _make_jarvis(home: str) -> Jarvis:
     if home:
         config.paths.home = Path(home)
     return Jarvis(config=config)
+
+
+def _audio_action(jarvis: Any, args: Any) -> int:
+    """Audio perception inspection. One-shot reads; transcribing a file
+    never records, and no action transcribes indefinitely."""
+    import time as _time
+    from .voice.stt import FakeSTT, FasterWhisperSTT, UnavailableSTT
+    from .voice.vad import EnergyVADAdapter, FakeVAD
+    as_json = args.json
+
+    def _out(payload: Any, text: str) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print(text)
+        jarvis.close()
+        return 0
+
+    action = args.action
+    if action == "status":
+        from .cognition.selfmodel import CapabilityModel
+        model = CapabilityModel()
+        rows = {}
+        for name in ("AUDIO_CAPTURE", "AUDIO_VAD", "AUDIO_STT",
+                     "MICROPHONE", "PHYSICAL_PI_AUDIO"):
+            capability = model.check(name)
+            rows[name] = {"state": capability.state.value,
+                          "detail": capability.detail}
+        lines = [f"{name:18} {info['state']}" for name, info in
+                 sorted(rows.items())]
+        return _out({"capabilities": rows},
+                    "AUDIO\n" + "\n".join(lines))
+    if action == "capabilities":
+        from .voice.vad import EnergyVADAdapter as _EV
+        from .voice.stt import FasterWhisperSTT as _FW
+        stt = _FW()
+        payload = {"vad": _EV().health(),
+                   "stt": stt.health(),
+                   "fake_stt": True,
+                   "max_frame_s": 10.0,
+                   "max_segment_s": 60.0}
+        return _out(payload, "\n".join(
+            f"{key}={value}" for key, value in payload.items()))
+    if action == "sources":
+        import shutil
+        import subprocess
+        cards: list[str] = []
+        if shutil.which("arecord") is not None:
+            try:
+                proc = subprocess.run(
+                    ["arecord", "-l"], capture_output=True, text=True,
+                    timeout=10)
+                cards = [line.strip()[:100] for line in
+                         (proc.stdout or "").splitlines()
+                         if line.strip().startswith("card ")]
+            except (subprocess.TimeoutExpired, OSError):
+                cards = []
+        return _out({"microphone_cards": cards,
+                     "arecord": shutil.which("arecord") is not None},
+                    "\n".join(cards) or "no capture hardware listed")
+    if action == "test":
+        # Bounded self-test: synthesize silence (no mic needed) through
+        # VAD + FakeSTT, proving the path without hardware.
+        from .voice.audio import AudioBuffer, AudioFrame
+        frames = []
+        for index in range(5):
+            frames.append(AudioFrame(
+                source="audio-test", sequence=index, duration_s=0.1,
+                payload_bytes=3200))
+        vad = FakeVAD(pattern=["silence", "speech", "speech_end"])
+        states = [vad.process_frame(frame).state.value for frame in frames]
+        fake = FakeSTT(default="")
+        result = fake.transcribe("/tmp/audio-test-nonexistent.wav")
+        return _out({"frames": len(frames), "vad_states": states,
+                     "stt_status": result.status.value,
+                     "calls": fake.calls},
+                    f"frames={len(frames)} vad={','.join(states)} "
+                    f"stt={result.status.value}")
+    if action == "replay":
+        return _out({"replay": "fixture-only",
+                     "detail": "replay uses recorded fixtures; "
+                               "microphone never accessed"},
+                    "replay: fixtures only (microphone never accessed)")
+    if action == "benchmark":
+        from .voice.audio import AudioBuffer, AudioFrame
+        import time as _t
+        buffer = AudioBuffer()
+        base = AudioFrame(source="bench", sequence=0, duration_s=0.1,
+                          payload_bytes=3200)
+
+        def _validation():
+            AudioFrame(source="bench", sequence=1, duration_s=0.1,
+                       payload_bytes=3200)
+
+        def _buffer():
+            buffer.append(base)
+
+        def _vad():
+            FakeVAD().process_frame(base)
+
+        def _event():
+            from .intelligence.sensory import event_from_transcript
+            event_from_transcript({"transcript": "hi", "confidence": 0.9})
+
+        scenarios = {"validation": _validation, "buffer": _buffer,
+                     "vad": _vad, "event": _event}
+        results = {}
+        for name, scenario in scenarios.items():
+            started = _t.perf_counter()
+            for _ in range(200):
+                scenario()
+            results[name] = round(
+                (_t.perf_counter() - started) / 200 * 1000, 3)
+        lines = [f"{name:12} {ms:.3f}ms" for name, ms in
+                 sorted(results.items())]
+        return _out({"benchmark_ms": results},
+                    "AUDIO BENCHMARKS (ms/op)\n" + "\n".join(lines))
+    if action == "transcript":
+        if not args.path:
+            print("usage: jarvis audio transcript --path FILE.wav")
+            jarvis.close()
+            return 2
+        stt = FasterWhisperSTT() if FasterWhisperSTT().available() \
+            else UnavailableSTT()
+        result = stt.transcribe(args.path)
+        if result.status.value == "success":
+            return _out(result.to_dict(),
+                        f"{result.transcript}\n(conf={result.confidence})")
+        print(f"transcription {result.status.value}: {result.error}")
+        jarvis.close()
+        return 1
+    if action == "diagnostics":
+        from .voice.audio import AudioBuffer
+        buffer = AudioBuffer()
+        payload = {"buffer_capacity": buffer.max_frames,
+                   "buffered": len(buffer),
+                   "dropped": buffer.dropped,
+                   "spool": _audio_spool_depth(jarvis)}
+        lines = [f"{key}={value}" for key, value in payload.items()]
+        return _out(payload, "AUDIO DIAGNOSTICS\n" + "\n".join(lines))
+    print(f"audio: unknown action {action}")
+    jarvis.close()
+    return 2
+
+
+def _audio_spool_depth(jarvis: Any) -> dict[str, Any]:
+    try:
+        from .voice.spool import TranscriptSpool
+        home = str(jarvis.config.paths.home)
+        return TranscriptSpool(home).depth()
+    except Exception:
+        return {"pending": 0, "bytes": 0}
 
 
 def _pi_action(adapter: Any, jarvis: Any, args: Any, _out: Any) -> int:
@@ -3087,6 +3253,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"heard: {turn['heard']}")
         jarvis.close()
         return 0
+
+    if args.command == "audio":
+        return _audio_action(jarvis, args)
 
     parser.print_help()
     jarvis.close()
