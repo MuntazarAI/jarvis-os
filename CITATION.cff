@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+title: JARVIS-OS
+message: >-
+  If you use JARVIS-OS in your research or project, please cite it as
+  below and link the release you used.
+type: software
+authors:
+  - alias: MuntazarAI
+    website: https://github.com/MuntazarAI
+repository-code: https://github.com/MuntazarAI/jarvis-os
+url: https://muntazarai.github.io/jarvis-os/
+license: Apache-2.0
+keywords:
+  - personal-ai
+  - voice-assistant
+  - local-first
+  - offline-ai
+  - raspberry-pi
+  - evidence-driven
