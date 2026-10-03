@@ -17,6 +17,7 @@ from typing import Any, Callable
 SENSORY_TYPES = (
     "vision", "audio", "speech", "input", "screen", "network",
     "device", "environment", "gods_eye", "proactive", "user", "timer",
+    "file",
 )
 
 MAX_PAYLOAD_BYTES = 4096
@@ -143,3 +144,54 @@ def event_from_device(device_id: str, event_type: str, data: dict[str, Any]) -> 
 def event_from_user(text: str, correlation_id: str = "") -> SensoryEvent:
     return SensoryEvent(source="user", type="user", confidence=1.0,
                         payload={"text": text[:1000]}, correlation_id=correlation_id)
+
+
+_MODALITY_BUS_TYPE = {
+    "screen": "screen",
+    "camera": "vision",
+    "image": "vision",
+    "file": "file",
+    "document": "file",
+    "sensor": "environment",
+}
+
+
+def event_from_observation(observation: Any) -> SensoryEvent:
+    """Adapter: perception Observation -> SensoryEvent (reference only).
+
+    The bus carries observation_id + summary + confidence, never raw
+    media or full payloads. Replay reuses recorded observations, so
+    live providers are never touched during historical replay.
+    """
+    modality = getattr(observation, "modality", "sensor")
+    modality = getattr(modality, "value", modality)
+    bus_type = _MODALITY_BUS_TYPE.get(str(modality), "environment")
+    payload = getattr(observation, "payload", {}) or {}
+    summary = ""
+    for key in ("summary", "scene", "visible_text", "ocr_text"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            summary = value.strip()[:300]
+            break
+    if not summary:
+        objects = payload.get("objects")
+        if isinstance(objects, list) and objects:
+            labels = [str(o.get("label", ""))[:40] for o in objects[:5]
+                      if isinstance(o, dict)]
+            summary = "objects: " + ", ".join(l for l in labels if l)
+            summary = summary[:300]
+    return SensoryEvent(
+        source=str(getattr(observation, "source", "perception")),
+        type=bus_type,
+        confidence=float(getattr(observation, "confidence", 0.5) or 0.0),
+        payload={
+            "observation_id": str(getattr(
+                observation, "observation_id", ""))[:64],
+            "modality": str(modality)[:32],
+            "summary": summary,
+            "privacy_class": str(getattr(
+                getattr(observation, "privacy_class", ""), "value",
+                getattr(observation, "privacy_class", "")))[:32],
+        },
+        correlation_id=str(getattr(observation, "correlation_id", "")),
+    )

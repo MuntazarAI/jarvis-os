@@ -124,14 +124,16 @@ No stage may silently bypass the PolicyEngine.
 
 After 4.2 is proven:
 
-- [ ] Camera perception pipeline
-- [ ] Audio/microphone pipeline
-- [ ] Speech-to-text integration
-- [ ] Vision-to-world-model integration
-- [ ] Multimodal event normalization
-- [ ] Perception confidence/uncertainty
-- [ ] Resource-bounded local inference
-- [ ] Hardware-aware model selection
+- [x] Camera perception pipeline (bounded one-shot/sampling, real v4l2 proven)
+- [ ] Audio/microphone pipeline (future; voice/ + STT stay separate)
+- [ ] Speech-to-text integration (future; faster-whisper optional dep untouched)
+- [x] Vision-to-world-model integration (claims + gated file-entity apply)
+- [x] Multimodal event normalization (typed contract + SensoryBus adapters)
+- [x] Perception confidence/uncertainty (explicit, never inflated)
+- [x] Resource-bounded local inference (tesseract/ffmpeg CLI, caps everywhere)
+- [x] Hardware-aware model selection (capability detection, honest unavailable)
+
+See `docs/MULTIMODAL_PERCEPTION.md` for architecture, proof, and limits.
 
 ## 3.10 — Android real-device transport
 
