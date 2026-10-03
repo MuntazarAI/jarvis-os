@@ -124,7 +124,8 @@ class AndroidSocketHost:
             authenticator
             or DeviceAuthenticator(adapter.fabric.home / "device-keys.json")
         )
-        self._pending_approvals: dict[str, str] = {}  # token -> device_id
+        self._pending_approvals: dict[str, tuple[str, float]] = {}  # token -> (device_id, issued_at)
+        self._pending_ttl_s = 600.0  # matches the pairing-code TTL
         self._lock = threading.Lock()
         self.server = server or FabricServer(
             self._on_message, host=host, port=port, timeout_s=timeout_s,
@@ -197,9 +198,16 @@ class AndroidSocketHost:
         # Everything below requires HMAC proof of a bound device.
         device_id = self._authed_device(message, peer)
         if device_id is None:
-            return make_error(message.sender_node, HOST_NODE,
-                              "authentication required",
-                              correlation_id=message.message_id)
+            # Explicit marker: the phone must stop retrying credentials
+            # (wrong secret, revoked trust, unknown device) but keep the
+            # socket for transient failures, which use plain errors.
+            reply = make_error(message.sender_node, HOST_NODE,
+                               "authentication required",
+                               correlation_id=message.message_id)
+            payload = dict(reply.payload if isinstance(reply.payload, dict) else {})
+            payload["auth_failed"] = True
+            reply.payload = payload
+            return reply
         if mtype == MessageType.HEARTBEAT.value:
             return self._heartbeat(device_id, message)
         if mtype == MessageType.EVENT.value:
@@ -225,6 +233,14 @@ class AndroidSocketHost:
                      "protocol_version": PROTOCOL_VERSION},
         )
 
+    def _sweep_pending(self) -> None:
+        """Drop expired pending-approval tokens (bounded memory)."""
+        cutoff = now() - self._pending_ttl_s
+        stale = [t for t, (_, issued) in self._pending_approvals.items()
+                 if issued < cutoff]
+        for token in stale:
+            del self._pending_approvals[token]
+
     def _pair_request(self, message: FabricMessage) -> FabricMessage:
         payload = message.payload if isinstance(message.payload, dict) else {}
         device_id = str(payload.get("device_id", ""))
@@ -240,7 +256,8 @@ class AndroidSocketHost:
                               f"pairing failed: {exc}",
                               correlation_id=message.message_id)
         token = secrets.token_hex(PENDING_TOKEN_BYTES)
-        self._pending_approvals[token] = device_id
+        self._sweep_pending()
+        self._pending_approvals[token] = (device_id, now())
         return FabricMessage(
             sender_node=HOST_NODE, recipient_node=message.sender_node,
             message_type=MessageType.EVENT.value,
@@ -256,7 +273,9 @@ class AndroidSocketHost:
         payload = message.payload if isinstance(message.payload, dict) else {}
         device_id = str(payload.get("device_id", ""))
         token = str(payload.get("pending_token", ""))
-        if not token or self._pending_approvals.get(token) != device_id:
+        self._sweep_pending()
+        bound = self._pending_approvals.get(token)
+        if not token or bound is None or bound[0] != device_id:
             return make_error(message.sender_node, HOST_NODE,
                               "unknown or reused pending token",
                               correlation_id=message.message_id)
@@ -438,13 +457,18 @@ class AndroidSocketHost:
     # -- host-initiated dispatch --------------------------------------------
 
     def has_lane(self, device_id: str) -> bool:
-        """True when the device currently holds a live socket lane."""
+        """True when the device currently holds a live socket lane.
+
+        The lane must carry the HMAC-bound device_id, not merely a
+        hello-claimed node_id: an unauthenticated client can claim any
+        node name, so node-only matches are never routable.
+        """
         try:
             device = self.adapter.fabric.registry.require(device_id)
         except Exception:
             return False
-        return (self.server.peer_for_node(
-            device.node_id or device.device_id) is not None)
+        lane = self.server.peer_for_node(device.node_id or device.device_id)
+        return lane is not None and lane.device_id == device_id
 
     def send_command(self, actor: str, device_id: str, command: str,
                      args: dict[str, Any] | None = None, *,
@@ -480,10 +504,12 @@ class AndroidSocketHost:
                                 approval_token=gate.get("approval_token"))
         device = gate["device"]
         lane = self.server.peer_for_node(device.node_id or device.device_id)
-        if lane is None:
+        if lane is None or lane.device_id != device_id:
+            # No HMAC-bound lane: a hello-only lane claiming this node_id
+            # is not routable (spoofable by any unauthenticated client).
             return router._deny(actor, device_id, command,
-                                checked["args"],
-                                ["device has no live socket lane"])
+                                 checked["args"],
+                                 ["device has no live socket lane"])
         message = router.build_command_message(actor, device, capability,
                                                checked["args"])
         # The Kotlin allowlist matches bare command names; the declared

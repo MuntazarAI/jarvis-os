@@ -24,6 +24,9 @@ class NodeService : Service() {
     private lateinit var dispatcher: CommandDispatcher
     private lateinit var connection: NodeConnection
     private val executor = Executors.newSingleThreadScheduledExecutor()
+    /** Pair-status polling runs here so a 200 s poll can never head-of-line
+     *  block CONNECT / DISCONNECT / PAIR actions on [executor]. */
+    private val pollExecutor = Executors.newSingleThreadExecutor()
     private var heartbeatTask: ScheduledFuture<*>? = null
 
     @Volatile private var deviceId: String? = null
@@ -94,17 +97,29 @@ class NodeService : Service() {
                     return@execute
                 }
                 store.saveEndpoint(host, port)
-                connection.connect(host, port)
+                android.util.Log.d("NodeService", "PAIR dial $host:$port dev=$devId")
+                try {
+                    connection.connect(host, port)
+                    android.util.Log.d("NodeService", "PAIR connect() returned")
+                } catch (t: Throwable) {
+                    android.util.Log.e("NodeService", "PAIR connect() failed: ${t.message}", t)
+                    broadcast(error = "connect failed: ${t.message}")
+                    return@execute
+                }
                 var waited = 0
                 while (connection.connState != SocketPeer.ConnState.CONNECTED && waited < 20) {
                     Thread.sleep(500)
                     waited++
                 }
+                android.util.Log.d("NodeService", "PAIR waited=$waited state=${connection.connState}")
                 if (connection.connState != SocketPeer.ConnState.CONNECTED) {
                     broadcast(error = "cannot reach host $host:$port — check network")
                     return@execute
                 }
                 val pending = connection.pairRequest(devId, code)
+                // Never log the reply body: it carries the single-use
+                // pending_token when pairing succeeds.
+                android.util.Log.d("NodeService", "pairRequest ok=${pending != null}")
                 val token = pending?.optString("pending_token").orEmpty()
                 if (token.isEmpty()) {
                     broadcast(error = "pairing rejected — wrong code or expired")
@@ -120,7 +135,7 @@ class NodeService : Service() {
     }
 
     private fun pollPairStatus(devId: String, token: String) {
-        executor.execute {
+        pollExecutor.execute {
             repeat(40) {
                 Thread.sleep(5_000)
                 // A null reply is transient (socket hiccup) — keep polling.
@@ -198,6 +213,7 @@ class NodeService : Service() {
         stopHeartbeats()
         connection.disconnect()
         executor.shutdownNow()
+        pollExecutor.shutdownNow()
         super.onDestroy()
     }
 

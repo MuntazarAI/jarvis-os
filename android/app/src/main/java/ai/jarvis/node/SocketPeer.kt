@@ -102,18 +102,27 @@ class SocketPeer(
         while (running.get()) {
             onState(ConnState.CONNECTING)
             try {
+                android.util.Log.d("SocketPeer", "dial $host:$port")
                 val sock = Socket()
                 sock.tcpNoDelay = true
                 sock.soTimeout = READ_TIMEOUT_MS
                 sock.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
                 socket = sock
                 backoffMs = 1_000L
+                android.util.Log.d("SocketPeer", "connected $host:$port")
                 onState(ConnState.CONNECTED)
                 readerDone.set(false)
                 readLoop(sock)
                 readerDone.set(true)
-            } catch (_: IOException) {
+            } catch (e: IOException) {
+                android.util.Log.d("SocketPeer", "dial failed: ${e.javaClass.simpleName}: ${e.message}")
                 // fall through to backoff
+            } catch (e: Exception) {
+                // Non-IO failure (e.g. SecurityException): never spin silently.
+                android.util.Log.e("SocketPeer", "fatal dial error: ${e.javaClass.simpleName}: ${e.message}")
+                running.set(false)
+                onState(ConnState.DISCONNECTED)
+                break
             }
             socket = null
             if (!running.get()) break

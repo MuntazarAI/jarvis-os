@@ -38,7 +38,7 @@ class NodeConnection(
         peer = null
     }
 
-    fun isConnected(): Boolean = peer != null
+    fun isConnected(): Boolean = connState == SocketPeer.ConnState.CONNECTED
 
     // -- bootstrap ------------------------------------------------------
 
@@ -83,11 +83,17 @@ class NodeConnection(
     fun heartbeat(deviceId: String, telemetry: Map<String, Any?>, auth: JSONObject): JSONObject? {
         val reply = send("heartbeat", deviceId = deviceId, payload = telemetry, auth = auth)
             ?: return null
-        if (reply.optJSONObject("payload")?.optBoolean("ok") != true) {
-            peer?.notifyAuthFailed()
+        val payload = reply.optJSONObject("payload")
+        if (payload?.optBoolean("ok") != true) {
+            // Only an explicit host auth failure stops reconnecting
+            // (wrong secret, revoked trust). Transient refusals keep
+            // the socket: the next heartbeat retries normally.
+            if (payload?.optBoolean("auth_failed") == true) {
+                peer?.notifyAuthFailed()
+            }
             return null
         }
-        return reply.optJSONObject("payload")
+        return payload
     }
 
     fun sendEvent(deviceId: String, event: String, payload: Map<String, Any?>, auth: JSONObject): Boolean {

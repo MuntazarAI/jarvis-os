@@ -894,8 +894,16 @@ class AndroidNodeAdapter:
                                  "reason": "expired while offline"})
                 continue
             try:
-                result = self.fabric.route_command(
-                    item.actor, device_id, item.capability, item.args)
+                host = getattr(self, "socket_host", None)
+                if host is not None and host.has_lane(device_id):
+                    # Live socket lane: same authorized path as a fresh
+                    # send (re-authorize per item; approval-gated commands
+                    # fail closed here exactly as they would live).
+                    result = host.send_command(item.actor, device_id,
+                                               item.command, item.args)
+                else:
+                    result = self.fabric.route_command(
+                        item.actor, device_id, item.capability, item.args)
             except Exception as exc:
                 rejected.append({"command_id": item.command_id,
                                  "command": item.command,

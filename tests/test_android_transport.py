@@ -716,3 +716,180 @@ def test_telemetry_out_of_range_rejected():
 def test_android_events_are_closed_set():
     assert "battery.low" in ANDROID_EVENTS
     assert "mind.control" not in ANDROID_EVENTS
+
+
+# -- 3.10-complete regression: lane spoofing -----------------------------------
+
+def test_spoofed_hello_lane_is_not_routable(tmp_path):
+    """An unauthenticated hello claiming a victim node_id must not divert
+    that device's commands (F1: lane.device_id binding required)."""
+    policy = _policy([("cli", "device.device.battery")])
+    adapter = _adapter(tmp_path, policy)
+    host, port = _host(adapter)
+    try:
+        device_id, code = _register(adapter)
+        client, secret = _socket_pair(adapter, host, port, device_id, code)
+        try:
+            headers = _auth_headers(client, "node-t", device_id, secret)
+            rep = client.send(FabricMessage.from_dict(_msg(
+                "heartbeat", sender="node-t",
+                payload={"device_id": device_id}, auth=headers))).payload
+            assert rep["lifecycle"] == "online", rep
+            adapter.declare_android_capabilities(device_id,
+                                                 ["device.battery"],
+                                                 by="tester")
+            assert host.has_lane(device_id) is True
+            # Attacker on a fresh lane claims the victim's node_id.
+            spoof = SocketTransport(timeout_s=TIMEOUT)
+            spoof.connect("127.0.0.1", port)
+            try:
+                hello = spoof.send(FabricMessage.from_dict(_msg(
+                    "hello", sender="node-t",
+                    payload={"node_id": "node-t"}))).payload
+                assert hello.get("hello") is True, hello
+                assert host.has_lane(device_id) is False
+                # Reach the lane check with a pre-approved token: the
+                # denial must be "no live socket lane", never delivery.
+                need = host.send_command("cli", device_id,
+                                         "device.get_battery", {})
+                assert need.get("requires_approval"), need
+                token = need["approval_token"]
+                assert adapter.fabric.policy.approve(token, by="tester")
+                out = host.send_command("cli", device_id,
+                                        "device.get_battery", {},
+                                        approval_token=token)
+                assert out["ok"] is False
+                assert "no live socket lane" in out.get("error", ""), out
+            finally:
+                spoof.close()
+        finally:
+            client.close()
+    finally:
+        host.stop()
+
+
+# -- 3.10-complete regression: explicit auth-failure marker --------------------
+
+def test_unauthenticated_heartbeat_marks_auth_failed(tmp_path):
+    """HMAC failures carry auth_failed so the phone stops retrying
+    credentials; transient errors must not set it (F2)."""
+    adapter, host, port, client, device_id, secret = _online_authed(tmp_path)
+    try:
+        rep = client.send(FabricMessage.from_dict(_msg(
+            "heartbeat", sender="node-t",
+            payload={"device_id": device_id},
+            auth={"challenge": "wrong", "response": "wrong"}))).payload
+        assert rep["ok"] is False
+        assert rep.get("auth_failed") is True, rep
+    finally:
+        client.close()
+        host.stop()
+
+
+# -- 3.10-complete regression: pending-token expiry ----------------------------
+
+def test_expired_pending_token_rejected(tmp_path):
+    """Stale pending-approval tokens are swept and rejected (F3)."""
+    from jarvis.core.types import now
+    adapter = _adapter(tmp_path)
+    host, port = _host(adapter)
+    try:
+        host._pending_approvals["stale-token"] = ("dev-old", 0.0)
+        host._pending_approvals["fresh-token"] = ("dev-new", now() + 300.0)
+        host._sweep_pending()
+        assert "stale-token" not in host._pending_approvals
+        assert "fresh-token" in host._pending_approvals
+        # End to end: an aged live token is refused at pair_status.
+        device_id, code = _register(adapter)
+        client = SocketTransport(timeout_s=TIMEOUT)
+        client.connect("127.0.0.1", port)
+        try:
+            rep = client.send(FabricMessage.from_dict(_msg(
+                "pair_request", sender="node-t",
+                payload={"device_id": device_id, "code": code,
+                         "node_id": "node-t"}))).payload
+            assert rep["ok"] and rep["pair"] == "pending", rep
+            token = rep["pending_token"]
+            held = host._pending_approvals[token]
+            host._pending_approvals[token] = (held[0], 0.0)
+            late = client.send(FabricMessage.from_dict(_msg(
+                "pair_status", sender="node-t",
+                payload={"device_id": device_id,
+                         "pending_token": token}))).payload
+            assert late["ok"] is False
+            assert "unknown or reused" in late.get("error", ""), late
+        finally:
+            client.close()
+    finally:
+        host.stop()
+
+
+# -- 3.10-complete regression: lane-aware offline drain --------------------------
+
+def test_drain_uses_live_lane_not_inproc_route(tmp_path):
+    """Queued commands drain over the socket lane path (authorize +
+    lane delivery), never silently via in-process routing (F4)."""
+    policy = _policy([("cli", "device.device.battery")])
+    adapter = _adapter(tmp_path, policy)
+    host, port = _host(adapter)
+    try:
+        device_id, code = _register(adapter)
+
+        def answer(msg):
+            if msg.message_type != "command_request":
+                return None
+            return FabricMessage(
+                sender_node="node-t", recipient_node=msg.sender_node,
+                message_type="command_result",
+                correlation_id=msg.message_id, capability=msg.capability,
+                payload={"ok": True, "result": "battery 77%"})
+
+        client = SocketTransport(timeout_s=TIMEOUT)
+        client.connect("127.0.0.1", port, on_request=answer)
+        try:
+            req = _msg("pair_request", sender="node-t",
+                       payload={"device_id": device_id, "code": code,
+                                "node_id": "node-t"})
+            rep = client.send(FabricMessage.from_dict(req)).payload
+            assert rep["pair"] == "pending", rep
+            token = rep["pending_token"]
+            adapter.declare_android_capabilities(device_id,
+                                                 ["device.battery"],
+                                                 by="tester")
+            # Still offline: command queues (bounded, expiring).
+            queued = adapter.send_command("cli", device_id,
+                                          "device.get_battery", {})
+            assert queued.get("queued") is True, queued
+            assert host.has_lane(device_id) is False
+            adapter.trust_android(device_id, by="tester",
+                                  reason="drain test")
+            post = client.send(FabricMessage.from_dict(_msg(
+                "pair_status", sender="node-t",
+                payload={"device_id": device_id,
+                         "pending_token": token}))).payload
+            assert post["pair"] == "approved", post
+            secret = post["device_secret"]
+            headers = _auth_headers(client, "node-t", device_id, secret)
+            hb = client.send(FabricMessage.from_dict(_msg(
+                "heartbeat", sender="node-t",
+                payload={"device_id": device_id}, auth=headers))).payload
+            assert hb["lifecycle"] == "online", hb
+            assert host.has_lane(device_id) is True
+            routed = []
+            real_route = adapter.fabric.route_command
+            adapter.fabric.route_command = (  # type: ignore[method-assign]
+                lambda *a, **k: (routed.append((a, k)), real_route(*a, **k))[1])
+            try:
+                out = adapter.drain(device_id)
+            finally:
+                adapter.fabric.route_command = real_route  # type: ignore[method-assign]
+            # Approval-gated items stay queued (fail closed with a fresh
+            # token path), but the in-process route must never run for a
+            # lane device — and nothing may execute silently.
+            assert routed == [], routed
+            assert out["dispatched"] == []
+            assert adapter.queue_depth(device_id)["queued"] == 1
+        finally:
+            client.close()
+    finally:
+        host.stop()
