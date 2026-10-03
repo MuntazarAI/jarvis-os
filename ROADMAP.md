@@ -4,6 +4,9 @@ This roadmap tracks the engineering direction of JARVIS OS. The project prioriti
 
 ## Current state
 
+- **Intelligence expansion 5.0:** adaptive-intelligence foundation implemented on `feature/intelligence-expansion-5-0`; pending verification/PR.
+- **Verified multimodal perception:** screen, camera, image, file/document pipelines are implemented; audio/STT remains future work.
+
 - **Main:** stable through 4.2 Persistent Device Intelligence; PR #38 is merged and main is green.
 - **Primary next milestone:** **4.2 follow-up — Async Operator Command UX** (persistent policy grants + approval notification flow).
 - **Android 3.10:** complete and emulator-proven; PR #37 merged. Issue #31 is now obsolete.
@@ -287,3 +290,30 @@ while remaining:
 - explainable at the system level
 - controllable by the user
 - extensible across computers and physical devices
+
+
+## 5.0 — Adaptive Intelligence Foundation
+
+**Goal:** make JARVIS learn from evidence and outcomes without allowing learning
+to bypass security.
+
+- [x] Evidence/provenance contracts
+- [x] Bounded belief engine with contradiction tracking
+- [x] Explicit uncertainty states
+- [x] Deterministic hypothesis ranking
+- [x] Active information-gathering selector
+- [x] Goal contracts
+- [x] Static plan critic
+- [x] Experience store with bounded retention
+- [x] Secret-key scrubbing at experience persistence
+- [x] Prediction/outcome learning primitives
+- [x] Capability fingerprinting
+- [x] Deterministic regression tests
+- [x] Architecture documentation
+- [ ] Deep CognitiveSupervisor integration
+- [ ] causal inference engine
+- [ ] counterfactual simulation
+- [ ] long-horizon mission learning
+- [ ] skill acquisition
+- [ ] multimodal model reasoning
+- [ ] intelligence benchmark scorecard
