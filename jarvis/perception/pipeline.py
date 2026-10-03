@@ -107,12 +107,38 @@ class ObservationStore:
             return False
 
     def get(self, observation_id: str) -> dict[str, Any] | None:
+        self._sync_from_disk()
         item = self._index.get(observation_id)
         return dict(item) if item is not None else None
 
     def recent(self, limit: int = 20) -> list[dict[str, Any]]:
+        self._sync_from_disk()
         items = list(self._index.values())
         return [dict(i) for i in items[-max(limit, 1):]][::-1]
+
+    def _sync_from_disk(self, tail_lines: int = 500) -> None:
+        """Merge other processes' records. File is the truth."""
+        path = self.path
+        if path is None or not path.exists():
+            return
+        try:
+            with open(path, "rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                handle.seek(max(0, size - tail_lines * 512))
+                lines = handle.read().decode(
+                    "utf-8", errors="replace").splitlines()
+        except OSError:
+            return
+        for raw in lines[-tail_lines:]:
+            try:
+                item = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(item, dict) and item.get("observation_id"):
+                self._index[str(item["observation_id"])] = item
+        while len(self._index) > MAX_INDEX_ENTRIES:
+            self._index.popitem(last=False)
 
     def count(self) -> int:
         return len(self._index)
@@ -259,35 +285,31 @@ class PerceptionPipeline:
         path = str(obs.payload.get("path", ""))
         if not path:
             return {"applied": False}
-        entity_id = "document:" + path.strip().lower().replace(" ", "-")[-80:]
         try:
-            existing = self.world.get_entity(entity_id)
+            matches = self.world.find_entities(state_match={"path": path})
+            existing = matches[0] if matches else None
         except Exception:
             existing = None
         try:
+            new_hash = str(obs.payload.get("content_hash", ""))
             if existing is None:
                 entity, _ = self.world.upsert_entity(
-                    "document", Path(path).name[:80],
-                    state={"path": path[:300],
-                           "content_hash": str(obs.payload.get(
-                               "content_hash", ""))[:64]},
+                    "file", Path(path).name[:80],
+                    state={"path": path[:300], "content_hash": new_hash[:64]},
+                    provenance={"observer": str(obs.source)[:80],
+                                "observation": obs.observation_id},
+                    confidence=obs.confidence)
+            elif new_hash and new_hash != str(
+                    existing.state.get("content_hash", "")):
+                entity, _ = self.world.upsert_entity(
+                    existing.type, existing.name,
+                    state={"content_hash": new_hash[:64]},
                     provenance={"observer": str(obs.source)[:80],
                                 "observation": obs.observation_id},
                     confidence=obs.confidence,
-                    entity_id=entity_id)
+                    entity_id=existing.id)
             else:
-                new_hash = str(obs.payload.get("content_hash", ""))
-                old_hash = str(existing.state.get("content_hash", ""))
-                if new_hash and new_hash != old_hash:
-                    entity, _ = self.world.upsert_entity(
-                        existing.type, existing.name,
-                        state={"content_hash": new_hash[:64]},
-                        provenance={"observer": str(obs.source)[:80],
-                                    "observation": obs.observation_id},
-                        confidence=obs.confidence,
-                        entity_id=entity_id)
-                else:
-                    entity = existing
+                entity = existing
             return {"applied": True, "entity_id": entity.id}
         except Exception as exc:
             return {"applied": False,
