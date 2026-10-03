@@ -187,8 +187,10 @@ JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew :app:assembleDebug
 ```
 
 Requires JDK 17 and the Android SDK (`ANDROID_HOME`/`ANDROID_SDK_ROOT`,
-compileSdk 34). JVM unit tests need `testImplementation org.json:json`
-because `android.jar` JSON stubs throw `not mocked` on the JVM.
+compileSdk 37, targetSdk 34). JVM unit tests need `testImplementation org.json:json`
+because `android.jar` JSON stubs throw `not mocked` on the JVM. AGP 9
+provides built-in Kotlin (no `kotlin.android` plugin; `jvmTarget`
+defaults to `targetCompatibility`).
 
 ## Doctor
 
@@ -215,6 +217,26 @@ rendezvous liveness, config sanity, loopback self-test where practical.
   hostile networks. `require_verified_transport` is enforced at the router
   boundary; the in-process transport remains `UNVERIFIED` by design.
 
+## Pairing order (mandatory)
+
+The human approval MUST come after the phone's `pair_request`:
+
+1. `device android register` → 6-digit code (600 s TTL, 5 attempts, single-use).
+2. Phone taps PAIR → `pair_request` verifies the code → `TRUST_PENDING` + pending token.
+3. Human runs `device transport approve --device <id>`.
+4. Phone's `pair_status` poll returns the device secret exactly once.
+
+Approving BEFORE `pair_request` (pre-approval) cancels the pending code
+(`trust_android` clears it) and the phone can never complete pairing —
+fail closed by design, since trust without code proof is meaningless.
+To recover, register again for a fresh code.
+
+The long-running host reloads both the device registry and the pairing
+file from disk before verifying a `pair_request`, so codes/devices
+registered by short-lived CLI processes are visible mid-session
+(single-process tests never catch this; cross-process regression tests
+prove it).
+
 ## Troubleshooting
 
 - `pair: pending` forever → the CLI approval hasn't happened; run
@@ -233,6 +255,22 @@ rendezvous liveness, config sanity, loopback self-test where practical.
 - No TLS yet (see threat model above); no mTLS/Ed25519/QR-token pairing.
 - No daemon/API-server integration: `serve` is foreground-only.
 - `device-keys.json` is a file secret store, not the Android Keystore /
-  system keyring.
-- Emulator E2E (real APK ↔ real host pairing/heartbeat/command) is in
-  progress; JVM loopback tests + 36 Python loopback tests are green.
+  system keyring. The app keeps the device secret in plain
+  SharedPreferences (documented; EncryptedSharedPreferences is the
+  hardened-build follow-up).
+- Idle churn: the server drops silent connections after its 15 s read
+  timeout while the phone heartbeats every 60 s, so the lane redials
+  roughly every 16 s between heartbeats. Bounded and self-healing
+  (a one-time resync covers lost-reply desync), but noisy; a longer
+  idle allowance for HMAC-bound lanes is the follow-up.
+- No async operator command path yet: policy grants/approvals live in
+  the serving process, so `device android command` from a short-lived
+  CLI only queues process-locally. Typed host→phone commands are proven
+  through `AndroidSocketHost.send_command` (approval, bare-wire mapping,
+  host proof, audited result); wiring it to multi-process operators is
+  the next item.
+- Emulator E2E (real APK 3.10.0 ↔ real host: register, pair_request,
+  pending token, explicit trust, one-time secret, HMAC heartbeat,
+  typed `device.get_battery`/`device.get_info` commands with typed
+  results, policy denial of an ungranted actor) PROVEN 2026-10-03;
+  43 Python loopback tests + 12 Kotlin JVM tests green.
