@@ -249,6 +249,10 @@ jarvis see camera --fast
 jarvis say "Voice online"
 jarvis listen --always --no-speak
 
+jarvis world status
+jarvis world research --text "What is happening in AI today?"
+jarvis world briefing --kind morning
+
 jarvis start
 jarvis stop
 jarvis restart
