@@ -14,7 +14,10 @@ This roadmap is a development map, not a promise of delivery dates.
 
 ## Near-term engineering
 
-- [ ] Complete and validate real Android transport on physical hardware
+- [x] Complete and validate Android 3.10 transport E2E
+- [x] Add persistent device grants, approvals, durable command outbox, drainer, CLI and audit (4.2)
+- [ ] Complete async operator UX for persistent grants and approval notifications
+- [ ] Build and validate the 4.2 end-to-end cognitive loop
 - [ ] Add Raspberry Pi device node
 - [ ] Expand typed transport coverage
 - [ ] Improve deterministic benchmark reporting

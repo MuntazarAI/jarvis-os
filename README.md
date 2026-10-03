@@ -284,9 +284,10 @@ The repository is actively evolving through milestone-based development. The cod
 | Memory / provenance | ✅ Implemented |
 | World model | ✅ Implemented |
 | Device fabric | ✅ Implemented |
-| Android node | ✅ 3.9 foundation |
+| Android node | ✅ 3.10 transport + E2E |
+| Persistent device intelligence | ✅ 4.2 grants/approvals/outbox |
 | Neural Nervous System | 🧪 4.0 foundation |
-| Real Android network transport | 🚧 In development |
+| Real Android network transport | ✅ 3.10 E2E-proven |
 | Connectome-scale neural experiments | 🔬 Future research |
 
 > This table intentionally distinguishes implemented foundations from experiments and future work.
@@ -367,7 +368,7 @@ Android is treated as a normal typed device-fabric node rather than a privileged
 
 The 3.9 foundation includes explicit pairing/trust, typed capabilities, bounded telemetry, heartbeat/presence, safe commands, typed events/results, policy-gated routing, and bounded offline queueing.
 
-The real network transport is being developed as the next milestone and should not be described as complete until it is merged and verified.
+The real network transport is complete for the current trusted-LAN model and was E2E-proven with the real APK on emulator-5554. Persistent device intelligence 4.2 now adds durable grants, approvals, command outbox/draining, and audit. Known transport limits remain documented.
 
 Read [ANDROID_NODE.md](docs/ANDROID_NODE.md).
 
