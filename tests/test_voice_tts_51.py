@@ -458,7 +458,8 @@ def test_bridge_missing_reference_fails_fast(tmp_path):
     (site / "__init__.py").write_text("")
     provider = ChatterboxTTSProvider(
         reference_audio=str(tmp_path / "missing.flac"),
-        python_executable=str(exe))
+        python_executable=str(exe),
+        persistent=False)
     assert provider.mode() == "bridge"
     out = provider.synthesize(TTSRequest(text="hi"))
     assert not out.ok and "reference" in out.error.lower()

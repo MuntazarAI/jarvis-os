@@ -321,7 +321,10 @@ def build_parser() -> argparse.ArgumentParser:
     voice = sub.add_parser("voice", help="JARVIS voice: status, setup, test, benchmark")
     voice.add_argument("action", nargs="?", default="status",
                        choices=["status", "setup", "test", "benchmark",
-                                "say", "diagnostics"])
+                                "say", "diagnostics", "worker"])
+    voice.add_argument("--op", default="status",
+                       choices=["status", "start", "stop"],
+                       help="worker lifecycle op (with: voice worker)")
     voice.add_argument("--path", default="",
                        help="reference audio path override for setup")
     voice.add_argument("--text", default="Good evening. How can I assist you?",
@@ -639,7 +642,51 @@ def _voice_action(jarvis: Any, args: Any) -> int:
                    "recent": TELEMETRY.recent(10)}
         return _out(payload, "VOICE DIAGNOSTICS\n" +
                     json.dumps(payload, indent=2, default=str))
+    if action == "worker":
+        return _voice_worker_action(jarvis, args, _out)
     print(f"voice: unknown action {action}")
+    jarvis.close()
+    return 2
+
+
+def _voice_worker_action(jarvis: Any, args: Any, _out: Any) -> int:
+    """Persistent worker lifecycle. One-shot CLI processes cannot keep
+    a worker alive, so `start` measures cold time-to-ready honestly and
+    then shuts down; long-lived hosts (serve/repl/listen) reuse theirs.
+    """
+    from .voice.persistent import get_client
+    from .voice.tts import provider_for
+    cfg = jarvis.config.voice
+    op = getattr(args, "op", "status")
+    provider = provider_for(cfg.tts_provider, cfg.__dict__)
+    health = provider.health()
+    if op == "status":
+        worker = health.get("worker", {}) if isinstance(health, dict) \
+            else {}
+        payload = {"mode": health.get("mode", "unavailable"),
+                   "worker": worker or {"state": "not started "
+                                                 "(on demand)"}}
+        lines = [f"mode={payload['mode']}",
+                 f"worker={payload['worker'].get('state', '?')}"]
+        return _out(payload, "VOICE WORKER\n" + "\n".join(lines))
+    client = get_client(
+        python=provider.bridge_python()
+        if hasattr(provider, "bridge_python") else "",
+        model=cfg.model, reference_audio=cfg.reference_audio,
+        device="cpu")
+    if op == "start":
+        result = client.start()
+        if result.get("ok"):
+            client.shutdown()  # one-shot CLI must not orphan workers
+            return _out(result, "worker READY in "
+                        f"{result.get('time_to_ready_s', '?')}s")
+        print(f"worker FAILED: {result.get('error', '?')}")
+        jarvis.close()
+        return 1
+    if op == "stop":
+        return _out({"stopped": True},
+                    "no persistent worker in this process "
+                    "(workers live with their owner process)")
     jarvis.close()
     return 2
 

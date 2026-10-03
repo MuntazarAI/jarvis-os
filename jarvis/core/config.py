@@ -159,6 +159,7 @@ class VoiceConfig:
     stt_provider: str = "faster-whisper"
     tts_provider: str = "chatterbox"
     chatterbox_python: str = ""
+    persistent: bool = True
     profile: str = "jarvis"
     reference_audio: str = "~/.config/jarvis/voices/male_old_movie.flac"
     language: str = "en"
