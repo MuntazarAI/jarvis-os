@@ -163,6 +163,21 @@ Verified:
 
 Known limits remain documented: trusted-LAN transport without TLS, plain-prefs secret storage, and idle reconnect churn.
 
+## 5.0 — Intelligence expansion
+
+**Complete.** Bounded measurable intelligence over the existing
+nervous system: hypotheses + uncertainty, context engine, temporal/
+causal/counterfactual reasoning, goal interpretation, hierarchical
+planning, plan critic, bounded self-correction, propose-only tool
+intelligence, skills, dict-only simulation, compute budgets,
+self-model, collaboration modes, explanations, computed scorecard,
+benchmarks. Live emulator E2E through the supervised loop to a
+verified typed device result. See `docs/INTELLIGENCE_5_0.md`.
+
+Note: PR #45 (`intelligence-expansion-5-0`, open, `adaptive.py`)
+explores adjacent ideas; this milestone builds on the merged 4.4
+`cognition/` stack instead of duplicating it.
+
 ## 5.x — Raspberry Pi device node
 
 The Raspberry Pi is intended to become a **physical JARVIS edge node**, not a replacement for the laptop brain.

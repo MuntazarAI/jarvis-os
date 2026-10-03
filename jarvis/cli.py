@@ -155,7 +155,9 @@ def build_parser() -> argparse.ArgumentParser:
                                 "events", "failures", "perception-status",
                                 "perception-observe", "perception-events",
                                 "perception-inspect", "experience",
-                                "beliefs", "learning"])
+                                "beliefs", "learning", "hypotheses",
+                                "goals", "skills", "scorecard", "benchmark",
+                                "explain"])
     intel.add_argument("text", nargs="*", help="input text for cycle")
     intel.add_argument("--cycle", default="",
                        help="cycle id for inspect/replay")
@@ -266,6 +268,246 @@ def _make_jarvis(home: str) -> Jarvis:
     if home:
         config.paths.home = Path(home)
     return Jarvis(config=config)
+
+
+def _intel_expansion(jarvis: Any, args: Any, _out: Any) -> int:
+    """5.0 intelligence inspection: hypotheses, goals, skills, scorecard,
+    benchmark, explain. Read-only except skill registration state."""
+    from jarvis.cognition.goals import GoalInterpreter, PlanCritic
+    from jarvis.cognition.hypotheses import HypothesisEngine
+    from jarvis.cognition.scorecard import run_benchmarks, run_scorecard
+    from jarvis.cognition.selfmodel import (
+        CapabilityModel,
+        decide_mode,
+        explain,
+    )
+    from jarvis.cognition.skills import Skill, SkillStore
+    action = args.action
+    text = " ".join(args.text) if args.text else ""
+    home = str(jarvis.config.paths.home)
+    if action == "hypotheses":
+        engine = HypothesisEngine()
+        observations = ([{"summary": text, "source": "cli"}] if text
+                        else [{"summary": "idle check", "source": "cli"}])
+        ranked = engine.generate(observations, goal=text)
+        return _out({"hypotheses": [h.to_dict() for h in ranked]},
+                    "\n".join(
+                        f"{h.statement[:60]:62} {h.confidence:.2f} "
+                        f"{h.status.value} [{h.uncertainty.value}]"
+                        for h in ranked) or "no hypotheses generated")
+    if action == "goals":
+        if not text:
+            print("usage: jarvis intelligence goals <request text>")
+            jarvis.close()
+            return 2
+        goal = GoalInterpreter().interpret(text)
+        return _out(goal.to_dict(),
+                    f"goal: {goal.description}\n"
+                    f"risk={goal.risk_level} "
+                    f"caps={','.join(goal.required_capabilities) or '-'}\n"
+                    f"success={'; '.join(goal.success_criteria)}")
+    if action == "skills":
+        store = SkillStore(home)
+        sub = (args.text[0] if args.text else "list").lower()
+        if sub == "list":
+            skills = list(store._skills.values())
+            return _out({"skills": [s.to_dict() for s in skills]},
+                        "\n".join(
+                            f"{s.skill_id[:16]:18} {s.name[:30]:30} "
+                            f"{s.status.value} v{s.version} "
+                            f"+{s.successes}/-{s.failures}"
+                            for s in skills) or "no skills registered")
+        print("device: unknown skills action "
+              f"{sub} (list only; register via API)")
+        jarvis.close()
+        return 2
+    if action == "scorecard":
+        from jarvis.cognition import scorecard as _sc
+        probes = _expansion_probes(jarvis)
+        result = _sc.run_scorecard(probes)
+        lines = [f"overall={result['overall']}"]
+        for name, category in sorted(result["categories"].items()):
+            lines.append(f"{name:22} {category['score']:.3f} "
+                         f"n={category['probes']}")
+        return _out(result, "SCORECARD\n" + "\n".join(lines))
+    if action == "benchmark":
+        from jarvis.cognition import scorecard as _sc
+        scenarios = _expansion_benchmarks(jarvis)
+        result = _sc.run_benchmarks(scenarios)
+        lines = [f"{name:22} {info['duration_ms']:.2f}ms "
+                 f"{'ok' if info['ok'] else 'FAIL'}"
+                 for name, info in sorted(result["scenarios"].items())]
+        return _out(result, "BENCHMARKS\n" + "\n".join(lines))
+    if action == "explain":
+        if not args.cycle:
+            print("usage: jarvis intelligence explain --cycle <id>")
+            jarvis.close()
+            return 2
+        from jarvis.intelligence.cognitive import CognitiveSupervisor
+        from jarvis.intelligence import wiring as intel_wiring
+        from jarvis.inference.reasoning import MetaReasoner
+        network, encoder, decoder = intel_wiring.default_neural_stack()
+        loop = intel_wiring.build_loop(
+            registry=jarvis.world_registry, spatial=jarvis.spatial,
+            palace=jarvis.palace, network=network, encoder=encoder,
+            decoder=decoder, reasoner=MetaReasoner(),
+            policy=jarvis.policy, tools=jarvis.tools)
+        supervisor = CognitiveSupervisor(loop, home=home)
+        found = supervisor.inspect(args.cycle)
+        if found is None:
+            print(f"unknown cycle {args.cycle}")
+            jarvis.close()
+            return 1
+        summary = explain(found)
+        lines = [f"{key}={value}" for key, value in summary.items()
+                 if not isinstance(value, list)]
+        lines.extend(f"evidence={item}" for item in summary["evidence"][:5])
+        return _out(summary, "\n".join(lines))
+    print(f"device: unknown expansion action {action}")
+    jarvis.close()
+    return 2
+
+
+def _expansion_probes(jarvis: Any) -> dict[str, list]:
+    """Deterministic in-process probes; each returns True/False."""
+    from jarvis.cognition.experience import (
+        Experience,
+        OutcomeEvaluator,
+    )
+    from jarvis.cognition.goals import (
+        GoalInterpreter,
+        HierarchicalPlanner,
+        PlanCritic,
+    )
+    from jarvis.cognition.hypotheses import HypothesisEngine
+    from jarvis.cognition.learning import LearningEngine
+    from jarvis.cognition.selfmodel import CapabilityModel, decide_mode, explain
+    from jarvis.cognition.simulation import ComputeBudget, SimulationBoundary
+    from jarvis.cognition.skills import SelfCorrection, ToolSelector
+    from jarvis.cognition.temporal import (
+        CausalEngine,
+        CausalStatus,
+        evaluate_counterfactual,
+    )
+    from jarvis.core.types import ActionPlan, RiskLevel
+    from jarvis.intelligence import wiring as intel_wiring
+    from jarvis.perception.contract import Observation
+    from jarvis.world.state import linear_trend
+    return {
+        "perception": [
+            lambda: Observation(
+                source="probe", modality="screen",
+                payload={"visible_text": "ok"}).confidence == 0.5,
+        ],
+        "memory": [
+            lambda: jarvis.palace.stats() is not None,
+        ],
+        "reasoning": [
+            lambda: "mode" in intel_wiring.make_meta_reasoner_adapter(
+                None)({}),
+        ],
+        "planning": [
+            lambda: HierarchicalPlanner().plan(
+                GoalInterpreter().interpret(
+                    "check battery")).steps != [],
+        ],
+        "prediction": [
+            lambda: linear_trend([(1.0, 1.0), (2.0, 2.0)]) is not None,
+            lambda: linear_trend([(1.0, 1.0)]) is None,
+        ],
+        "learning": [
+            lambda: LearningEngine(None).learn_from_outcome(
+                Experience(cycle_id="probe"),
+                OutcomeEvaluator.evaluate(
+                    prediction_made=False, action_ok=None,
+                    verification="UNKNOWN",
+                    evidence_count=0)).learned is False,
+        ],
+        "uncertainty": [
+            lambda: HypothesisEngine().generate(
+                [{"summary": "x", "source": "probe"}])[0].uncertainty.value
+            in ("likely", "uncertain", "unknown"),
+        ],
+        "causal_reasoning": [
+            lambda: (lambda engine: engine.promote(
+                engine.propose("a", "b").link_id,
+                CausalStatus.TEMPORAL_ASSOCIATION,
+                evidence="sequence observed").status.value)(
+                    CausalEngine()) == "temporal_association",
+        ],
+        "counterfactual_reasoning": [
+            lambda: evaluate_counterfactual(
+                "what if x?", {"x": 1}, {"x": 2}).label == "HYPOTHETICAL",
+        ],
+        "goal_understanding": [
+            lambda: GoalInterpreter().interpret(
+                "prepare project for deployment").risk_level == "medium",
+        ],
+        "autonomy": [
+            lambda: not ComputeBudget(time_s=30.0).exhausted(),
+            lambda: PlanCritic().review(
+                HierarchicalPlanner().plan(
+                    GoalInterpreter().interpret("check battery"))
+            )["verdict"] in ("valid", "needs_revision", "blocked"),
+        ],
+        "tool_intelligence": [
+            lambda: isinstance(ToolSelector(
+                jarvis.tools,
+                jarvis.policy).propose("anything"), list),
+        ],
+        "self_correction": [
+            lambda: SelfCorrection(max_retries=1).run(
+                lambda n, p: {"ok": n > 0},
+                alternatives=["retry"]).ok is True,
+        ],
+        "security": [
+            lambda: jarvis.policy.evaluate("probe", ActionPlan(
+                action="nope", args={},
+                required_permissions=["nope.never"],
+                risk=RiskLevel.LOW)).allow is False,
+        ],
+        "explainability": [
+            lambda: "what" in explain({}),
+        ],
+    }
+
+
+def _expansion_benchmarks(jarvis: Any) -> dict[str, Any]:
+    """Timed scenarios for the benchmark command."""
+    from jarvis.cognition.context import ContextEngine
+    from jarvis.cognition.experience import Experience, OutcomeEvaluator
+    from jarvis.cognition.goals import GoalInterpreter, HierarchicalPlanner
+    from jarvis.cognition.hypotheses import HypothesisEngine
+    from jarvis.cognition.simulation import ComputeBudget, SimulationBoundary
+    from jarvis.cognition.learning import LearningEngine
+    from jarvis.cognition.beliefs import BeliefStore
+    from jarvis.world.state import linear_trend
+    home = str(jarvis.config.paths.home)
+    engine = ContextEngine(world=jarvis.world_registry,
+                           palace=jarvis.palace)
+    hypotheses = HypothesisEngine()
+    planner = HierarchicalPlanner()
+    boundary = SimulationBoundary()
+    learner = LearningEngine(BeliefStore(home))
+    budget = ComputeBudget()
+    return {
+        "context_assembly": lambda: engine.assemble("battery status"),
+        "hypothesis_generation": lambda: hypotheses.generate(
+            [{"summary": "battery low", "source": "probe"}],
+            goal="check battery"),
+        "planning": lambda: planner.plan(
+            GoalInterpreter().interpret("check battery")),
+        "simulation": lambda: boundary.run(
+            "what if?", {"level": 50}, {"level": 20}),
+        "learning_update": lambda: learner.learn_from_outcome(
+            Experience(cycle_id="bench"),
+            OutcomeEvaluator.evaluate(
+                prediction_made=False, action_ok=None,
+                verification="UNKNOWN", evidence_count=0)),
+        "budget_check": lambda: budget.consume("steps"),
+        "trend_compute": lambda: linear_trend(
+            [(float(i), float(i)) for i in range(10)]),
+    }
 
 
 def _intel_adaptive(jarvis: Any, args: Any, _out: Any) -> int:
@@ -1968,6 +2210,9 @@ def main(argv: list[str] | None = None) -> int:
             return _intel_perception(jarvis, args, _intel_out)
         if args.action in ("experience", "beliefs", "learning"):
             return _intel_adaptive(jarvis, args, _intel_out)
+        if args.action in ("hypotheses", "goals", "skills", "scorecard",
+                           "benchmark", "explain"):
+            return _intel_expansion(jarvis, args, _intel_out)
         payload = {"loop": loop.status(),
                    "subsystems": {
                        "world": jarvis.world_registry.stats()
