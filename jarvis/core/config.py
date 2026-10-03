@@ -146,6 +146,39 @@ class DeviceTransportConfig:
 
 
 @dataclass
+class VoiceConfig:
+    """Local-first voice I/O (5.1). STT and TTS are independent.
+
+    STT stays faster-whisper; TTS defaults to local Chatterbox with
+    the `male_old_movie.flac` reference as the JARVIS voice identity.
+    All paths configurable; no machine-specific absolutes. Retention
+    defaults to transient (no raw audio, no transcript persistence).
+    """
+
+    enabled: bool = True
+    stt_provider: str = "faster-whisper"
+    tts_provider: str = "chatterbox"
+    profile: str = "jarvis"
+    reference_audio: str = "~/.config/jarvis/voices/male_old_movie.flac"
+    language: str = "en"
+    style: str = "calm"
+    emotion: str = "restrained"
+    model: str = "chatterbox-turbo"
+    output_format: str = "wav"
+    sample_rate: int = 24000
+    output_device: str = "default"
+    exaggeration: float = 0.5
+    temperature: float = 0.8
+    cfg_weight: float = 0.5
+    retain_audio: bool = False
+    retain_transcripts: bool = False
+    playback_backend: str = "auto"
+    timeout_s: float = 120.0
+    queue_max: int = 4
+    unload_after_s: float = 0.0
+
+
+@dataclass
 class JarvisConfig:
     paths: PathsConfig = field(default_factory=PathsConfig)
     cognitive: CognitiveConfig = field(default_factory=CognitiveConfig)
@@ -155,6 +188,7 @@ class JarvisConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     device_fabric: DeviceFabricConfig = field(default_factory=DeviceFabricConfig)
     device_transport: DeviceTransportConfig = field(default_factory=DeviceTransportConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
     personality: dict[str, Any] = field(
         default_factory=lambda: {
             "formality": "professional",
@@ -226,6 +260,12 @@ class JarvisConfig:
         cloud = os.environ.get("JARVIS_CLOUD")
         if cloud is not None:
             self.models.cloud_enabled = cloud.lower() in ("1", "true", "yes")
+        ref = os.environ.get("JARVIS_VOICE_REFERENCE")
+        if ref:
+            self.voice.reference_audio = ref
+        provider = os.environ.get("JARVIS_VOICE_PROVIDER")
+        if provider:
+            self.voice.tts_provider = provider
 
     def validate(self) -> list[str]:
         errors: list[str] = []

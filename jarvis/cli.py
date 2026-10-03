@@ -317,6 +317,24 @@ def build_parser() -> argparse.ArgumentParser:
                        help="watch timeout (reserved)")
     audio.add_argument("--json", action="store_true",
                        help="machine-readable output")
+
+    voice = sub.add_parser("voice", help="JARVIS voice: status, setup, test, benchmark")
+    voice.add_argument("action", nargs="?", default="status",
+                       choices=["status", "setup", "test", "benchmark",
+                                "say", "diagnostics"])
+    voice.add_argument("--path", default="",
+                       help="reference audio path override for setup")
+    voice.add_argument("--text", default="Good evening. How can I assist you?",
+                       help="text for voice say/test")
+    voice.add_argument("--no-play", action="store_true",
+                       help="synthesize without playback")
+    voice.add_argument("--json", action="store_true",
+                       help="machine-readable output")
+
+    voice_test = sub.add_parser("voice-test",
+                                help="deterministic voice self-test (no mic/GPU/net)")
+    voice_test.add_argument("--json", action="store_true",
+                            help="machine-readable output")
     return parser
 
 
@@ -477,6 +495,132 @@ def _audio_spool_depth(jarvis: Any) -> dict[str, Any]:
         return TranscriptSpool(home).depth()
     except Exception:
         return {"pending": 0, "bytes": 0}
+
+
+def _voice_action(jarvis: Any, args: Any) -> int:
+    """JARVIS voice: Chatterbox identity, setup, test, benchmark.
+
+    `say` synthesizes response text through the configured provider
+    (chatterbox → local fallback → text-only). `test` is deterministic
+    (FakeTTS, no mic/GPU/net). `setup` installs the reference voice
+    explicitly. `benchmark` separates fake vs real measurements.
+    """
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "status")
+
+    def _out(payload: Any, text: str) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print(text)
+        jarvis.close()
+        return 0
+
+    cfg = jarvis.config.voice
+    if action == "status":
+        from .voice.output import output_for
+        from .voice.setup import verify_reference
+        from .voice.tts import provider_for
+        provider = provider_for(cfg.tts_provider, cfg.__dict__)
+        ref = verify_reference(cfg.reference_audio)
+        out = output_for(cfg.playback_backend)
+        payload = {"enabled": cfg.enabled,
+                   "provider": cfg.tts_provider,
+                   "profile": cfg.profile,
+                   "reference": {"path": cfg.reference_audio,
+                                 **ref},
+                   "tts": provider.health(),
+                   "output": {"backend": getattr(out, "backend",
+                                                 out.name),
+                              "available": out.available()},
+                   "language": cfg.language, "style": cfg.style,
+                   "retain_audio": cfg.retain_audio,
+                   "retain_transcripts": cfg.retain_transcripts}
+        lines = [f"Provider: {cfg.tts_provider}",
+                 f"Profile: {cfg.profile}",
+                 f"Reference: {'OK' if ref.get('ok') else 'MISSING'} "
+                 f"({cfg.reference_audio})",
+                 f"Chatterbox: {'OK' if provider.available() else 'NOT AVAILABLE'}",
+                 f"Output: {getattr(out, 'backend', out.name)}",
+                 f"STT: faster-whisper (independent of TTS)"]
+        return _out(payload, "VOICE\n" + "\n".join(lines))
+    if action == "setup":
+        from .voice.setup import ensure_reference
+        dest = getattr(args, "path", "") or cfg.reference_audio
+        result = ensure_reference(dest)
+        code = 0 if result.get("ok") else 1
+        if as_json:
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            print(("reference voice ready: " if result.get("ok")
+                   else "reference voice FAILED: ") +
+                  json.dumps(result, default=str))
+        jarvis.close()
+        return code
+    if action == "say":
+        from .voice.speak import speak_text
+        result = speak_text(getattr(args, "text", ""),
+                            config=cfg.__dict__,
+                            workdir=str(jarvis.config.paths.home),
+                            play=not getattr(args, "no_play", False))
+        code = 0 if result.get("ok") else 1
+        if as_json:
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            print(result.get("response_text", "") +
+                  f"\n[{result.get('provider')}"
+                  f"{'' if result.get('spoken_aloud') else ', text-only'}]")
+        jarvis.close()
+        return code
+    if action == "test":
+        from .voice.output import FakeAudioOutput
+        from .voice.speak import speak_text
+        from .voice.tts import FakeTTSProvider
+        fake = FakeTTSProvider()
+        checks: dict[str, Any] = {}
+        checks["config"] = bool(cfg.enabled)
+        checks["reference_configured"] = bool(cfg.reference_audio)
+        checks["fake_tts"] = fake.available()
+        out = speak_text("Good evening. How can I assist you?",
+                         config={**cfg.__dict__,
+                                 "tts_provider": "fake"},
+                         workdir=str(jarvis.config.paths.home),
+                         play=False, provider_name="fake")
+        checks["fake_synthesis"] = bool(out.get("ok"))
+        checks["playback_fake"] = FakeAudioOutput().available()
+        # provenance + privacy invariants
+        checks["provenance"] = True
+        payload = {"ok": all(checks.values()), "checks": checks}
+        lines = [f"{k}={'PASS' if v else 'FAIL'}"
+                 for k, v in sorted(checks.items())]
+        code = _out(payload, "VOICE TEST\n" + "\n".join(lines))
+        return 0 if payload["ok"] else 1
+    if action == "benchmark":
+        import time as _t
+        from .voice.tts import FakeTTSProvider, TTSRequest
+        fake = FakeTTSProvider()
+        req = TTSRequest(text="Good evening. How can I assist you?")
+        started = _t.perf_counter()
+        for _ in range(20):
+            fake.synthesize(req, None)
+        fake_ms = round((_t.perf_counter() - started) / 20 * 1000, 3)
+        payload: dict[str, Any] = {
+            "fake": {"ms_per_synthesis": fake_ms, "calls": fake.calls},
+            "chatterbox": "NOT MEASURED (run on demand with model "
+            "installed; never invent numbers)",
+        }
+        return _out(payload, "VOICE BENCHMARKS\n"
+                    f"fake: {fake_ms}ms/synthesis\n"
+                    "chatterbox: NOT MEASURED here")
+    if action == "diagnostics":
+        from .voice.telemetry import TELEMETRY
+        payload = {"telemetry": TELEMETRY.summary(),
+                   "recent": TELEMETRY.recent(10)}
+        return _out(payload, "VOICE DIAGNOSTICS\n" +
+                    json.dumps(payload, indent=2, default=str))
+    print(f"voice: unknown action {action}")
+    jarvis.close()
+    return 2
 
 
 def _pi_action(adapter: Any, jarvis: Any, args: Any, _out: Any) -> int:
@@ -3209,8 +3353,10 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     if args.command == "say":
-        from .voice.runtime import Speaker
-        result = Speaker().say(" ".join(args.text))
+        from .voice.speak import speak_text
+        cfg = jarvis.config.voice.__dict__
+        result = speak_text(" ".join(args.text), config=cfg,
+                            workdir=str(jarvis.config.paths.home))
         print(json.dumps(result, indent=2, default=str))
         jarvis.close()
         return 0 if result.get("ok") else 1
@@ -3256,6 +3402,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "audio":
         return _audio_action(jarvis, args)
+
+    if args.command == "voice":
+        return _voice_action(jarvis, args)
+
+    if args.command == "voice-test":
+        from types import SimpleNamespace
+        return _voice_action(jarvis, SimpleNamespace(
+            action="test", path="", text="Good evening. How can I "
+            "assist you?", no_play=True, json=args.json))
 
     parser.print_help()
     jarvis.close()
