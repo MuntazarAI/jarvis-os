@@ -60,6 +60,11 @@ from .authz import (
     validate_grant_actor,
     validate_grant_capability,
 )
+from .outbox import (
+    CommandOutbox,
+    OutboxError,
+)
+from .service import CommandServiceError, DeviceCommandService
 from .fabric import DeviceFabric, FabricError
 from .identity import (
     AUTH_METHODS,
@@ -136,7 +141,10 @@ __all__ = [
     "ApprovalStore",
     "AUDIT_FILENAME",
     "CONSUMED",
+    "CommandOutbox",
+    "CommandServiceError",
     "DENIED",
+    "DeviceCommandService",
     "Capability",
     "CapabilityError",
     "CapabilityRegistry",
@@ -162,6 +170,7 @@ __all__ = [
     "LocalNode",
     "MessageType",
     "NodeIdentity",
+    "OutboxError",
     "PENDING",
     "PairingError",
     "PairingManager",
