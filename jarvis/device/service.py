@@ -169,7 +169,72 @@ class DeviceCommandService:
             return False
 
     def command_status(self, command_id: str) -> dict[str, Any] | None:
-        return self.outbox.get(command_id)
+        record = self.outbox.get(command_id)
+        if record is None:
+            return None
+        return self._enrich(record)
+
+    def commands_list(self, state: str | None = None,
+                      limit: int = 100) -> list[dict[str, Any]]:
+        """Newest-first command summaries with derived display states."""
+        try:
+            self.outbox._maybe_reload()
+            records = sorted(self.outbox._commands.values(),
+                             key=lambda r: float(r.get("created_at") or 0.0),
+                             reverse=True)
+        except Exception:
+            return []
+        out: list[dict[str, Any]] = []
+        for record in records:
+            view = self._enrich(dict(record))
+            if state is not None and view["display_state"] != state:
+                continue
+            out.append(view)
+            if len(out) >= max(1, limit):
+                break
+        return out
+
+    @staticmethod
+    def _display_state(record: dict[str, Any],
+                       approval_state: str = "") -> str:
+        """Operator-facing state derived from stored states (no explosion).
+
+        Stored outbox states are the source of truth; approval coupling
+        refines QUEUED into WAITING_APPROVAL/APPROVED, and SENT/ACK into
+        DELIVERED.
+        """
+        state = str(record.get("state", ""))
+        if state == "queued":
+            if approval_state == "pending":
+                return "WAITING_APPROVAL"
+            if approval_state == "approved":
+                return "APPROVED"
+            return "QUEUED"
+        if state in ("sent", "acknowledged"):
+            return "DELIVERED"
+        return state.upper()
+
+    def _enrich(self, record: dict[str, Any]) -> dict[str, Any]:
+        approval_state = ""
+        approval_id = str(record.get("approval_id", ""))
+        if approval_id:
+            try:
+                info = self.approvals.status(approval_id)
+                approval_state = str((info or {}).get("state", ""))
+            except Exception:
+                approval_state = ""
+        view = dict(record)
+        view["display_state"] = self._display_state(record, approval_state)
+        view["approval_state"] = approval_state
+        result = record.get("result")
+        if isinstance(result, dict):
+            view["result_summary"] = str(result.get("result", result.get(
+                "error", "")))[:200]
+        elif result is not None:
+            view["result_summary"] = str(result)[:200]
+        else:
+            view["result_summary"] = str(record.get("error", ""))[:200]
+        return view
 
     def cancel_command(self, command_id: str, *, by: str = "",
                        reason: str = "") -> dict[str, Any]:
@@ -253,6 +318,10 @@ class DeviceCommandService:
         if not gate.get("authorized"):
             return self._handle_deny(record, list(gate.get("reasons", [])),
                                      gate.get("approval_token", ""))
+        self.audit.record("device.command.authorized", actor=actor,
+                          device_id=device_id, ok=True,
+                          extra={"command_id": command_id,
+                                 "capability": capability})
         try:
             self.outbox.transition(command_id, DISPATCHING,
                                    detail=f"actor={actor}")
@@ -289,6 +358,7 @@ class DeviceCommandService:
         command_id = str(record.get("command_id", ""))
         device_id = str(record.get("device_id", ""))
         capability = str(record.get("capability", ""))
+        actor = str(record.get("actor", ""))
         if (reply.get("device_id") and reply.get("device_id") != device_id) \
                 or (reply.get("capability")
                     and reply.get("capability") != capability):
@@ -309,6 +379,10 @@ class DeviceCommandService:
         except OutboxError as exc:
             return {"ok": False, "command_id": command_id,
                     "error": str(exc)[:200]}
+        self.audit.record("device.command.delivered", actor=actor,
+                          device_id=device_id, ok=True,
+                          extra={"command_id": command_id,
+                                 "capability": capability})
         ok, msg = self.outbox.complete(command_id, {
             "result": reply.get("result"),
             "correlation_id": reply.get("correlation_id", ""),
@@ -379,6 +453,10 @@ class DeviceCommandService:
             return {"ok": False, "command_id": command_id,
                     "deferred": True, "error": joined[:300]}
         failed = self.outbox.fail(command_id, joined, retryable=False)
+        self.audit.record("device.command.denied", actor=actor,
+                          device_id=str(record.get("device_id", "")),
+                          ok=False, reasons=reasons,
+                          extra={"command_id": command_id})
         return {"ok": False, "command_id": command_id,
                 "error": str(failed.get("error", joined))[:300]}
 

@@ -274,6 +274,12 @@ class DeviceGrantStore:
         return [dict(r) for r in self._grants.values()
                 if r.get("device_id") == device_id]
 
+    def all_grants(self) -> list[dict[str, Any]]:
+        """Every grant record, oldest first (operator listing)."""
+        self._maybe_reload()
+        return sorted((dict(r) for r in self._grants.values()),
+                      key=lambda r: float(r.get("created_at") or 0.0))
+
     def suspended_devices(self) -> dict[str, dict[str, Any]]:
         self._maybe_reload()
         return {k: dict(v) for k, v in self._suspended.items()}

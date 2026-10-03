@@ -93,7 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     dev = sub.add_parser("device", help="device endpoints: android node, socket transport")
     dev.add_argument("area", nargs="?", default="android",
-                     choices=["android", "transport"])
+                     choices=["android", "transport", "grants", "approvals",
+                              "commands", "policy"])
     dev.add_argument("action", nargs="?", default="status",
                      choices=["status", "list", "info", "register", "pair",
                               "trust", "revoke", "unpair", "capabilities",
@@ -101,12 +102,20 @@ def build_parser() -> argparse.ArgumentParser:
                               "disconnect", "queue", "serve", "peers",
                               "approve", "inspect", "grants", "grant",
                               "suspend", "restore", "deny", "command-status",
-                              "cancel", "outbox", "audit"])
+                              "cancel", "outbox", "audit", "show", "watch"])
     dev.add_argument("--device", default="", help="device id")
     dev.add_argument("--command-id", default="",
                      help="durable command id (command-status, cancel)")
     dev.add_argument("--approval", default="",
                      help="durable approval token (approve, deny)")
+    dev.add_argument("--state", default="",
+                     help="filter by state (approvals/commands list)")
+    dev.add_argument("--actor-name", default="",
+                     help="actor for policy grants (default: --by value)")
+    dev.add_argument("--permission", default="",
+                     help="policy permission (policy grant/revoke)")
+    dev.add_argument("--timeout", type=float, default=0.0,
+                     help="watch timeout seconds (0 = until Ctrl-C)")
     dev.add_argument("--name", default="", help="node name for register")
     dev.add_argument("--code", default="", help="6-digit pairing code")
     dev.add_argument("--node", default="",
@@ -373,6 +382,270 @@ def _device_service_action(svc: Any, adapter: Any, args: Any,
                         f"{'ok' if e.get('ok') else 'FAIL'}"
                         for e in found) or "no audit events")
     print(f"device: unknown action {action}")
+    jarvis.close()
+    return 2
+
+
+def _device_area_collection(svc: Any, adapter: Any, jarvis: Any,
+                            args: Any, _out: Any) -> int:
+    """Noun-group areas: grants / approvals / commands / policy."""
+    area, action = args.area, args.action
+    if area == "grants":
+        return _device_grants(svc, jarvis, args, _out)
+    if area == "approvals":
+        return _device_approvals(svc, jarvis, args, _out)
+    if area == "commands":
+        return _device_commands(svc, jarvis, args, _out)
+    if area == "policy":
+        return _device_policy(jarvis, args, _out)
+    print(f"device: unknown area {area}")
+    jarvis.close()
+    return 2
+
+
+def _device_grants(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
+    action = args.action
+    if action == "list":
+        found = svc.grants.all_grants() if not args.device else \
+            svc.grants.grants_for(args.device)
+        return _out({"grants": found,
+                     "suspended": svc.grants.suspended_devices()},
+                    "\n".join(
+                        f"{g['grant_id'][:12]:14} {g['device_id'][:12]:14} "
+                        f"{g['capability']:24} actor={g['actor']:12} "
+                        f"{g['status']}" for g in found)
+                    or "no grants (default deny)")
+    if action == "show":
+        if not args.device:
+            print("usage: jarvis device grants show --device <id>")
+            jarvis.close()
+            return 2
+        found = svc.grants.grants_for(args.device)
+        return _out({"device_id": args.device, "grants": found,
+                     "suspended": args.device in svc.grants.suspended_devices()},
+                    "\n".join(
+                        f"{g['grant_id']}: {g['capability']} "
+                        f"actor={g['actor']} {g['status']}"
+                        for g in found) or "no grants (default deny)")
+    if action == "grant":
+        if not (args.device and args.capability):
+            print("usage: jarvis device grants grant --device <id> "
+                  "--capability device.battery [--reason R]")
+            jarvis.close()
+            return 2
+        try:
+            result = svc.grants.grant(args.device, args.capability,
+                                      by=args.by, reason=args.reason)
+        except ValueError as exc:
+            print(f"device: {exc}")
+            jarvis.close()
+            return 1
+        return _out(result, f"granted {result['grant_id']}")
+    if action == "revoke":
+        if not (args.device and args.capability):
+            print("usage: jarvis device grants revoke --device <id> "
+                  "--capability device.battery [--reason R]")
+            jarvis.close()
+            return 2
+        result = svc.grants.revoke(args.device, args.capability,
+                                   by=args.by, reason=args.reason)
+        return _out(result, f"revoked {len(result['revoked'])} grant(s)")
+    print(f"device grants: unknown action {action} "
+          "(list|show|grant|revoke)")
+    jarvis.close()
+    return 2
+
+
+def _device_approvals(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
+    import time as _time
+    action = args.action
+    if action == "list":
+        found = svc.approvals.list(args.state or None)
+        header = "PENDING APPROVALS" if (args.state or "pending") == "pending" \
+            else "APPROVALS"
+        lines = [header, "ID           DEVICE       ACTION"
+                 "              EXPIRES"]
+        for item in found:
+            exp = item["expires_at"]
+            left = max(0, int(exp - _time.time())) if exp else -1
+            age = f"{left}s" if 0 <= left < 90 else (
+                f"{left // 60}m" if left >= 0 else "never")
+            lines.append(f"{item['approval_id'][:12]:12} "
+                         f"{item['device_id'][:12]:12} "
+                         f"{item['capability'][:20]:20} {age}")
+        return _out({"approvals": found},
+                    "\n".join(lines) if found else "no pending approvals")
+    if action == "show":
+        if not args.approval:
+            print("usage: jarvis device approvals show --approval <token>")
+            jarvis.close()
+            return 2
+        info = svc.approval_status(args.approval)
+        if info is None:
+            print(f"unknown approval {args.approval[:12]}")
+            jarvis.close()
+            return 1
+        svc.audit.record("device.approval.inspected", actor=args.by,
+                         device_id=str(info.get("device_id", "")), ok=True,
+                         extra={"approval_id": args.approval})
+        return _out(info, f"{info['token'][:12]} state={info['state']} "
+                          f"device={info['device_id']} "
+                          f"capability={info['capability']} "
+                          f"actor={info['actor']}")
+    if action == "approve":
+        if not args.approval:
+            print("usage: jarvis device approvals approve --approval <token>")
+            jarvis.close()
+            return 2
+        ok = svc.approve_command(args.approval, by=args.by)
+        return _out({"approval_id": args.approval, "approved": ok},
+                    f"approved {args.approval[:12]}" if ok
+                    else f"cannot approve {args.approval[:12]}")
+    if action == "deny":
+        if not args.approval:
+            print("usage: jarvis device approvals deny --approval <token> "
+                  "[--reason R]")
+            jarvis.close()
+            return 2
+        ok = svc.deny_command(args.approval, by=args.by,
+                              reason=args.reason)
+        return _out({"approval_id": args.approval, "denied": ok},
+                    f"denied {args.approval[:12]}" if ok
+                    else f"cannot deny {args.approval[:12]}")
+    if action == "revoke":
+        if not args.approval:
+            print("usage: jarvis device approvals revoke --approval <token> "
+                  "[--reason R]")
+            jarvis.close()
+            return 2
+        ok = svc.approvals.revoke(args.approval, by=args.by,
+                                  reason=args.reason)
+        return _out({"approval_id": args.approval, "revoked": ok},
+                    f"revoked {args.approval[:12]}" if ok
+                    else f"cannot revoke {args.approval[:12]}")
+    if action == "watch":
+        return _device_approvals_watch(svc, jarvis, args)
+    print("device approvals: unknown action "
+          f"{action} (list|show|approve|deny|revoke|watch)")
+    jarvis.close()
+    return 2
+
+
+def _device_approvals_watch(svc: Any, jarvis: Any, args: Any) -> int:
+    """Bounded poll for new PENDING approvals. Exits cleanly, no secrets."""
+    import time as _time
+    interval = 5.0
+    deadline = _time.monotonic() + args.timeout if args.timeout > 0 else None
+    seen: set[str] = set()
+    try:
+        while True:
+            try:
+                pending = svc.approvals.list("pending")
+            except Exception as exc:
+                print(f"watch error: {exc}")
+                jarvis.close()
+                return 1
+            for item in pending:
+                token = item["approval_id"]
+                if token not in seen:
+                    seen.add(token)
+                    exp = item["expires_at"]
+                    left = max(0, int(exp - _time.time())) if exp else -1
+                    age = f"{left}s" if 0 <= left < 90 else (
+                        f"{left // 60}m" if left >= 0 else "never")
+                    print(f"PENDING {token[:12]} {item['device_id'][:12]} "
+                          f"{item['capability']} expires={age}", flush=True)
+            if deadline is not None and _time.monotonic() >= deadline:
+                jarvis.close()
+                return 0
+            _sleep_until = _time.monotonic() + interval
+            while _time.monotonic() < _sleep_until:
+                _time.sleep(0.5)
+                if deadline is not None and _time.monotonic() >= deadline:
+                    jarvis.close()
+                    return 0
+    except KeyboardInterrupt:
+        jarvis.close()
+        return 0
+
+
+def _device_commands(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
+    action = args.action
+    if action == "list":
+        found = svc.commands_list(args.state or None)
+        return _out({"commands": found},
+                    "\n".join(
+                        f"{c['command_id'][:12]:14} "
+                        f"{c['display_state']:16} "
+                        f"{str(c.get('device_id', ''))[:12]:14} "
+                        f"{c.get('capability', '')}"
+                        for c in found) or "no commands")
+    if action == "show":
+        if not args.command_id:
+            print("usage: jarvis device commands show --command-id <id>")
+            jarvis.close()
+            return 2
+        info = svc.command_status(args.command_id)
+        if info is None:
+            print(f"unknown command {args.command_id}")
+            jarvis.close()
+            return 1
+        svc.audit.record("device.command.inspected", actor=args.by,
+                         device_id=str(info.get("device_id", "")), ok=True,
+                         extra={"command_id": args.command_id})
+        lines = [f"{info['command_id']} state={info['display_state']} "
+                 f"(stored={info['state']})",
+                 f"device={info.get('device_id', '')} "
+                 f"capability={info.get('capability', '')} "
+                 f"actor={info.get('actor', '')}",
+                 f"retries={info.get('retries', 0)} "
+                 f"approval={str(info.get('approval_id', ''))[:12]} "
+                 f"approval_state={info.get('approval_state', '')}",
+                 f"result={info.get('result_summary', '')}"]
+        return _out(info, "\n".join(lines))
+    print(f"device commands: unknown action {action} (list|show)")
+    jarvis.close()
+    return 2
+
+
+def _device_policy(jarvis: Any, args: Any, _out: Any) -> int:
+    action = args.action
+    policy = jarvis.device_fabric.policy
+    if action == "list":
+        if args.actor_name:
+            found = policy.list_grants(args.actor_name)
+        else:
+            found = policy.list_grants()
+        lines = [f"{actor:16} {', '.join(perms)}"
+                 for actor, perms in sorted(found.items())]
+        return _out({"grants": found},
+                    "\n".join(lines) or "no policy grants")
+    if action == "show":
+        actor = args.actor_name or args.by
+        perms = policy.get_grant(actor)
+        return _out({"actor": actor, "permissions": perms},
+                    f"{actor}: {', '.join(perms) or '(none)'}")
+    if action == "grant":
+        if not (args.actor_name and args.permission):
+            print("usage: jarvis device policy grant --actor NAME "
+                  "--permission some.permission [--reason R]")
+            jarvis.close()
+            return 2
+        policy.grant(args.actor_name, args.permission)
+        return _out({"actor": args.actor_name,
+                     "permission": args.permission, "granted": True},
+                    f"granted {args.permission} to {args.actor_name}")
+    if action == "revoke":
+        if not (args.actor_name and args.permission):
+            print("usage: jarvis device policy revoke --actor NAME "
+                  "--permission some.permission")
+            jarvis.close()
+            return 2
+        policy.revoke(args.actor_name, args.permission)
+        return _out({"actor": args.actor_name,
+                     "permission": args.permission, "revoked": True},
+                    f"revoked {args.permission} from {args.actor_name}")
+    print(f"device policy: unknown action {action} (list|show|grant|revoke)")
     jarvis.close()
     return 2
 
@@ -1565,6 +1838,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(text)
             jarvis.close()
             return 0
+
+        if args.area in ("grants", "approvals", "commands", "policy"):
+            from .device.service import DeviceCommandService
+            svc = DeviceCommandService(adapter)
+            return _device_area_collection(svc, adapter, jarvis, args, _out)
 
         if args.area == "transport":
             from .device.android_transport import (
