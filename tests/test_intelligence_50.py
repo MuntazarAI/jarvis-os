@@ -723,3 +723,188 @@ def test_end_to_end_intelligence_scenario(tmp_path):
     assert sim.label == "HYPOTHETICAL"
     assert decide_mode(policy_allowed=None,
                        uncertainty="uncertain") == DecisionMode.EXPLAIN
+
+
+def _scenario_loop(tmp_path):
+    """Online loopback device + service. Returns (svc, dev)."""
+    from jarvis.device.service import DeviceCommandService
+    from jarvis.device.android import AndroidNodeAdapter
+    from jarvis.device.fabric import DeviceFabric
+    from jarvis.device.registry import DeviceRegistry
+    from jarvis.device.transport import InProcessTransport, LocalNode
+    from jarvis.device.protocol import FabricMessage, MessageType
+    from jarvis.policy.policy import PolicyEngine
+    from jarvis.core.config import JarvisConfig
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    policy = PolicyEngine(JarvisConfig())
+    policy.config.policy.require_approval_above_risk = 0.8
+    policy.grant("cognitive-loop", "device.device.battery")
+    fabric = DeviceFabric(home=home, registry=DeviceRegistry(
+        home / "device-fabric.json"), policy=policy,
+        transport=InProcessTransport())
+    adapter = AndroidNodeAdapter(fabric)
+    info = adapter.register_android("E2E", {"device_model": "t",
+                                            "android_version": "15",
+                                            "app_version": "1"}, by="e2e")
+    dev = info["device_id"]
+    adapter.trust_android(dev, by="e2e", reason="scenario")
+    adapter.declare_android_capabilities(dev, ["device.battery"], by="e2e")
+    adapter.connect(dev, by="e2e")
+    node = LocalNode(dev)
+
+    def handle(msg):
+        return FabricMessage(
+            sender_node=dev, recipient_node=msg.sender_node,
+            message_type=MessageType.COMMAND_RESULT.value,
+            capability="device.battery",
+            correlation_id=msg.message_id,
+            payload={"ok": True, "result": "battery 77%"})
+
+    node.on("device.battery", handle)
+    fabric.transport.register_node(node)
+    svc = DeviceCommandService(adapter)
+    svc.grants.grant(dev, "device.battery", by="e2e")
+    return svc, dev
+
+
+def test_scenario_a_perception_to_learning(tmp_path):
+    """Perception -> belief -> hypothesis -> prediction -> action ->
+    verification -> experience -> learning (synthetic, deterministic)."""
+    from jarvis.cognition.beliefs import BeliefStore
+    from jarvis.cognition.experience import (
+        EvidenceRef,
+        Experience,
+        ExperienceStore,
+        OutcomeEvaluator,
+        OutcomeState,
+    )
+    from jarvis.cognition.hypotheses import HypothesisEngine
+    from jarvis.cognition.learning import LearningEngine
+    from jarvis.perception.contract import Observation, Modality
+    from jarvis.perception.pipeline import PerceptionPipeline
+    from jarvis.memory.palace import MemoryPalace
+    from jarvis.world.registry import WorldRegistry
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    # Perceive through the real contract + pipeline.
+    world = WorldRegistry()
+    palace = MemoryPalace(path=home / "m.db")
+    pipe = PerceptionPipeline(world=world, palace=palace, home=home)
+    obs = Observation(
+        source="screen-provider", modality=Modality.SCREEN,
+        payload={"status": "ok", "visible_text": "battery low warning",
+                 "ocr_confidence": 0.6}, confidence=0.8)
+    assert pipe.ingest(obs)["ok"] is True
+    # Believe + hypothesize from the observation.
+    beliefs = BeliefStore(home)
+    belief = beliefs.upsert("phone battery is low", 0.7,
+                            evidence=[obs.observation_id],
+                            sources=["screen"])
+    ranked = HypothesisEngine().generate(
+        [{"summary": "battery low warning", "source": "screen-provider"}],
+        goal="check battery")
+    assert ranked[0].status.value == "leading"
+    # Act through the verified loopback device path.
+    svc, dev = _scenario_loop(tmp_path)
+    try:
+        from jarvis.planning.planner import MissionPlanner
+        from jarvis.intelligence.cognitive import CognitiveSupervisor
+        from jarvis.intelligence.loop import IntelligenceLoop
+        import jarvis.intelligence.wiring as wiring
+        planner = MissionPlanner()
+        planner.register("battery", "device.get_battery",
+                         {"device_id": dev})
+        svc.adapter.fabric.policy.config.policy.\
+            require_approval_above_risk = 0.8
+        loop = IntelligenceLoop(
+            normalize=lambda e: {"payload": dict(e)
+                                 if isinstance(e, dict) else {}},
+            reason=lambda ctx: {"concluded": True,
+                                "summary": "phone battery check"},
+            plan=planner.plan,
+            policy_check=wiring.make_policy_hook(
+                svc.adapter.fabric.policy, "cognitive-loop",
+                device_service=svc),
+            executor=wiring.make_device_executor(svc, "cognitive-loop"),
+            verify=wiring.make_verify_hook())
+        loop.start()
+        supervisor = CognitiveSupervisor(loop, home=home)
+        out = supervisor.process(
+            {"source": "user", "type": "user",
+             "payload": {"text": "check phone battery"}})
+        assert out.action.action == "device.get_battery"
+        assert out.verification.verdict == "VERIFIED"
+        # Experience + learn from the verified outcome.
+        evaluation = OutcomeEvaluator.evaluate(
+            prediction_made=False, action_ok=True,
+            verification="VERIFIED", evidence_count=2)
+        assert evaluation.should_learn is True
+        engine = LearningEngine(beliefs)
+        learned = False
+        for i in range(3):
+            cycle_exp = Experience(
+                cycle_id=f"{out.cycle_id}-{i}",
+                outcome=OutcomeState.SUCCESS, confidence=0.7,
+                observation_refs=[EvidenceRef(
+                    kind="observation", ref_id=obs.observation_id)],
+                provenance={"scenario": "A"})
+            cycle_report = engine.learn_from_outcome(cycle_exp, evaluation)
+            learned = learned or cycle_report.learned
+        assert learned is True  # 3rd verified success emits the pattern
+        assert ExperienceStore(home).count() >= 1
+    finally:
+        pass
+
+
+def test_scenario_b_goal_plan_correct(tmp_path):
+    """Goal -> hierarchical plan -> critic -> correction -> success."""
+    from jarvis.cognition.goals import (
+        GoalInterpreter,
+        HierarchicalPlanner,
+        PlanCritic,
+    )
+    from jarvis.cognition.selfmodel import decide_mode, DecisionMode
+    from jarvis.cognition.skills import SelfCorrection
+    goal = GoalInterpreter().interpret("check phone battery health")
+    assert goal.risk_level == "low"
+    plan = HierarchicalPlanner().plan(goal)
+    assert PlanCritic().review(plan)["verdict"] in ("valid",
+                                                    "needs_revision")
+    attempts = []
+    result = SelfCorrection(max_retries=2).run(
+        lambda n, p: (attempts.append(n),
+                      {"ok": n >= 1})[1],
+        diagnose=lambda out: "transient",
+        alternatives=["retry", "alternate"])
+    assert result.ok is True and attempts == [0, 1]
+    assert decide_mode(policy_allowed=True,
+                       uncertainty="likely") == DecisionMode.ACT
+
+
+def test_scenario_c_contradiction_to_decision(tmp_path):
+    """Contradictory observations -> uncertainty -> evidence ->
+    updated belief -> decision."""
+    from jarvis.cognition.beliefs import BeliefStore, BeliefStatus
+    from jarvis.cognition.hypotheses import HypothesisEngine, Uncertainty
+    from jarvis.cognition.selfmodel import decide_mode, DecisionMode
+    store = BeliefStore(tmp_path)
+    belief = store.upsert("service is up", 0.75, evidence=["probe-1"])
+    ranked = HypothesisEngine().generate(
+        [{"summary": "service is up", "source": "probe-1"},
+         {"summary": "service is down", "source": "probe-2"}],
+        goal="is the service up")
+    assert ranked
+    # Conflicting evidence arrives: preserve both, mark contradicted.
+    store.contradict(belief.belief_id, "probe-2: service down")
+    assert store.get(belief.belief_id).status == BeliefStatus.CONTRADICTED
+    # Fresh verification resolves toward up.
+    store.adjust(belief.belief_id, 0.85, reason="probe-3 confirms up",
+                 evidence="probe-3", by="scenario")
+    store.set_status(belief.belief_id, BeliefStatus.ACTIVE,
+                     reason="verified", by="scenario")
+    refreshed = store.get(belief.belief_id)
+    assert refreshed.status == BeliefStatus.ACTIVE
+    assert len(refreshed.evidence_refs) == 2  # both sides preserved
+    assert decide_mode(policy_allowed=True,
+                       uncertainty="likely") == DecisionMode.ACT
