@@ -562,3 +562,35 @@ class _FakeCapture:
     def capture(self, dest, device=None):
         from pathlib import Path
         Path(dest).write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 2000)
+
+
+def test_android_seam_typed_only():
+    from jarvis.perception.android import (
+        ANDROID_PERCEPTION_CAPABILITIES,
+        ANDROID_PERCEPTION_EVENTS,
+        android_capability_for,
+        observation_from_device_event,
+    )
+    assert set(ANDROID_PERCEPTION_CAPABILITIES) == {
+        "device.camera.snapshot", "device.screen.describe"}
+    assert android_capability_for("camera") == "device.camera.snapshot"
+    with pytest.raises(PerceptionError):
+        android_capability_for("microphone")
+    with pytest.raises(PerceptionError):
+        observation_from_device_event("dev-1", "screen.scrape", {})
+    with pytest.raises(PerceptionError):
+        observation_from_device_event("", "camera.snapshot", {})
+    obs = observation_from_device_event(
+        "dev-1", "camera.snapshot",
+        {"summary": "laptop on desk",
+         "objects": [{"label": "laptop", "confidence": 0.9}]},
+        confidence=0.8)
+    assert obs.modality == Modality.CAMERA
+    assert obs.source_device == "dev-1"
+    assert obs.payload["objects"][0]["anonymous"] is True
+    # Identity-shaped objects are refused at the seam (counted, visible).
+    only_bad = observation_from_device_event(
+        "dev-1", "camera.snapshot",
+        {"objects": [{"label": "person name John"}]})
+    assert only_bad.payload.get("objects", []) == []
+    assert only_bad.payload.get("dropped_items") == 1
