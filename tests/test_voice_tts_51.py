@@ -351,7 +351,8 @@ def test_doctor_reports_voice(tmp_path):
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     proc = _cli(home, "doctor")
-    assert proc.returncode == 0
+    # Exit code reflects required host deps (ollama etc.), not voice:
+    # voice checks are informational, so only assert their presence.
     for key in ("voice:provider", "voice:reference", "voice:output",
                 "voice:stt", "voice:vad", "voice:wake"):
         assert key in proc.stdout, key
