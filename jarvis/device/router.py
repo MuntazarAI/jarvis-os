@@ -37,11 +37,20 @@ class RoutingError(RuntimeError):
 
 class DeviceRouter:
     def __init__(self, registry: DeviceRegistry, policy: Any,
-                 transport: Transport, *, core_node_id: str = "") -> None:
+                 transport: Transport, *, core_node_id: str = "",
+                 grant_store: Any = None,
+                 approval_store: Any = None) -> None:
         self.registry = registry
         self.policy = policy
         self.transport = transport
         self.core_node_id = core_node_id
+        #: Optional DeviceGrantStore (4.2 persistent grants). When attached,
+        #: every authorization additionally requires an active grant —
+        #: there is no path through authorize() around it.
+        self.grant_store = grant_store
+        #: Optional ApprovalStore (4.2 durable tokens). Consumed atomically
+        #: here so a token authorizes exactly one call, cross-process.
+        self.approval_store = approval_store
         self.audit: list[dict[str, Any]] = []
 
     def route(self, actor: str, device_id: str, capability: str,
@@ -109,6 +118,19 @@ class DeviceRouter:
         if not self.registry.capability_enabled(device, capability):
             denied["reasons"] = [f"capability disabled on node: {capability}"]
             return denied
+        # 3b. Persistent device grant (4.2). Attached stores deny
+        # anything without an active grant — fail closed, before policy.
+        if self.grant_store is not None:
+            try:
+                allowed, why = self.grant_store.is_allowed(
+                    actor, device_id, capability)
+            except Exception as exc:
+                denied["reasons"] = [
+                    f"device grant check failed (fail closed): {exc}"[:160]]
+                return denied
+            if not allowed:
+                denied["reasons"] = [f"denied by device grant: {why}"[:200]]
+                return denied
         # 4. PolicyEngine is authoritative.
         risk = self._capability_risk(device, capability)
         plan = ActionPlan(
@@ -125,13 +147,40 @@ class DeviceRouter:
                 f"blocked by policy: {'; '.join(decision.reasons)}"]
             return denied
         if decision.requires_approval:
-            if not (approval_token and self.policy.approved(approval_token)):
+            if approval_token and self.policy.approved(approval_token):
+                approval_token = ""  # in-memory approval (compat path)
+            elif approval_token and self.approval_store is not None and self._consume_durable(
+                    actor, device_id, capability, args, approval_token):
+                approval_token = ""  # durable token consumed: single use
+            elif approval_token and self.approval_store is not None:
+                denied["reasons"] = [self._durable_deny_reason]
+                return denied
+            else:
                 token = self.policy.request_approval(actor, plan, decision)
                 denied["reasons"] = [f"needs approval (token {token})"]
                 denied["approval_token"] = token
                 return denied
         return {"authorized": True, "reasons": [], "device": device,
                 "decision": decision, "approval_token": approval_token}
+
+    def _consume_durable(self, actor: str, device_id: str, capability: str,
+                         args: dict[str, Any], approval_token: str) -> bool:
+        """Consume a durable approval iff bound to this exact call."""
+        self._durable_deny_reason = "durable approval rejected"
+        if self.approval_store is None:
+            self._durable_deny_reason = "no approval store attached"
+            return False
+        try:
+            ok, reason = self.approval_store.consume(
+                approval_token, actor=actor, device_id=device_id,
+                capability=capability, args=args)
+        except Exception as exc:
+            self._durable_deny_reason = (
+                f"approval consume failed (fail closed): {exc}"[:160])
+            return False
+        if not ok:
+            self._durable_deny_reason = f"durable approval denied: {reason}"[:200]
+        return ok
 
     def build_command_message(self, actor: str, device: Device,
                               capability: str,
