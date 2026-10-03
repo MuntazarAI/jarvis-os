@@ -41,13 +41,14 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: gradle
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Install platform and build-tools
+      - name: Install Android platform and build-tools
+        # ubuntu runners ship an SDK; the setup-android action is avoided
+        # (it installs the long-removed 'tools' package and fails).
         run: |
           set -euo pipefail
-          sdkmanager --install "platforms;android-37" "build-tools;36.0.0" "platform-tools"
-          yes | sdkmanager --licenses > /dev/null || true
+          SDKMAN="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMAN" "platforms;android-37" "build-tools;36.0.0" "platform-tools" > /dev/null || true
+          yes | "$SDKMAN" --licenses > /dev/null || true
       - name: Install Gradle 9.6.0
         run: |
           set -euo pipefail
