@@ -26,6 +26,13 @@ class JarvisAPI:
         self._sockets: list[Any] = []
         self._sockets_lock = threading.Lock()
         jarvis.bus.subscribe("*", self._broadcast, name="ws-fanout")
+        from ..worldintel.ratelimit import RateLimiter
+        world = getattr(jarvis.config, "world", None)
+        self._research_limiter = RateLimiter(
+            max_calls=int(getattr(world, "api_rate_limit_n", 10)
+                          if world else 10),
+            window_s=float(getattr(world, "api_rate_window_s", 60.0)
+                           if world else 60.0))
 
     # -- routing -----------------------------------------------------------
     def handle(self, method: str, path: str, body: bytes,
@@ -104,6 +111,18 @@ class JarvisAPI:
                 text = str(payload.get("input", ""))
                 if not text:
                     return 400, {"error": "missing 'input'"}
+                client_key = str(headers.get("authorization", "")
+                                  or "anonymous")[:120]
+                gate = self._research_limiter.check(client_key)
+                if not gate["allowed"]:
+                    from ..worldintel.telemetry import TELEMETRY
+                    TELEMETRY.record(
+                        "world.api.throttled", status="ok",
+                        query_len=len(text),
+                        correlation_id=client_key[:64],
+                        detail=gate["reason"])
+                    return 429, {"error": gate["reason"],
+                                 "retry_after_s": gate["retry_after_s"]}
                 from ..worldintel.cache import EvidenceCache
                 from ..worldintel.research import Researcher
                 from ..worldintel.sources import SourceRegistry

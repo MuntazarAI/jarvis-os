@@ -67,4 +67,6 @@ overclaiming is a design violation here.
 Registry rate limits are per-process (in-memory); cross-process flood
 protection is future work. Briefings read local snapshots only.
 No background crawling (refresh is explicit, consent-gated).
-API has no per-client rate limiting (loopback-first design).
+API research calls are per-client throttled
+(`WorldConfig.api_rate_limit_n` per `api_rate_window_s`, 429 with
+retry guidance); legitimate spaced calls are unaffected.

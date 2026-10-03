@@ -191,6 +191,8 @@ class WorldConfig:
     cache_entries: int = 200
     retention_days: float = 30.0
     refresh_interval_s: float = 3600.0
+    api_rate_limit_n: int = 10
+    api_rate_window_s: float = 60.0
     default_project: str = ""
     topics: list[str] = field(default_factory=list)
 
