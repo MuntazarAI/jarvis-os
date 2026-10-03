@@ -152,10 +152,19 @@ def build_parser() -> argparse.ArgumentParser:
     intel = sub.add_parser("intelligence", help="unified cognitive loop")
     intel.add_argument("action", nargs="?", default="status",
                        choices=["status", "cycle", "inspect", "replay",
-                                "events", "failures"])
+                                "events", "failures", "perception-status",
+                                "perception-observe", "perception-events",
+                                "perception-inspect"])
     intel.add_argument("text", nargs="*", help="input text for cycle")
     intel.add_argument("--cycle", default="",
                        help="cycle id for inspect/replay")
+    intel.add_argument("--source", default="screen",
+                       choices=["screen", "camera", "file", "image"],
+                       help="perception source for observe")
+    intel.add_argument("--path", default="",
+                       help="file/image path for observe")
+    intel.add_argument("--observation", default="",
+                       help="observation id for perception-inspect")
     intel.add_argument("--json", action="store_true",
                        help="machine-readable output")
 
@@ -256,6 +265,116 @@ def _make_jarvis(home: str) -> Jarvis:
     if home:
         config.paths.home = Path(home)
     return Jarvis(config=config)
+
+
+def _intel_perception(jarvis: Any, args: Any, _out: Any) -> int:
+    """One-shot perception inspection. Never loops, never acts."""
+    from .perception.pipeline import PerceptionPipeline
+    from .perception.providers import (
+        CameraProvider,
+        FileProvider,
+        ImageProvider,
+        ScreenProvider,
+    )
+    action = args.action
+    home = str(jarvis.config.paths.home)
+    if action == "perception-status":
+        providers = {"screen": ScreenProvider(), "camera": CameraProvider(),
+                     "file": FileProvider(), "image": ImageProvider()}
+        try:
+            health = {name: provider.health() for name, provider in
+                      providers.items()}
+            rows = [f"{name:8} "
+                    f"{'available' if h.get('available') else 'unavailable'}"
+                    for name, h in health.items()]
+            return _out({"providers": health},
+                        "PERCEPTION\n" + "\n".join(rows))
+        finally:
+            for provider in providers.values():
+                try:
+                    provider.close()
+                except Exception:
+                    pass
+    if action == "perception-observe":
+        source = args.source
+        if source == "screen":
+            provider: Any = ScreenProvider()
+            obs = provider.observe()
+        elif source == "camera":
+            provider = CameraProvider()
+            started = provider.start()
+            if not started.get("started"):
+                return _out({"ok": False, **started},
+                            f"camera unavailable: {started.get('detail')}")
+            try:
+                obs = provider.observe_once()
+            finally:
+                provider.close()
+        elif source in ("file", "image"):
+            if not args.path:
+                print(f"usage: jarvis intelligence perception-observe "
+                      f"--source {source} --path PATH")
+                jarvis.close()
+                return 2
+            provider = FileProvider() if source == "file" \
+                else ImageProvider()
+            try:
+                obs = provider.observe(path=args.path)
+            except ValueError as exc:
+                print(f"observation rejected: {exc}")
+                jarvis.close()
+                return 1
+        else:
+            print(f"device: unknown source {source}")
+            jarvis.close()
+            return 2
+        try:
+            pipe = PerceptionPipeline(bus=getattr(jarvis, "bus", None),
+                                      world=jarvis.world_registry,
+                                      palace=jarvis.palace,
+                                      spatial=jarvis.spatial, home=home)
+            result = pipe.ingest(obs)
+        finally:
+            try:
+                provider.close()
+            except Exception:
+                pass
+        from .perception.pipeline import summarize_observation
+        return _out(result, summarize_observation(obs) +
+                    ("" if result.get("ok") else
+                     f" (rejected: {result.get('error', '')})"))
+    if action == "perception-events":
+        pipe = PerceptionPipeline(home=home)
+        found = pipe.store.recent(20)
+        rows = [(o.get("observation_id", "")[:16],
+                 o.get("modality", "?"),
+                 str((o.get("payload") or {}).get("status", "ok"))[:24])
+                for o in found]
+        return _out({"observations": found},
+                    "\n".join(f"{oid:18} {mod:10} {status}"
+                              for oid, mod, status in rows)
+                    or "no observations recorded")
+    if action == "perception-inspect":
+        if not args.observation:
+            print("usage: jarvis intelligence perception-inspect "
+                  "--observation <id>")
+            jarvis.close()
+            return 2
+        pipe = PerceptionPipeline(home=home)
+        found = pipe.store.get(args.observation)
+        if found is None:
+            print(f"unknown observation {args.observation}")
+            jarvis.close()
+            return 1
+        payload = found.get("payload", {}) or {}
+        keys = sorted(map(str, payload.keys()))[:12]
+        return _out(found,
+                    f"{found.get('observation_id')} "
+                    f"{found.get('modality')} "
+                    f"conf={found.get('confidence')} keys={keys}")
+    print(f"device: unknown perception action {action}")
+    jarvis.close()
+    return 2
 
 
 def _device_service_action(svc: Any, adapter: Any, args: Any,
@@ -1693,6 +1812,9 @@ def main(argv: list[str] | None = None) -> int:
                                   f"{cid:18} failed={stages}"
                                   for cid, stages in rows)
                               or "no cognitive failures recorded")
+        if args.action in ("perception-status", "perception-observe",
+                           "perception-events", "perception-inspect"):
+            return _intel_perception(jarvis, args, _intel_out)
         payload = {"loop": loop.status(),
                    "subsystems": {
                        "world": jarvis.world_registry.stats()
