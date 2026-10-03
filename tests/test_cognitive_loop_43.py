@@ -466,3 +466,145 @@ def test_status_inspect_failures_views(tmp_path):
     assert sup.inspect("cyc-nope") is None
     assert sup.failures() == []
     assert len(sup.transitions) == 10  # idle->...->completed walk
+
+
+# real Android cognitive E2E (loopback sockets, no emulator) ----
+
+def _socket_device(tmp_path, policy=None, answer=None):
+    """Paired online device + duplex client + host. Returns dict."""
+    import sys as _sys
+    _sys.path.insert(0, "tests")
+    from test_android_transport import (
+        _adapter as _mk_adapter, _auth_headers, _msg, _register,
+    )
+    from jarvis.device.android_transport import AndroidSocketHost
+    from jarvis.device.protocol import FabricMessage
+    from jarvis.device.socket_transport import SocketTransport
+    adapter = _mk_adapter(tmp_path, policy)
+    host = AndroidSocketHost(adapter)
+    port = host.start()
+    device_id, code = _register(adapter)
+    seen = {}
+
+    def default_answer(msg):
+        if msg.message_type != "command_request":
+            return None
+        seen["wire"] = msg.capability
+        return FabricMessage(
+            sender_node="node-e2e", recipient_node=msg.sender_node,
+            message_type="command_result",
+            correlation_id=msg.message_id, capability=msg.capability,
+            payload={"ok": True, "result": "battery 77%"})
+
+    client = SocketTransport(timeout_s=5.0)
+    client.connect("127.0.0.1", port, on_request=answer or default_answer)
+    node_id = "node-e2e"
+    req = _msg("pair_request", sender=node_id,
+               payload={"device_id": device_id, "code": code,
+                        "node_id": node_id})
+    rep = client.send(FabricMessage.from_dict(req)).payload
+    assert rep["pair"] == "pending", rep
+    token = rep["pending_token"]
+    adapter.trust_android(device_id, by="tester", reason="cog-e2e")
+    post = client.send(FabricMessage.from_dict(_msg(
+        "pair_status", sender=node_id,
+        payload={"device_id": device_id, "pending_token": token}))).payload
+    assert post["pair"] == "approved", post
+    secret = post["device_secret"]
+    headers = _auth_headers(client, node_id, device_id, secret)
+    hb = client.send(FabricMessage.from_dict(_msg(
+        "heartbeat", sender=node_id,
+        payload={"device_id": device_id, "battery_pct": 77},
+        auth=headers))).payload
+    assert hb["lifecycle"] == "online", hb
+    adapter.declare_android_capabilities(device_id, ["device.battery"],
+                                         by="tester")
+    return {"adapter": adapter, "host": host, "port": port,
+            "client": client, "device_id": device_id, "secret": secret,
+            "seen": seen, "node_id": node_id}
+
+
+def _cog_loop(service, device_id="", actor="cognitive-loop"):
+    from jarvis.planning.planner import MissionPlanner
+    planner = MissionPlanner()
+    planner.register("battery", "device.get_battery", {"device_id": device_id})
+    return IntelligenceLoop(
+        normalize=lambda e: {"payload": dict(e) if isinstance(e, dict)
+                             else {}},
+        reason=lambda ctx: {"concluded": True,
+                            "summary": "phone battery check"},
+        plan=planner.plan,
+        policy_check=wiring.make_policy_hook(
+            service.adapter.fabric.policy, actor,
+            device_service=service),
+        executor=wiring.make_device_executor(service, actor),
+        verify=wiring.make_verify_hook(),
+    )
+
+
+def test_cognitive_loop_drives_real_device_command(tmp_path):
+    from jarvis.device.service import DeviceCommandService
+    from jarvis.policy.policy import PolicyEngine
+    from jarvis.core.config import JarvisConfig
+    policy = PolicyEngine(JarvisConfig())
+    policy.config.policy.require_approval_above_risk = 0.8
+    policy.grant("cognitive-loop", "device.device.battery")
+    env = _socket_device(tmp_path, policy)
+    adapter = env["adapter"]
+    try:
+        svc = DeviceCommandService(adapter, host=env["host"])
+        svc.grants.grant(env["device_id"], "device.battery", by="op")
+        loop = _cog_loop(svc, device_id=env["device_id"])
+        loop.start()
+        sup = CognitiveSupervisor(loop, home=tmp_path)
+        out = sup.process({"source": "user", "type": "user",
+                           "payload": {"text": "check phone battery"}})
+        assert out.state == CognitiveStage.COMPLETED, \
+            [s for s in out.stages if not s["ok"]]
+        assert out.action.action == "device.get_battery"
+        assert out.policy_allowed is True
+        assert out.result.ok is True
+        assert "77" in str(out.result.output)
+        assert out.verification.verdict == "VERIFIED"
+        assert env["seen"].get("wire") == "get_battery"
+        assert out.learning is None  # no learn hook bound: honest absence
+    finally:
+        env["client"].close()
+        env["host"].stop()
+
+
+def test_cognitive_loop_parks_approval_then_completes(tmp_path):
+    from jarvis.device.service import DeviceCommandService
+    from jarvis.policy.policy import PolicyEngine
+    from jarvis.core.config import JarvisConfig
+    policy = PolicyEngine(JarvisConfig())  # default: approval required
+    env = _socket_device(tmp_path, policy)
+    adapter = env["adapter"]
+    try:
+        svc = DeviceCommandService(adapter, host=env["host"])
+        svc.grants.grant(env["device_id"], "device.battery", by="op")
+        loop = _cog_loop(svc, device_id=env["device_id"])
+        loop.start()
+        sup = CognitiveSupervisor(loop, home=tmp_path)
+        out = sup.process({"source": "user", "type": "user",
+                           "payload": {"text": "check phone battery"}})
+        assert out.action.approval_state == "waiting"
+        assert out.verification.verdict == "UNKNOWN"
+        assert out.result.ok is False
+        assert out.action.command_id.startswith("cmd-")
+        record = svc.command_status(out.action.command_id)
+        assert record is not None and record["state"] == "queued"
+        approval_id = record["approval_id"]
+        assert approval_id.startswith("apd-")
+        assert svc.approve_command(approval_id, by="op") is True
+        # Re-present the approved token: immediate authorized delivery
+        # (the tick path would also deliver once the deferral lapses).
+        done = svc.request_command(
+            "cognitive-loop", env["device_id"], "device.get_battery", {},
+            approval_id=approval_id)
+        assert done["ok"] is True, done
+        assert svc.command_status(done["command_id"])["state"] == "completed"
+        assert "77" in json.dumps(done.get("result", done))
+    finally:
+        env["client"].close()
+        env["host"].stop()

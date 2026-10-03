@@ -172,6 +172,7 @@ class CognitiveAction:
     args: dict[str, Any] = field(default_factory=dict)
     actor: str = "cognitive-loop"
     approval_state: str = ""  # "", "waiting", "approved", "denied"
+    command_id: str = ""  # outbox id once parked/delivered (not secret)
 
 
 @dataclass
@@ -483,7 +484,8 @@ class CognitiveSupervisor:
             action=record.action_taken,
             args=dict(action_detail.get("args", {}) or {}),
             actor=self.actor,
-            approval_state=self._approval_state(record, policy_detail))
+            approval_state=self._approval_state(record, policy_detail),
+            command_id=self._command_ref(record))
         outcome.policy_allowed = record.policy_allowed
         result_detail = by_stage.get("act").detail \
             if by_stage.get("act") else {}
@@ -520,10 +522,24 @@ class CognitiveSupervisor:
         return {}
 
     @staticmethod
+    @staticmethod
+    def _command_ref(record: CycleRecord) -> str:
+        for stage in record.stages:
+            if stage.stage == "act" and isinstance(stage.detail, dict):
+                ref = str(stage.detail.get("command_ref", ""))
+                if ref:
+                    return ref[:64]
+        return ""
+
+    @staticmethod
     def _approval_state(record: CycleRecord,
                         policy_detail: dict[str, Any]) -> str:
         if not record.action_taken:
             return ""
+        for stage in record.stages:
+            if stage.stage == "act" and isinstance(stage.detail, dict) \
+                    and stage.detail.get("waiting_approval"):
+                return "waiting"
         if record.policy_allowed is False:
             reason = str(policy_detail.get("reason", ""))
             if "needs approval" in reason or "approval" in reason:

@@ -412,7 +412,20 @@ class IntelligenceLoop:
             action = context.get("action") or {}
             result = self.executor(str(action.get("action", "")), action.get("args", {}))
             context["result"] = result
-            return {"ok": bool(result.get("ok", True))}
+            output = ""
+            waiting = False
+            approval_ref = ""
+            command_ref = ""
+            if isinstance(result, dict):
+                output = str(result.get("output", result.get("result", "")))[:300]
+                waiting = bool(result.get("waiting_approval", False))
+                # Truncated refs only: full ids live in the outbox store.
+                approval_ref = str(result.get("approval_id", ""))[:12]
+                command_ref = str(result.get("command_id", ""))[:24]
+            return {"ok": bool(result.get("ok", True)) if isinstance(
+                result, dict) else bool(result), "output": output,
+                "waiting_approval": waiting, "approval_ref": approval_ref,
+                "command_ref": command_ref}
         if stage == "verify":
             action = context.get("action") or {}
             if not str(action.get("action", "")):

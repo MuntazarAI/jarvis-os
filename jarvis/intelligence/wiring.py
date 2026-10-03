@@ -442,3 +442,17 @@ def default_neural_stack(seed: int = 41, size: int = 64, edges: int = 400):
     encoder = SensoryEncoder(ChannelMap(default_sensor_features()))
     decoder = MotorDecoder({0: ("ATTEND", 0.7), 1: ("FOCUS", 0.6)})
     return network, encoder, decoder
+
+
+def build_supervisor(home: Any = None, actor: str = "cognitive-loop",
+                     **components: Any) -> Any:
+    """Assemble a CognitiveSupervisor: loop engine + persistent store.
+
+    Same component keys as :func:`build_loop`, plus ``home`` (cycle
+    store directory) and ``actor``. The supervisor conducts; every
+    subsystem keeps working through the loop's hooks.
+    """
+    from .cognitive import CognitiveSupervisor
+    loop = build_loop(actor=actor, **components)
+    loop.start()
+    return CognitiveSupervisor(loop, home=home, actor=actor)
