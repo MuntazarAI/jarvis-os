@@ -893,3 +893,157 @@ def test_drain_uses_live_lane_not_inproc_route(tmp_path):
             client.close()
     finally:
         host.stop()
+
+
+# -- 3.10-complete: full ordered E2E over real sockets --------------------------
+# No transport mock: a real FabricServer host and real SocketTransport
+# clients talk loopback TCP (framing, HMAC, rotation, routing all live).
+# The duplex on_request callback plays the phone's command handler.
+
+def test_full_device_e2e_over_real_sockets(tmp_path):
+    from jarvis.device.socket_transport import TransportError
+    policy = _policy([("cli", "device.device.battery")])
+    adapter = _adapter(tmp_path, policy)
+    host, port = _host(adapter)
+    try:
+        # 1. host starts on a real port.
+        assert host.port == port and port > 0
+        # 2. phone connects; 3. hello.
+        seen = {}
+
+        def answer(msg):
+            if msg.message_type != "command_request":
+                return None
+            seen["wire"] = msg.capability
+            return FabricMessage(
+                sender_node="node-e2e", recipient_node=msg.sender_node,
+                message_type="command_result",
+                correlation_id=msg.message_id, capability=msg.capability,
+                payload={"ok": True, "result": "battery 77%"})
+
+        phone = SocketTransport(timeout_s=TIMEOUT)
+        phone.connect("127.0.0.1", port, on_request=answer)
+        try:
+            hello = phone.send(FabricMessage.from_dict(_msg(
+                "hello", sender="node-e2e",
+                payload={"node_id": "node-e2e"}))).payload
+            assert hello.get("hello") is True, hello
+            # 4. register + pair_request -> pending, no trust yet.
+            device_id, code = _register(adapter, name="E2EPhone")
+            pre_trust = adapter.fabric.registry.require(device_id).trust
+            assert str(pre_trust) != "TrustState.TRUSTED", pre_trust
+            pending = phone.send(FabricMessage.from_dict(_msg(
+                "pair_request", sender="node-e2e",
+                payload={"device_id": device_id, "code": code,
+                         "node_id": "node-e2e"}))).payload
+            assert pending["ok"] and pending["pair"] == "pending", pending
+            token = pending["pending_token"]
+            # 5. pre-approval poll stays pending.
+            early = phone.send(FabricMessage.from_dict(_msg(
+                "pair_status", sender="node-e2e",
+                payload={"device_id": device_id,
+                         "pending_token": token}))).payload
+            assert early["pair"] == "pending", early
+            # 6. explicit human trust; 7. secret delivered exactly once.
+            adapter.trust_android(device_id, by="tester",
+                                  reason="e2e approval")
+            approved = phone.send(FabricMessage.from_dict(_msg(
+                "pair_status", sender="node-e2e",
+                payload={"device_id": device_id,
+                         "pending_token": token}))).payload
+            assert approved["pair"] == "approved", approved
+            secret = approved["device_secret"]
+            assert secret
+            replay_poll = phone.send(FabricMessage.from_dict(_msg(
+                "pair_status", sender="node-e2e",
+                payload={"device_id": device_id,
+                         "pending_token": token}))).payload
+            assert replay_poll["ok"] is False, replay_poll
+            # 8. challenge -> heartbeat -> online.
+            headers = _auth_headers(phone, "node-e2e", device_id, secret)
+            hb = phone.send(FabricMessage.from_dict(_msg(
+                "heartbeat", sender="node-e2e",
+                payload={"device_id": device_id, "battery_pct": 77},
+                auth=headers))).payload
+            assert hb["lifecycle"] == "online", hb
+            assert host.has_lane(device_id) is True
+            # 9. capability discovery: declared caps are routable.
+            adapter.declare_android_capabilities(device_id,
+                                                 ["device.battery"],
+                                                 by="tester")
+            # 10. allowed typed command -> typed result over the lane.
+            need = host.send_command("cli", device_id,
+                                     "device.get_battery", {})
+            assert need.get("requires_approval"), need
+            assert adapter.fabric.policy.approve(
+                need["approval_token"], by="tester")
+            out = host.send_command("cli", device_id,
+                                    "device.get_battery", {},
+                                    approval_token=need["approval_token"])
+            assert out["ok"] and "77" in out["result"], out
+            assert seen["wire"] == "get_battery"
+            # 11. phone event -> host ingest.
+            ev_headers = _auth_headers(phone, "node-e2e", device_id, secret)
+            ev = phone.send(FabricMessage.from_dict(_msg(
+                "event", sender="node-e2e",
+                payload={"device_id": device_id, "event": "battery.low",
+                         "level": 9},
+                auth=ev_headers))).payload
+            assert ev["ok"] and isinstance(ev["dots"], list), ev
+            # 12. unauthorized actor denied (fail closed, no lane use).
+            denied = host.send_command("intruder", device_id,
+                                       "device.get_battery", {})
+            assert denied["ok"] is False, denied
+            # 13. replayed heartbeat (rotated challenge) rejected.
+            replay = phone.send(FabricMessage.from_dict(_msg(
+                "heartbeat", sender="node-e2e",
+                payload={"device_id": device_id}, auth=headers))).payload
+            assert replay["ok"] is False, replay
+            # 14. malformed traffic on a side connection is rejected
+            #     and counted; the host keeps serving the good lane.
+            raw = socket.create_connection(("127.0.0.1", port),
+                                           timeout=TIMEOUT)
+            raw.settimeout(TIMEOUT)
+            try:
+                raw.sendall(b"\xff\xff\xff\xff-not-json")
+                buf = bytearray()
+                try:
+                    while True:
+                        chunk = raw.recv(65536)
+                        if not chunk:
+                            break
+                        buf += chunk
+                        if decode_frames(buf):
+                            break
+                except socket.timeout:
+                    pass
+            finally:
+                raw.close()
+            assert host.server.rejected >= 1
+            fresh = _auth_headers(phone, "node-e2e", device_id, secret)
+            still = phone.send(FabricMessage.from_dict(_msg(
+                "heartbeat", sender="node-e2e",
+                payload={"device_id": device_id}, auth=fresh))).payload
+            assert still["lifecycle"] == "online", still
+            # 15. drop + reconnect + reauth stays coherent.
+            phone.close()
+            phone2 = SocketTransport(timeout_s=TIMEOUT)
+            phone2.connect("127.0.0.1", port, on_request=answer)
+            try:
+                h2 = _auth_headers(phone2, "node-e2e", device_id, secret)
+                back = phone2.send(FabricMessage.from_dict(_msg(
+                    "heartbeat", sender="node-e2e",
+                    payload={"device_id": device_id}, auth=h2))).payload
+                assert back["lifecycle"] == "online", back
+                assert host.has_lane(device_id) is True
+            finally:
+                phone2.close()
+        except TransportError as exc:
+            raise AssertionError(f"e2e transport failure: {exc}")
+        finally:
+            try:
+                phone.close()
+            except Exception:
+                pass
+    finally:
+        host.stop()
