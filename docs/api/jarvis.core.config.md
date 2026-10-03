@@ -16,7 +16,7 @@ Real network transport for the device fabric (3.10).
 
 ### `JarvisConfig` (class)
 
-JarvisConfig(paths: 'PathsConfig' = <factory>, cognitive: 'CognitiveConfig' = <factory>, memory: 'MemoryConfig' = <factory>, policy: 'PolicyConfig' = <factory>, models: 'ModelConfig' = <factory>, server: 'ServerConfig' = <factory>, device_fabric: 'DeviceFabricConfig' = <factory>, device_transport: 'DeviceTransportConfig' = <factory>, voice: 'VoiceConfig' = <factory>, personality: 'dict[str, Any]' = <factory>, version: 'int' = 1)
+JarvisConfig(paths: 'PathsConfig' = <factory>, cognitive: 'CognitiveConfig' = <factory>, memory: 'MemoryConfig' = <factory>, policy: 'PolicyConfig' = <factory>, models: 'ModelConfig' = <factory>, server: 'ServerConfig' = <factory>, device_fabric: 'DeviceFabricConfig' = <factory>, device_transport: 'DeviceTransportConfig' = <factory>, voice: 'VoiceConfig' = <factory>, world: 'WorldConfig' = <factory>, personality: 'dict[str, Any]' = <factory>, version: 'int' = 1)
 
 ### `MemoryConfig` (class)
 
@@ -41,3 +41,7 @@ ServerConfig(host: 'str' = '127.0.0.1', port: 'int' = 8765)
 ### `VoiceConfig` (class)
 
 Local-first voice I/O (5.1). STT and TTS are independent.
+
+### `WorldConfig` (class)
+
+World Intelligence 1.0: evidence-driven live knowledge.

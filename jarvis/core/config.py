@@ -181,6 +181,21 @@ class VoiceConfig:
 
 
 @dataclass
+class WorldConfig:
+    """World Intelligence 1.0: evidence-driven live knowledge."""
+
+    enabled: bool = True
+    max_searches: int = 4
+    max_evidence: int = 12
+    budget_s: float = 90.0
+    cache_entries: int = 200
+    retention_days: float = 30.0
+    refresh_interval_s: float = 3600.0
+    default_project: str = ""
+    topics: list[str] = field(default_factory=list)
+
+
+@dataclass
 class JarvisConfig:
     paths: PathsConfig = field(default_factory=PathsConfig)
     cognitive: CognitiveConfig = field(default_factory=CognitiveConfig)
@@ -191,6 +206,7 @@ class JarvisConfig:
     device_fabric: DeviceFabricConfig = field(default_factory=DeviceFabricConfig)
     device_transport: DeviceTransportConfig = field(default_factory=DeviceTransportConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    world: WorldConfig = field(default_factory=WorldConfig)
     personality: dict[str, Any] = field(
         default_factory=lambda: {
             "formality": "professional",
