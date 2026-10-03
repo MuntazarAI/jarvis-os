@@ -30,6 +30,7 @@ MODULES = [
     "jarvis.cognition.goals",
     "jarvis.worldintel",
     "jarvis.worldintel.research",
+    "jarvis.worldintel.ratelimit",
     "jarvis.worldintel.sources",
     "jarvis.api",
 ]

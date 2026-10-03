@@ -18,5 +18,6 @@ Deterministic output of `docs/generate_api.py`.
 - [`jarvis.voice.tts`](./jarvis.voice.tts.md)
 - [`jarvis.voice.voice_profile`](./jarvis.voice.voice_profile.md)
 - [`jarvis.worldintel`](./jarvis.worldintel.md)
+- [`jarvis.worldintel.ratelimit`](./jarvis.worldintel.ratelimit.md)
 - [`jarvis.worldintel.research`](./jarvis.worldintel.research.md)
 - [`jarvis.worldintel.sources`](./jarvis.worldintel.sources.md)

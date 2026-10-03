@@ -458,3 +458,86 @@ def test_api_world_health(tmp_path):
         assert code == 400
     finally:
         api.jarvis.close()
+
+
+def test_rate_limiter_allows_then_throttles():
+    from jarvis.worldintel.ratelimit import RateLimiter
+    now = [1000.0]
+    limiter = RateLimiter(max_calls=3, window_s=60.0,
+                          clock=lambda: now[0])
+    assert limiter.check("c1")["allowed"] is True
+    assert limiter.check("c1")["allowed"] is True
+    assert limiter.check("c1")["remaining"] == 0
+    denied = limiter.check("c1")
+    assert denied["allowed"] is False
+    assert denied["retry_after_s"] > 0
+    assert limiter.check("c2")["allowed"] is True  # per-client
+    now[0] += 61.0  # window slides
+    assert limiter.check("c1")["allowed"] is True
+
+
+def test_rate_limiter_bounds_keys():
+    from jarvis.worldintel.ratelimit import RateLimiter
+    limiter = RateLimiter(max_calls=10, window_s=60.0, max_keys=2)
+    assert limiter.check("a")["allowed"] is True
+    assert limiter.check("b")["allowed"] is True
+    third = limiter.check("c")
+    assert third["allowed"] is False
+    assert limiter.stats()["keys"] <= 2
+
+
+def test_api_research_throttles_on_flood(tmp_path):
+    from jarvis.api.server import JarvisAPI
+    from jarvis.core.loop import Jarvis
+    from jarvis.core.config import JarvisConfig
+    config = JarvisConfig()
+    config.paths.home = tmp_path / "home"
+    config.world.api_rate_limit_n = 2
+    config.world.api_rate_window_s = 600.0
+    api = JarvisAPI(Jarvis(config=config))
+    try:
+        headers = {"authorization": "Bearer flood-test"}
+        body = b'{"input": "What is TCP?"}'
+        assert api.handle(
+            "POST", "/api/world/research", body,
+            headers)[0] == 200
+        assert api.handle(
+            "POST", "/api/world/research", body,
+            headers)[0] == 200
+        code, payload = api.handle(
+            "POST", "/api/world/research", body, headers)
+        assert code == 429
+        assert payload["retry_after_s"] > 0
+        # a different client is unaffected
+        other = dict(headers, authorization="Bearer innocent")
+        assert api.handle(
+            "POST", "/api/world/research", body,
+            other)[0] == 200
+    finally:
+        api.jarvis.close()
+
+
+def test_api_research_telemetry_on_throttle(tmp_path):
+    from jarvis.api.server import JarvisAPI
+    from jarvis.core.loop import Jarvis
+    from jarvis.core.config import JarvisConfig
+    from jarvis.worldintel.telemetry import WorldTelemetry
+    import jarvis.worldintel.telemetry as telemetry_mod
+    telemetry_mod.TELEMETRY = WorldTelemetry()
+    config = JarvisConfig()
+    config.paths.home = tmp_path / "home"
+    config.world.api_rate_limit_n = 1
+    config.world.api_rate_window_s = 600.0
+    api = JarvisAPI(Jarvis(config=config))
+    try:
+        headers = {"authorization": "Bearer t"}
+        body = b'{"input": "What is TCP?"}'
+        api.handle("POST", "/api/world/research", body, headers)
+        code, _ = api.handle("POST", "/api/world/research", body,
+                             headers)
+        assert code == 429
+        names = [e["name"] for e in
+                 telemetry_mod.TELEMETRY.recent(10)]
+        assert "world.api.throttled" in names
+    finally:
+        api.jarvis.close()
