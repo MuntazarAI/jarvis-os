@@ -21,7 +21,9 @@ Honesty contracts (enforced, tested):
 from __future__ import annotations
 
 import json
+import os
 import re
+import time
 from dataclasses import dataclass, field as dc_field, asdict
 from pathlib import Path
 from typing import Any, Protocol
@@ -204,28 +206,58 @@ class JsonFileWorldStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.last_load_error: str = ""
+        self.quarantined_path: str = ""
 
     def save(self, data: dict[str, Any]) -> None:
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, default=str, indent=2))
         tmp.replace(self.path)
 
+    def _quarantine(self) -> None:
+        """Preserve corrupt bytes before anything can overwrite them.
+
+        ``Jarvis.close()`` calls ``registry.save(store)`` on shutdown, so
+        leaving the corrupt file in place would silently destroy the
+        evidence. Copy it to a sibling first; best-effort, never raises.
+        """
+        if self.quarantined_path:
+            return
+        try:
+            # Microsecond stamp + pid avoids same-second collisions when two
+            # store instances load the same corrupt file in one test run.
+            stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{int(time.time_ns() % 1_000_000):06d}-p{os.getpid()}"
+            target = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
+            if target.exists():
+                return
+            target.write_bytes(self.path.read_bytes())
+            self.quarantined_path = str(target)
+        except OSError:
+            self.quarantined_path = ""
+
     def load(self) -> dict[str, Any]:
         """Recover from an unreadable/corrupt file instead of crashing.
 
-        The file is left untouched on disk for forensics; only this store's
-        view resets. ``last_load_error`` records why, so doctor/status can
-        surface corruption rather than hiding it.
+        Corrupt bytes are copied to a sibling ``*.corrupt-<stamp>`` file so
+        they survive the next save (forensics); only this store's view
+        resets. ``last_load_error`` and ``quarantined_path`` record what
+        happened, so doctor/status can surface corruption rather than
+        hiding it.
         """
         self.last_load_error = ""
+        self.quarantined_path = ""
         if not self.path.exists():
             return {}
         try:
             data = json.loads(self.path.read_text())
         except (OSError, ValueError) as exc:
             self.last_load_error = f"{type(exc).__name__}: {exc}"[:200]
+            self._quarantine()
             return {}
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            self.last_load_error = "ValueError: world store root is not an object"[:200]
+            self._quarantine()
+            return {}
+        return data
 
 
 class WorldRegistry:

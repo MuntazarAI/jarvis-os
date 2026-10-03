@@ -76,6 +76,16 @@ class GodsEyeApplication:
 
     def install(self) -> dict[str, Any]:
         """Clone/update the upstream checkout and install locked dependencies."""
+        # Safety first: never overwrite a non-empty non-git workspace,
+        # independent of toolchain availability (git/npm/node). This keeps
+        # the refusal deterministic across environments and fails fast
+        # before any network/clone side effects.
+        if (self.workspace / ".git").exists():
+            pass  # update path below
+        elif self.workspace.exists() and any(self.workspace.iterdir()):
+            raise RuntimeError(
+                f"God's Eye workspace is not an empty git checkout: {self.workspace}"
+            )
         self._require_command("git")
         self._require_command("npm")
         self._require_node()

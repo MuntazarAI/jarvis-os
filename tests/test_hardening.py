@@ -191,6 +191,52 @@ def test_corrupt_world_store_recovers(tmp_path):
     assert store_path.exists()
 
 
+def test_corrupt_world_bytes_survive_save_for_forensics(tmp_path):
+    """Jarvis.close() saves the world store; corrupt bytes must not vanish."""
+    from jarvis.world.registry import JsonFileWorldStore, WorldRegistry
+    store_path = tmp_path / "world.json"
+    store_path.write_text("{broken")
+    store = JsonFileWorldStore(str(store_path))
+    registry = WorldRegistry()
+    registry.load(store)
+    registry.save(store)  # same call Jarvis.close() makes
+    quarantined = [p for p in tmp_path.iterdir() if ".corrupt-" in p.name]
+    assert len(quarantined) == 1, "corrupt bytes must be preserved off to the side"
+    assert quarantined[0].read_text() == "{broken"
+    assert store.quarantined_path == str(quarantined[0])
+
+
+def test_non_dict_world_payload_is_quarantined(tmp_path):
+    from jarvis.world.registry import JsonFileWorldStore, WorldRegistry
+    store_path = tmp_path / "world.json"
+    store_path.write_text("[1, 2, 3]")
+    store = JsonFileWorldStore(str(store_path))
+    registry = WorldRegistry()
+    registry.load(store)
+    assert registry.find_entities() == []
+    assert "not an object" in store.last_load_error
+    assert store.quarantined_path, "wrong-shaped payload is also evidence"
+    registry.save(store)
+    assert (tmp_path / "world.json").exists()
+    quarantined = [p for p in tmp_path.iterdir() if ".corrupt-" in p.name][0]
+    assert quarantined.read_text() == "[1, 2, 3]"
+
+
+def test_jarvis_boots_on_corrupt_world_and_preserves_evidence(tmp_path):
+    """End-to-end: boot + close() must not destroy a corrupt world file."""
+    from jarvis.core.config import JarvisConfig
+    from jarvis.core.loop import Jarvis
+    config = JarvisConfig()
+    config.paths.home = tmp_path
+    (tmp_path / "world.json").write_text("{broken")
+    jarvis = Jarvis(config=config)
+    assert jarvis.world_registry.find_entities() == []
+    jarvis.close()
+    quarantined = [p for p in tmp_path.iterdir() if ".corrupt-" in p.name]
+    assert len(quarantined) == 1
+    assert quarantined[0].read_text() == "{broken"
+
+
 def test_corrupt_connectome_schema_rejected_not_crashed(tmp_path):
     from jarvis.neural.topology import ConnectomeSchema
     path = tmp_path / "schema.json"
