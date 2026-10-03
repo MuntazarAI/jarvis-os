@@ -135,6 +135,19 @@ After 4.2 is proven:
 
 See `docs/MULTIMODAL_PERCEPTION.md` for architecture, proof, and limits.
 
+## 4.4 — Experience & Adaptive Intelligence
+
+**Complete.** Bounded deterministic learning from verified experience:
+immutable append-only experiences, evidence refs (never media),
+belief model with separated confidence/evidence/status,
+categorical prediction evaluation, heuristic learning engine with
+provenance, dots/world/memory integration (metadata-only,
+poisoning guards intact), optional neural signal (measured
+marginal, stays optional), sandbox-safe replay, and operator CLI.
+Structural guarantee: learning code imports no policy/device code.
+
+See `docs/ADAPTIVE_INTELLIGENCE.md` for architecture, proof, and limits.
+
 ## 3.10 — Android real-device transport
 
 **Complete.** PR #37 is merged and the real APK ↔ host lifecycle was proven on emulator-5554.
