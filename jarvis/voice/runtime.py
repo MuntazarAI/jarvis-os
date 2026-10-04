@@ -11,6 +11,7 @@ import shutil
 import struct
 import subprocess
 import threading
+import time
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -369,6 +370,25 @@ class VoiceLoop:
     workdir: str = "/tmp/jarvis-voice"
     always_listen: bool = False
     session: Any = field(default_factory=lambda: VoiceSession())
+    jarvis_voice: bool = False
+    voice_config: Any = field(default_factory=dict)
+    max_turns: int = 0
+    _stop: Any = field(default=None, repr=False)
+
+    def stop(self) -> bool:
+        """Foundation for interruption: halt speech, signal the run
+        loop to exit after the current turn. Never strands audio."""
+        stopped = False
+        try:
+            stopped = bool(self.speaker.stop())
+        except Exception:
+            pass
+        if self._stop is not None:
+            try:
+                self._stop.set()
+            except Exception:
+                pass
+        return stopped
 
     def status(self) -> dict[str, Any]:
         return {"mic": self.mic.available(), "stt": self.stt.backend,
@@ -419,12 +439,21 @@ class VoiceLoop:
         if not heard.get("ok"):
             return heard
         turn = self.session.next_turn()
+        think_started = time.monotonic()
         result = jarvis.cycle_once(heard["text"], source="voice",
                                    session_id=self.session.session_id)
-        spoken = self.speaker.say(result.response)
+        think_ms = round((time.monotonic() - think_started) * 1000.0, 1)
+        if self.jarvis_voice:
+            from .speak import VoiceSpeaker
+            speaker = VoiceSpeaker(config=self.voice_config or None)
+            spoken = speaker.say(result.response, workdir=self.workdir,
+                                 correlation_id=turn["cognition_id"])
+        else:
+            spoken = self.speaker.say(result.response)
         return {"ok": True, "heard": heard["text"], "response": result.response,
                 "intent": result.intent, "spoken": spoken,
                 "voice_session_id": self.session.session_id,
+                "think_ms": think_ms,
                 "turn": turn}
 
     def run(self, jarvis: Any, on_turn: Callable[[dict[str, Any]], None] | None = None,
@@ -435,12 +464,27 @@ class VoiceLoop:
         never share turn linkage."""
         self.session = VoiceSession()
         stop = stop or threading.Event()
+        self._stop = stop
         turns = 0
+        latencies: list[float] = []
         while not stop.is_set():
+            turn_started = time.monotonic()
             turn = self.converse_once(jarvis, addressed=self.always_listen)
             turns += 1
+            latencies.append(round(
+                (time.monotonic() - turn_started) * 1000.0, 1))
             if on_turn:
                 on_turn(turn)
             if not turn.get("ok") and "not ready" in str(turn.get("error", "")):
                 return {"ok": False, "turns": turns, "error": turn.get("error")}
-        return {"ok": True, "turns": turns}
+            if self.max_turns > 0 and turns >= self.max_turns:
+                break
+        summary: dict[str, Any] = {"ok": True, "turns": turns}
+        if latencies:
+            ordered = sorted(latencies)
+            summary["turn_ms"] = {
+                "avg": round(sum(ordered) / len(ordered), 1),
+                "p95": ordered[min(len(ordered) - 1,
+                                   int(len(ordered) * 0.95))],
+                "max": ordered[-1]}
+        return summary

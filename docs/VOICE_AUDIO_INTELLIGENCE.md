@@ -195,3 +195,17 @@ TTS tracked independently). No real-time claims. Disk: runtime 1.6GiB
 + models ~6.3GiB (~8GiB total); 19GiB free remain. RAM is the binding
 constraint (6GiB total) — one-shot bridge loads the model per call; a
 persistent worker (amortized load) is future work, not implemented.
+
+## 5.3 — Conversational loop
+
+`VoiceLoop` speaks through the JARVIS voice stack when enabled
+(`listen --voice`): persistent Chatterbox worker shared across turns
+(warm reuses, no reload), same fallback chain, per-turn latency
+accounting (`think_ms`, run summary `turn_ms` avg/p95/max).
+
+- Turn-taking: `run()` loops until stop/max-turns; each run mints a
+  fresh voice session; turns share the session id.
+- Interruption foundation: `loop.stop()` halts speech and signals a
+  clean exit after the current turn. True mid-utterance barge-in
+  (duplex mic monitoring while speaking) is explicitly NOT implemented.
+- Bounds: `--max-turns N`; no unbounded runs in tests (fakes only).
