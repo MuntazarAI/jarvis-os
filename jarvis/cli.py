@@ -22,7 +22,9 @@ def build_parser() -> argparse.ArgumentParser:
     talk = sub.add_parser("talk", help="send one input through the loop")
     talk.add_argument("text", nargs="+", help="what to say to JARVIS")
 
-    sub.add_parser("repl", help="interactive prompt (Ctrl-D to quit)")
+    repl_parser = sub.add_parser("repl", help="interactive prompt (Ctrl-D to quit)")
+    repl_parser.add_argument("--speak", action="store_true",
+                             help="speak every reply aloud via the JARVIS voice stack")
 
     serve = sub.add_parser("serve", help="start the HTTP + WebSocket API")
     serve.add_argument("--host", default="127.0.0.1")
@@ -373,6 +375,56 @@ def build_parser() -> argparse.ArgumentParser:
     world.add_argument("--json", action="store_true",
                        help="machine-readable output")
     return parser
+
+
+def _conductor_oneshot(raw: list[str], home: str = "") -> int:
+    """`jarvis "natural language"` — one-shot front door.
+
+    Trailing flags: --speak (voice the answer), --json (machine
+    output). Everything else is the request text. Execution uses the
+    normal ConductorService path; policy gates apply unchanged.
+    """
+    speak = "--speak" in raw
+    as_json = "--json" in raw
+    words: list[str] = []
+    skip_next = False
+    for token in raw:
+        if skip_next:
+            skip_next = False
+            continue
+        if token == "--home":
+            skip_next = True
+            continue
+        if token in ("--speak", "--json"):
+            continue
+        words.append(token)
+    text = " ".join(words)
+    if not text.strip():
+        print('usage: jarvis "natural language request" [--speak] [--json]')
+        return 2
+    from .conductor.service import ConductorService
+    jarvis = _make_jarvis(home)
+    try:
+        service = ConductorService(jarvis)
+        out = service.handle(text)
+        if speak and out.get("response"):
+            try:
+                from .voice.speak import VoiceSpeaker
+                cfg = jarvis.config.voice.__dict__
+                VoiceSpeaker(config=cfg).say(
+                    out["response"][:2000],
+                    workdir=str(jarvis.config.paths.home))
+            except Exception as exc:
+                out["speak_error"] = f"{type(exc).__name__}"
+        if as_json:
+            print(json.dumps(out, indent=2, default=str))
+        elif out.get("error") and not out.get("response"):
+            print(f"error: {out['error']}")
+        else:
+            print(out.get("response", ""))
+        return 0 if out.get("ok") or out.get("response") else 1
+    finally:
+        jarvis.close()
 
 
 def _make_jarvis(home: str) -> Jarvis:
@@ -2275,7 +2327,26 @@ def _device_policy(jarvis: Any, args: Any, _out: Any) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    raw = list(sys.argv[1:] if argv is None else argv)
+    known = set(parser._subparsers._group_actions[0].choices.keys())
+    head = list(raw)
+    home = ""
+    if len(head) >= 2 and head[0] == "--home":
+        home = head[1]
+        head = head[2:]
+    if head and head[0] not in known and not head[0].startswith("-"):
+        return _conductor_oneshot(raw, home=home)
     args = parser.parse_args(argv)
+    if not args.command:
+        # Bare `jarvis` drops into the chat: there is no wrong way to
+        # start talking to him. --help still prints help (argparse).
+        raw_home = list(sys.argv[1:] if argv is None else argv)
+        args = parser.parse_args(["repl"])
+        if "--home" in raw_home:
+            try:
+                args.home = raw_home[raw_home.index("--home") + 1]
+            except (ValueError, IndexError):
+                pass
     if not args.command:
         parser.print_help()
         return 2
@@ -2289,8 +2360,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "repl":
+        from .conductor.service import ConductorService
         from .conversation import ConversationManager
         manager = ConversationManager()
+        service = ConductorService(jarvis)
         session_id = ""
         print("commands: /reset (new topic) /summary (what I retain) /quit")
         try:
@@ -2315,9 +2388,28 @@ def main(argv: list[str] | None = None) -> int:
                     print("jarvis>", session.summary or "(nothing retained yet)"
                           if session else "(no session yet)")
                     continue
-                turn = manager.turn(jarvis, session_id, line)
-                session_id = turn["session"]
-                print("jarvis>", turn["response"])
+                session = manager.get_or_create(session_id)
+                session_id = session.session_id
+                recent = [t.input for t in session.turns[-3:]]
+                out = service.handle(
+                    line, session_id=session_id,
+                    session_context=" | ".join(recent))
+                session.add(line, out.get("response", ""),
+                            out.get("target", ""))
+                spoken = ""
+                if getattr(args, "speak", False) and out.get("response"):
+                    try:
+                        from .voice.speak import VoiceSpeaker
+                        cfg = jarvis.config.voice.__dict__
+                        said = VoiceSpeaker(config=cfg).say(
+                            out["response"][:2000],
+                            workdir=str(jarvis.config.paths.home))
+                        spoken = " [spoken]" if said.get(
+                            "spoken_aloud") else " [voice unavailable]"
+                    except Exception:
+                        spoken = " [voice unavailable]"
+                print("jarvis>", (out.get("response") or
+                      f"error: {out.get('error', 'unknown')}") + spoken)
         finally:
             jarvis.close()
         return 0

@@ -255,7 +255,7 @@ def test_cli_agents_commands():
                             text=True, timeout=120, cwd=ROOT)
     assert status.returncode == 0
     info = json.loads(status.stdout)
-    assert info["roles"] == 30 and "budgets" in info
+    assert info["roles"] == 31 and "budgets" in info
     run = subprocess.run(base + ["run", "hi", "--depth", "0", "--json"],
                          capture_output=True, text=True, timeout=180, cwd=ROOT)
     assert run.returncode == 0

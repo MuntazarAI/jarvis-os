@@ -181,6 +181,15 @@ class VoiceConfig:
 
 
 @dataclass
+class ConductorConfig:
+    """Unified front door: routing knobs only, never permissions."""
+
+    enabled: bool = True
+    confidence_floor: float = 0.55
+    speak: bool = False
+
+
+@dataclass
 class WorldConfig:
     """World Intelligence 1.0: evidence-driven live knowledge."""
 
@@ -209,6 +218,7 @@ class JarvisConfig:
     device_transport: DeviceTransportConfig = field(default_factory=DeviceTransportConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     world: WorldConfig = field(default_factory=WorldConfig)
+    conductor: ConductorConfig = field(default_factory=ConductorConfig)
     personality: dict[str, Any] = field(
         default_factory=lambda: {
             "formality": "professional",

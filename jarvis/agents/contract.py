@@ -107,6 +107,7 @@ class AgentCard:
 
     role_id: str
     role: str
+    version: str = "1.0"
     capabilities: list[str] = field(default_factory=list)
     responsibilities: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
@@ -121,6 +122,7 @@ class AgentCard:
 
     def to_dict(self) -> dict[str, Any]:
         return {"role_id": self.role_id, "role": self.role,
+                "version": self.version,
                 "capabilities": self.capabilities,
                 "responsibilities": self.responsibilities,
                 "skills": self.skills, "permissions": self.permissions,
@@ -225,6 +227,11 @@ def role_cards() -> list[AgentCard]:
           ["validate outputs", "run tests", "check calculations/files/state"],
           ["mark verified / failed / uncertain"],
           ["code.test", "system.inspect"], ["exec", "exec.eval", "fs.read"]),
+        R("tester", "Tester Agent", "analyst", "fast",
+          ["test plans", "targeted runs", "regression runs",
+           "failure analysis", "flakiness notes"],
+          ["never weaken or delete tests to force green"],
+          ["code.test"], ["exec", "exec.eval", "fs.read"]),
         R("planner", "Planner Agent", "planner", "reasoning",
           ["DAGs", "dependencies", "checkpoints", "retries", "rollback plans"],
           ["bounded plans only"],
