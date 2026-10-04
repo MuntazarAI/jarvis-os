@@ -311,12 +311,49 @@ def web_fetch(url: str, timeout: float = 15.0, max_bytes: int = 65536) -> ToolRe
         return _fail("web_fetch", f"{type(exc).__name__}: {exc}")
 
 
+def filesystem_move(src: str, dest_dir: str, new_name: str = "") -> ToolResult:
+    """Move one regular file into an existing directory. Mechanical
+    safety only (resolved paths, no overwrite, files never dirs):
+    scope authorization belongs to the policy/grant layer, which must
+    approve before this tool is called."""
+    try:
+        from pathlib import Path as _Path
+        source = _Path(src).expanduser()
+        target_dir = _Path(dest_dir).expanduser()
+        if ".." in source.parts or ".." in target_dir.parts:
+            return _fail("filesystem_move", "refusing .. traversal")
+        try:
+            source_r = source.resolve()
+            dest_r = target_dir.resolve()
+        except OSError as exc:
+            return _fail("filesystem_move", f"unresolvable path: {exc}")
+        if not source_r.is_file() or source_r.is_symlink():
+            return _fail("filesystem_move",
+                          "source must be a regular file")
+        if not dest_r.is_dir():
+            return _fail("filesystem_move",
+                          "destination must be an existing directory")
+        name = (new_name or source_r.name)[:128]
+        if not name or name in (".", "..") or "/" in name:
+            return _fail("filesystem_move", "bad file name")
+        dest = dest_r / name
+        if dest.exists():
+            return _fail("filesystem_move", "destination exists")
+        source_r.rename(dest)
+        return _ok("filesystem_move", {"src": str(source_r),
+                                       "dest": str(dest)})
+    except Exception as exc:
+        return _fail("filesystem_move", f"{type(exc).__name__}: {exc}")
+
+
 def default_registry() -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(Tool(ToolSpec("filesystem_read", "Read a file or list a directory",
                                RiskLevel.SAFE, 10.0, ["fs.read"]), filesystem_read))
     reg.register(Tool(ToolSpec("filesystem_write", "Write text to a file",
                                 RiskLevel.MEDIUM, 10.0, ["fs.write"]), filesystem_write))
+    reg.register(Tool(ToolSpec("filesystem_move", "Move one file into an existing directory",
+                                RiskLevel.MEDIUM, 10.0, ["fs.write"]), filesystem_move))
     reg.register(Tool(ToolSpec("terminal_run", "Run a shell command with timeout",
                                 RiskLevel.HIGH, 30.0, ["exec"]), terminal_run))
     reg.register(Tool(ToolSpec("python_run", "Evaluate restricted Python (no imports)",

@@ -100,9 +100,53 @@ class ConductorService:
                                 "`jarvis dots` / `jarvis missions` — "
                                 "tell me a concrete goal to log there.",
                                 latency_ms=self._ms(started))
+        if target == "autonomy":
+            return self._autonomy(decision, started)
         if target == "security":
             return self._refuse(decision, started)
         return self._clarify(decision, started)
+
+    def _autonomy(self, decision: RouteDecision,
+                    started: float) -> dict[str, Any]:
+        """Read-only autonomy answers. Mutations (grant/revoke/start/
+        stop) are NEVER executed from prose — the response names the
+        explicit CLI command instead."""
+        try:
+            from pathlib import Path as _Path
+            from ..policy.standing import StandingGrantStore
+            from ..autonomy.presence import PresenceRuntime
+            home = str(self.jarvis.config.paths.home)
+            grants = StandingGrantStore(home).list()
+            health = PresenceRuntime(home).health()
+            lines = [f"{len(grants)} live standing grant(s)",
+                     "presence: " + (
+                         f"claimed (pid {health['pid']}, "
+                         f"{health['ticks']} ticks)"
+                         if health["claimed"] else "idle")]
+            try:
+                import json as _json
+                last = _json.loads((_Path(home) /
+                                    "presence-state.json").read_text(
+                    encoding="utf-8")).get("last_actions", [])
+                if last:
+                    lines.append("last background actions: "
+                                 + "; ".join(str(a)[:120]
+                                             for a in last[:3]))
+            except (OSError, ValueError):
+                pass
+            lines.append("Manage with: jarvis grants list | "
+                         "jarvis grants revoke --id <id> | "
+                         "jarvis autonomy stop")
+            return self._result("autonomy", decision.confidence,
+                                decision,
+                                response="Autonomy status: "
+                                + "; ".join(lines),
+                                latency_ms=self._ms(started))
+        except Exception as exc:
+            return self._result(
+                "autonomy", decision.confidence, decision,
+                error=f"{type(exc).__name__}",
+                latency_ms=self._ms(started))
 
     def _cycle(self, decision: RouteDecision, text: str,
                session_id: str, started: float) -> dict[str, Any]:
