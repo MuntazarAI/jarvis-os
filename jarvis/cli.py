@@ -240,6 +240,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("restart", help="restart the JARVIS service")
     sub.add_parser("doctor", help="dependency + hardware + model health checks")
 
+    svc = sub.add_parser("service", help="24/7 background service: lifecycle, health, logs")
+    svc.add_argument("action", nargs="?", default="status",
+                     choices=["start", "stop", "restart", "status",
+                              "health", "doctor", "logs", "run"])
+    svc.add_argument("--json", action="store_true",
+                     help="machine-readable output")
+    svc.add_argument("--lines", type=int, default=30,
+                     help="log lines for service logs")
+
     ag = sub.add_parser("agents", help="multi-agent organization")
     ag.add_argument("action", nargs="?", default="list",
                     choices=["list", "status", "run", "explain", "teams",
@@ -1281,6 +1290,333 @@ def _backup_action(jarvis: Any, args: Any) -> int:
                     0 if result.get("ok") else 1)
     jarvis.close()
     return 2
+
+
+def _service_action(jarvis: Any, args: Any) -> int:
+    """24/7 background service controls. Foreground `run` is what
+    systemd (or `start`) supervises; everything else inspects."""
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "status")
+
+    def _out(payload: Any, text: str, code: int = 0) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print(text)
+        jarvis.close()
+        return code
+
+    from .service.runtime import (BackgroundService, ServiceLock,
+                                  evaluate_state, read_pid_info)
+    home = str(jarvis.config.paths.home)
+    cfg = jarvis.config.service
+
+    def _service() -> BackgroundService:
+        return BackgroundService(
+            home, interval_s=cfg.interval_s,
+            heartbeat_every_s=cfg.heartbeat_every_s,
+            health_every_s=cfg.health_every_s,
+            max_queue=cfg.max_queue)
+
+    if action == "status":
+        info = read_pid_info(home)
+        heart = _service().read_heartbeat()
+        payload = {"service": info, "heartbeat": heart}
+        lines = []
+        if info.get("running"):
+            lines.append(f"running pid={info['pid']}")
+        else:
+            lines.append(f"stopped ({info.get('reason', '')})")
+        if heart.get("present") and not heart.get("corrupt"):
+            lines.append(f"heartbeat age={heart.get('age_s', '?')}s "
+                         f"state={heart.get('state', '?')}")
+        return _out(payload, "SERVICE\n" + "\n".join(lines))
+    if action == "health":
+        return _out(_service_health(jarvis),
+                    "SERVICE HEALTH\n" + json.dumps(
+                        _service_health(jarvis), indent=2, default=str))
+    if action == "doctor":
+        return _out({"checks": _service_doctor(jarvis)},
+                    "SERVICE DOCTOR\n" + "\n".join(
+                        f"{c['name']:24} {c['status']:4} {c['detail']}"
+                        for c in _service_doctor(jarvis)))
+    if action == "logs":
+        lines = _service_logs(home, cfg,
+                              max(1, int(getattr(args, "lines", 30))))
+        return _out({"lines": lines}, "\n".join(lines) or "(no logs)")
+    if action in ("start", "restart"):
+        if action == "restart":
+            _service_stop(home)
+        return _service_start(home, cfg)
+    if action == "stop":
+        return _service_stop(home)
+    if action == "run":
+        return _service_run(jarvis)
+    jarvis.close()
+    return 2
+
+
+def _service_log_path(home: str, cfg: Any) -> Any:
+    from pathlib import Path as _Path
+    return _Path(home) / "logs" / "background-service.log"
+
+
+def _service_rotate(home: str, cfg: Any) -> None:
+    from pathlib import Path as _Path
+    path = _service_log_path(home, cfg)
+    try:
+        if path.exists() and path.stat().st_size > int(
+                cfg.max_log_bytes):
+            for i in range(int(cfg.max_log_files) - 1, 0, -1):
+                older = path.with_name(f"{path.name}.{i}")
+                newer = path.with_name(f"{path.name}.{i + 1}")
+                if older.exists():
+                    if i + 1 >= int(cfg.max_log_files):
+                        older.unlink()
+                    else:
+                        older.replace(newer)
+            path.replace(path.with_name(f"{path.name}.1"))
+    except OSError:
+        pass
+
+
+def _service_start(home: str, cfg: Any) -> int:
+    import subprocess as _subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+    from .service.runtime import read_pid_info
+    info = read_pid_info(home)
+    if info.get("running"):
+        print(f"not started: already running (pid {info['pid']})")
+        return 1
+    _service_rotate(home, cfg)
+    project = str(_Path(__file__).resolve().parent.parent)
+    log = _service_log_path(home, cfg)
+    try:
+        log.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    cmd = [_sys.executable, "-m", "jarvis.cli", "service", "run"]
+    if home and home != str(_Path.home() / ".jarvis-os"):
+        cmd = [_sys.executable, "-m", "jarvis.cli", "--home", home,
+               "service", "run"]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = project + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    try:
+        with open(log, "ab") as handle:
+            _subprocess.Popen(cmd, cwd=project, env=env,
+                              stdout=handle, stderr=subprocess.STDOUT,
+                              start_new_session=True, close_fds=True)
+    except (OSError, ValueError) as exc:
+        print(f"start failed: {type(exc).__name__}: {exc}")
+        return 1
+    print("background service starting (see: jarvis service status)")
+    return 0
+
+
+def _service_stop(home: str) -> int:
+    import os as _os
+    import signal as _signal
+    import time as _time
+    from .service.runtime import read_pid_info
+    info = read_pid_info(home)
+    if not info.get("running"):
+        print(f"not running ({info.get('reason', '')})")
+        return 0
+    try:
+        _os.kill(int(info["pid"]), _signal.SIGTERM)
+    except (OSError, ValueError, TypeError):
+        pass
+    deadline = _time.monotonic() + 25.0
+    while _time.monotonic() < deadline:
+        if not read_pid_info(home).get("running"):
+            print("background service stopped")
+            return 0
+        _time.sleep(0.5)
+    print("stop timed out: process still alive")
+    return 1
+
+
+def _service_logs(home: str, cfg: Any, lines: int) -> list[str]:
+    path = _service_log_path(home, cfg)
+    try:
+        if not path.exists():
+            return []
+        return path.read_text(
+            encoding="utf-8", errors="replace").splitlines()[-lines:]
+    except OSError:
+        return []
+
+
+def _service_health(jarvis: Any) -> dict[str, Any]:
+    import time as _time
+    from .service.runtime import (BackgroundService, evaluate_state,
+                                  read_pid_info)
+    home = str(jarvis.config.paths.home)
+    cfg = jarvis.config.service
+    info = read_pid_info(home)
+    svc = BackgroundService(home)
+    heart = svc.read_heartbeat()
+    emergency = False
+    try:
+        check = getattr(jarvis.policy, "_emergency_stop", None)
+        emergency = bool(check()) if callable(check) else False
+    except Exception:
+        emergency = False
+    degraded: list[str] = []
+    try:
+        import shutil as _shutil
+        _, _, free = _shutil.disk_usage(home)
+        if free < 512 * 1024 * 1024:
+            degraded.append("disk low")
+    except OSError:
+        degraded.append("disk unreadable")
+    try:
+        jarvis.events.count()
+    except Exception as exc:
+        degraded.append(f"persistence: {type(exc).__name__}")
+    if not info.get("running", False) and not heart.get("present", False):
+        return {"state": "STOPPED", "uptime_seconds": 0.0,
+                "heartbeat_age_s": None,
+                "pid": info.get("pid"), "queue_depth": 0,
+                "restart_count": 0, "degraded": degraded,
+                "emergency_stop": emergency}
+    failed = not info.get("running", False)
+    state = evaluate_state(
+        emergency=emergency, failed=failed,
+        heartbeat_stale=bool(heart.get("stale", True)),
+        degraded_reasons=degraded,
+        recovering=False)
+    return {"state": state,
+            "uptime_seconds": round(_time.time() - float(
+                heart.get("started_at", _time.time())), 1)
+            if heart.get("present") else 0.0,
+            "heartbeat_age_s": heart.get("age_s"),
+            "pid": info.get("pid"),
+            "queue_depth": 0,
+            "restart_count": int(heart.get("restart_count", 0) or 0),
+            "degraded": degraded,
+            "emergency_stop": emergency}
+
+
+def _service_doctor(jarvis: Any) -> list[dict[str, str]]:
+    from .service.runtime import read_pid_info
+    home = str(jarvis.config.paths.home)
+    checks: list[dict[str, str]] = []
+
+    def _add(name: str, ok: bool, detail: str = "") -> None:
+        checks.append({"name": name,
+                       "status": "PASS" if ok else "FAIL",
+                       "detail": detail})
+
+    import shutil as _shutil
+    unit = _shutil.which("systemctl") is not None
+    _add("systemd present", unit, "systemctl found" if unit else
+         "no systemctl: unit file advisory only")
+    info = read_pid_info(home)
+    _add("single instance", True,
+         f"pid={info.get('pid')}" if info.get("running")
+         else info.get("reason", "stopped"))
+    svc_health = _service_health(jarvis)
+    _add("service state",
+         svc_health["state"] != "FAILED",
+         svc_health["state"] + (" (engaged: read-only mode)" 
+                                if svc_health["state"] == "EMERGENCY_STOP"
+                                else ""))
+    try:
+        jarvis.config.validate()
+        _add("configuration", True, "service.* bounds valid")
+    except ValueError as exc:
+        _add("configuration", False, str(exc)[:160])
+    try:
+        n = jarvis.events.count()
+        _add("eventstore", True, f"{n} events readable")
+    except Exception as exc:
+        _add("eventstore", False, f"{type(exc).__name__}")
+    try:
+        stopped = getattr(jarvis.policy, "_emergency_stop", lambda: False)()
+        _add("emergency stop", True,
+             "ENGAGED" if stopped else "clear")
+    except Exception as exc:
+        _add("emergency stop", False, f"{type(exc).__name__}")
+    _add("Presence", True, "tick runtime available")
+    return checks
+
+
+def _service_run(jarvis: Any) -> int:
+    """Foreground loop for systemd/`start`. Never returns until stop."""
+    import time as _time
+    from .autonomy.presence import PresenceRuntime
+    from .service.runtime import (BackgroundService, Trigger,
+                                  evaluate_state)
+    home = str(jarvis.config.paths.home)
+    cfg = jarvis.config.service
+    svc = BackgroundService(
+        home, interval_s=cfg.interval_s,
+        heartbeat_every_s=cfg.heartbeat_every_s,
+        health_every_s=cfg.health_every_s,
+        max_queue=cfg.max_queue)
+    started = svc.start()
+    if not started.get("ok"):
+        print(f"service refused: {started.get('error')}")
+        jarvis.close()
+        return 1
+    presence = PresenceRuntime(home, interval_s=cfg.interval_s)
+
+    def _handle(trigger: Trigger) -> dict[str, Any]:
+        try:
+            if trigger.kind == "presence_tick":
+                report = presence.tick(jarvis)
+                return {"ok": not report.get("errors"),
+                        "detail": report}
+            if trigger.kind == "world_refresh":
+                from .worldintel.refresh import refresh_all
+                summary = refresh_all(
+                    home, interval_s=float(
+                        jarvis.config.world.refresh_interval_s))
+                return {"ok": True, "detail": summary}
+            if trigger.kind == "health_check":
+                health = _service_health(jarvis)
+                state = health.get("state", "?")
+                if state in ("FAILED",):
+                    svc.degraded_reasons.append("health FAILED")
+                return {"ok": state != "FAILED", "detail": health}
+            if trigger.kind == "maintenance":
+                pruned = _service_maintenance(home, cfg)
+                return {"ok": True, "detail": pruned}
+        except Exception as exc:
+            return {"ok": False,
+                    "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "error": "unknown trigger kind"}
+
+    try:
+        result = svc.serve_forever(_handle)
+    finally:
+        try:
+            jarvis.close()
+        except Exception:
+            pass
+    print(f"service exited: {result}")
+    return 0 if result.get("ok") else 1
+
+
+def _service_maintenance(home: str, cfg: Any) -> dict[str, Any]:
+    """Bounded janitor: prune heartbeat tmp files, cap trace growth."""
+    removed = 0
+    try:
+        from pathlib import Path as _Path
+        for pattern in ("service-heartbeat.json.tmp",
+                        ".device-approvals-*", ".policy-grants-*"):
+            for path in _Path(home).glob(pattern):
+                try:
+                    path.unlink()
+                    removed += 1
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return {"removed_temp_files": removed}
 
 
 def _audio_spool_depth(jarvis: Any) -> dict[str, Any]:
@@ -4319,6 +4655,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "autonomy":
         return _autonomy_action(jarvis, args)
+
+    if args.command == "service":
+        return _service_action(jarvis, args)
 
     parser.print_help()
     jarvis.close()

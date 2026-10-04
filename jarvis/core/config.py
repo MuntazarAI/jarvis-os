@@ -181,6 +181,21 @@ class VoiceConfig:
 
 
 @dataclass
+class ServiceConfig:
+    """24/7 background service. All bounds validated; nothing unlimited."""
+
+    enabled: bool = False
+    interval_s: float = 300.0
+    heartbeat_every_s: float = 60.0
+    health_every_s: float = 300.0
+    shutdown_timeout_s: float = 20.0
+    max_queue: int = 32
+    max_attempts: int = 3
+    max_log_bytes: int = 4 * 1024 * 1024
+    max_log_files: int = 5
+
+
+@dataclass
 class AutonomyConfig:
     """Bounded autonomy: disabled-by-default presence and grants."""
 
@@ -232,6 +247,7 @@ class JarvisConfig:
     world: WorldConfig = field(default_factory=WorldConfig)
     conductor: ConductorConfig = field(default_factory=ConductorConfig)
     autonomy: AutonomyConfig = field(default_factory=AutonomyConfig)
+    service: ServiceConfig = field(default_factory=ServiceConfig)
     personality: dict[str, Any] = field(
         default_factory=lambda: {
             "formality": "professional",
@@ -329,6 +345,18 @@ class JarvisConfig:
             errors.append("models.embedding_dim must be >= 8")
         if self.server.port < 1 or self.server.port > 65535:
             errors.append("server.port out of range")
+        if self.service.interval_s < 30.0:
+            errors.append("service.interval_s must be >= 30")
+        if self.service.heartbeat_every_s < 10.0:
+            errors.append("service.heartbeat_every_s must be >= 10")
+        if not 1 <= self.service.max_queue <= 256:
+            errors.append("service.max_queue must be 1..256")
+        if not 0 <= self.service.max_attempts <= 10:
+            errors.append("service.max_attempts must be 0..10")
+        if self.service.max_log_bytes < 65536:
+            errors.append("service.max_log_bytes must be >= 65536")
+        if not 1 <= self.service.max_log_files <= 20:
+            errors.append("service.max_log_files must be 1..20")
         if errors:
             raise ValueError("; ".join(errors))
         return errors
