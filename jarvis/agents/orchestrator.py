@@ -619,7 +619,8 @@ class Orchestrator:
 
     def _gated_tool(self, actor: str, tool_name: str,
                     args: dict[str, Any], state: dict[str, Any],
-                    budgets: Budgets, description: str) -> AgentResult:
+                    budgets: Budgets, description: str,
+                    approval: str = "") -> AgentResult:
         """Every tool call passes PolicyEngine. No exceptions, no bypasses.
 
         Least privilege is enforced first: the tool must belong to one
@@ -642,18 +643,29 @@ class Orchestrator:
         from ..core.types import ActionPlan
         plan = ActionPlan(
             action=f"{tool_name} {description}".strip(), args=args,
-            required_permissions=list(tool.spec.required_permissions))
+            required_permissions=list(tool.spec.required_permissions),
+            risk=tool.spec.risk)
         decision = self.ctx.policy.evaluate(actor, plan)
         self._record_policy(state, tool_name, decision)
         if not decision.allow:
             return AgentResult.failure(
                 actor, "blocked by policy: " + "; ".join(decision.reasons))
         if decision.requires_approval:
-            token = self.ctx.policy.request_approval(actor, plan, decision)
-            return AgentResult(
-                success=False, role=actor, errors=[f"needs approval ({token})"],
-                verification_status=VerificationStatus.UNCERTAIN,
-                ended_at=now())
+            if approval and self.ctx.policy.redeem(
+                    approval, actor,
+                    f"{tool_name} {description}".strip(), args):
+                self._trace(state.get("task_id", ""), agent=actor,
+                            role=actor, event="approval-redeemed",
+                            detail=f"{tool_name} (single-use token spent)")
+            else:
+                token = self.ctx.policy.request_approval(
+                    actor, plan, decision)
+                return AgentResult(
+                    success=False, role=actor,
+                    errors=[f"needs approval ({token[:12]}…) — approve, "
+                            f"then retry with the full token"],
+                    verification_status=VerificationStatus.UNCERTAIN,
+                    ended_at=now())
         state["tool_calls"] += 1
         result = self.ctx.tools.call(tool_name, **args)
         if not result.ok:

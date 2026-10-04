@@ -165,13 +165,82 @@ class PolicyEngine:
         """Attach a StandingGrantStore. Reversible via bind_standing_grants(None)."""
         self._standing = store
 
+    # -- durable approval backing -------------------------------------------
+    def _approvals_path(self):
+        try:
+            return Path(self.config.paths.home) / "policy-approvals.json"
+        except Exception:
+            return None
+
+    def _approval_mutation(self):
+        """Lock, reload, mutate (caller), persist. Cross-process atomic."""
+        import contextlib
+
+        @contextlib.contextmanager
+        def mutate():
+            lock = self._grant_lock_path()
+            if lock is None:
+                yield
+                self._save_approvals()
+                return
+            with self._flock_best_effort(lock):
+                self._load_approvals()
+                yield
+                self._save_approvals()
+        return mutate()
+
+    def _load_approvals(self) -> int:
+        path = self._approvals_path()
+        if path is None or not path.exists():
+            return 0
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return 0
+        if not isinstance(raw, dict):
+            return 0
+        fresh = {}
+        for token, entry in (raw.get("approvals") or {}).items():
+            if isinstance(token, str) and isinstance(entry, dict) \
+                    and entry.get("status") in (
+                        "pending", "approved", "denied", "consumed"):
+                fresh[token] = entry
+        self.approvals = fresh
+        return len(fresh)
+
+    def _save_approvals(self) -> None:
+        path = self._approvals_path()
+        if path is None:
+            return
+        payload = {"version": 1, "approvals": self.approvals}
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(prefix=".policy-approvals-",
+                                       dir=str(path.parent))
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(payload, handle, indent=2, sort_keys=True,
+                              default=str)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp, path)
+            finally:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+        except OSError:
+            pass
+
     def authorize_standing(self, actor: str, capability: str,
                            scope_kind: str, resource: str,
                            operation: str) -> tuple[bool, str]:
-        """Standing-grant check as authorization INPUT. Returns
-        (allowed, reason). A grant can only satisfy scope coverage; it
-        never clears risk-driven approval, egress, or emergency-stop
-        decisions — those stay inside evaluate()."""
+        """Standing-grant check as authorization INPUT. Security
+        tooling is excluded by design: sec.* capabilities always
+        require live interactive approval, never a stored grant.
+        Returns (allowed, reason). A grant can only satisfy scope
+        coverage; it never clears risk-driven approval, egress, or
+        emergency-stop decisions — those stay inside evaluate()."""
+        if str(capability or "").startswith("sec."):
+            return False, "security tools require live approval"
         if self._emergency_stop():
             return False, "EMERGENCY STOP engaged"
         if self._standing is None:
@@ -403,32 +472,75 @@ class PolicyEngine:
                          decision: PolicyDecision) -> str:
         from ..core.types import new_id
         token = new_id("appr")
-        self.approvals[token] = {
-            "actor": actor, "action": plan.action, "args": plan.args,
-            "risk": decision.risk, "requested_at": now(), "status": "pending",
-        }
+        with self._approval_mutation():
+            self.approvals[token] = {
+                "actor": actor, "action": plan.action,
+                "args": plan.args,
+                "risk": decision.risk, "requested_at": now(),
+                "status": "pending",
+            }
         return token
 
     def approve(self, token: str, by: str = "user") -> bool:
-        entry = self.approvals.get(token)
-        if not entry or entry["status"] != "pending":
-            return False
-        entry["status"] = "approved"
-        entry["by"] = by
-        entry["decided_at"] = now()
-        return True
+        return self._decide_approval(token, "approved", by)
 
     def deny(self, token: str, by: str = "user") -> bool:
-        entry = self.approvals.get(token)
-        if not entry or entry["status"] != "pending":
-            return False
-        entry["status"] = "denied"
-        entry["by"] = by
-        entry["decided_at"] = now()
-        return True
+        return self._decide_approval(token, "denied", by)
+
+    def _decide_approval(self, token: str, state: str,
+                         by: str) -> bool:
+        with self._approval_mutation():
+            entry = self.approvals.get(token)
+            if not entry or entry["status"] != "pending":
+                return False
+            entry["status"] = state
+            entry["by"] = by
+            entry["decided_at"] = now()
+            return True
 
     def approved(self, token: str) -> bool:
+        self._load_approvals()
         return self.approvals.get(token, {}).get("status") == "approved"
+
+    def redeem(self, token: str, actor: str, action: str,
+               args: dict[str, Any] | None = None) -> bool:
+        """Spend one approved token iff bindings match. Single-use:
+        approved → consumed. Never raises; fail closed."""
+        try:
+            with self._approval_mutation():
+                entry = self.approvals.get(token)
+                if entry is None or entry.get("status") != "approved":
+                    return False
+                if entry.get("actor") != actor:
+                    return False
+                if entry.get("action") != action:
+                    return False
+                if (args is not None and dict(args or {})
+                        != dict(entry.get("args") or {})):
+                    return False
+                entry["status"] = "consumed"
+                entry["consumed_at"] = now()
+                return True
+        except Exception:
+            return False
+
+    def list_approvals(self, state: str | None = None,
+                       limit: int = 100) -> list[dict[str, Any]]:
+        """Operator-safe listing: full tokens never included."""
+        self._load_approvals()
+        out = []
+        for token, entry in self.approvals.items():
+            if state is not None and entry.get("status") != state:
+                continue
+            out.append({"approval_id": token[:12] + "…",
+                        "actor": entry.get("actor", ""),
+                        "action": str(entry.get("action", ""))[:80],
+                        "risk": entry.get("risk", 0.0),
+                        "status": entry.get("status", ""),
+                        "requested_at": entry.get("requested_at", 0.0)})
+            if len(out) >= max(1, limit):
+                break
+        return out
 
     # -- privacy -------------------------------------------------------------
     def privacy_check(self, data_kind: str, destination: str) -> tuple[bool, str]:

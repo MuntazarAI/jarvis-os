@@ -396,6 +396,20 @@ def build_parser() -> argparse.ArgumentParser:
     grants.add_argument("--json", action="store_true",
                         help="machine-readable output")
 
+    approvals = sub.add_parser(
+        "approvals",
+        help="policy approvals: list pending, approve, deny (single-use tokens)")
+    approvals.add_argument("action", nargs="?", default="list",
+                           choices=["list", "show", "approve", "deny"])
+    approvals.add_argument("--token", default="",
+                           help="approval token or unique prefix")
+    approvals.add_argument("--state", default="pending",
+                           help="filter by state for list")
+    approvals.add_argument("--reason", default="",
+                           help="reason for deny")
+    approvals.add_argument("--json", action="store_true",
+                           help="machine-readable output")
+
     autonomy = sub.add_parser("autonomy", help="bounded autonomy: status, presence control")
     autonomy.add_argument("action", nargs="?", default="status",
                           choices=["status", "start", "stop", "tick",
@@ -1121,6 +1135,61 @@ def _autonomy_action(jarvis: Any, args: Any) -> int:
                  f"notifications={report.get('notifications', 0)}",
                  f"errors={len(report.get('errors', []))}"]
         return _out(report, "TICK\n" + "\n".join(lines))
+    jarvis.close()
+    return 2
+
+
+def _resolve_policy_token(policy: Any, token: str) -> str | None:
+    """Unique-prefix resolution (min 4 chars). Full tokens never dumped."""
+    token = str(token or "")
+    if len(token) < 4:
+        return None
+    policy._load_approvals() if hasattr(policy, "_load_approvals") else None
+    matches = [t for t in policy.approvals if t.startswith(token)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _approvals_action(jarvis: Any, args: Any) -> int:
+    """Policy approval tokens: list pending (truncated), show, approve, deny."""
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "list")
+
+    def _out(payload: Any, text: str, code: int = 0) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print(text)
+        jarvis.close()
+        return code
+
+    policy = jarvis.policy
+    if action == "list":
+        found = policy.list_approvals(
+            getattr(args, "state", "") or None)
+        lines = [f"{a['approval_id']:16} {a['actor']:12} "
+                 f"{a['action'][:40]:42} {a['status']}"
+                 for a in found]
+        return _out({"approvals": found},
+                    "APPROVALS\n" + "\n".join(lines) or "no approvals")
+    full = _resolve_policy_token(policy, getattr(args, "token", ""))
+    if full is None:
+        return _out({"error": "unknown or ambiguous token"},
+                    "unknown or ambiguous token (need 4+ unique chars)", 1)
+    if action == "show":
+        entry = policy.approvals.get(full, {})
+        info = {"approval_id": full[:12] + "…",
+                "actor": entry.get("actor", ""),
+                "action": str(entry.get("action", ""))[:120],
+                "status": entry.get("status", "")}
+        return _out(info, "\n".join(f"{k}={v}" for k, v in info.items()))
+    if action == "approve":
+        ok = policy.approve(full, by="cli")
+        return _out({"approved": ok}, "approved" if ok else
+                    "cannot approve", 0 if ok else 1)
+    if action == "deny":
+        ok = policy.deny(full, by="cli")
+        return _out({"denied": ok}, "denied" if ok else
+                    "cannot deny", 0 if ok else 1)
     jarvis.close()
     return 2
 
@@ -4152,6 +4221,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "grants":
         return _grants_action(jarvis, args)
+
+    if args.command == "approvals":
+        return _approvals_action(jarvis, args)
 
     if args.command == "autonomy":
         return _autonomy_action(jarvis, args)
