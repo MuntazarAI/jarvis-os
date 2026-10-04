@@ -50,6 +50,61 @@ class VoiceProfile:
         return asdict(self)
 
 
+OVERRIDE_FILENAME = "voice-profile.json"
+OVERRIDE_KEYS = ("style", "emotion", "language", "exaggeration",
+                 "temperature")
+
+
+def overrides_path(home: str | Path = "") -> Path:
+    base = Path(os.path.expanduser(str(home))) if home else \
+        Path.home() / ".jarvis-os"
+    return base / OVERRIDE_FILENAME
+
+
+def load_overrides(home: str | Path = "") -> dict:
+    """User speaking-style overrides. Missing/corrupt → {} (defaults)."""
+    import json
+    try:
+        raw = json.loads(overrides_path(home).read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    clean = {}
+    for key in OVERRIDE_KEYS:
+        value = raw.get(key)
+        if isinstance(value, str) and value[:40]:
+            clean[key] = value[:40]
+        elif isinstance(value, (int, float)) and key in (
+                "exaggeration", "temperature"):
+            clean[key] = max(0.0, min(2.0, float(value)))
+    return clean
+
+
+def save_overrides(home: str | Path, updates: dict) -> dict:
+    """Persist style overrides. Unknown keys refused, never merged blindly."""
+    import json
+    current = load_overrides(home)
+    for key, value in (updates or {}).items():
+        if key not in OVERRIDE_KEYS:
+            raise ValueError(f"unknown profile key: {key}")
+        current[key] = value
+    path = overrides_path(home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(current, indent=2, sort_keys=True),
+                    encoding="utf-8")
+    return load_overrides(home)
+
+
+def effective_style(home: str | Path = "", explicit: str = "") -> str:
+    """Explicit flag wins, then saved profile, then normal."""
+    if explicit in STYLE_GUIDANCE:
+        return explicit
+    saved = load_overrides(home).get("style", "")
+    return saved if saved in STYLE_GUIDANCE else "normal"
+
+
 def jarvis_profile(overrides: dict | None = None) -> VoiceProfile:
     profile = VoiceProfile()
     for key, value in (overrides or {}).items():
