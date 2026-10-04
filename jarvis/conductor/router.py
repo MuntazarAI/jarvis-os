@@ -103,7 +103,7 @@ _SECURITY_ANALYSIS = ("is this safe", "is it safe", "is .* safe",
                        "analyze.*safe",
                        "threat", "suspicious", "audit ")
 _TASK = ("track ", "remind me", "mission", "goal", "todo",
-         "add a task")
+         "add a task", "create task")
 _AUTONOMY = ("standing permission", "standing grant", "grant list",
              "my grants", "my permissions", "revoke", "autonom",
              "background", "what is jarvis watching",

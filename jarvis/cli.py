@@ -31,6 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--token", default="")
 
+    brd = sub.add_parser("board", help="local status board URL "
+                                      "(served by `jarvis serve`)")
+    brd.add_argument("--host", default="127.0.0.1")
+    brd.add_argument("--port", type=int, default=8765)
+
     sub.add_parser("status", help="print system status JSON")
 
     gev = sub.add_parser("gods-eye", help="manage the local God's Eye View application")
@@ -306,6 +311,23 @@ def build_parser() -> argparse.ArgumentParser:
                      help="JSON success criteria list")
     msn.add_argument("--reason", default="", help="reason/context")
     msn.add_argument("--json", action="store_true",
+                     help="machine-readable output")
+
+    tsk = sub.add_parser("task", help="durable autonomous tasks: "
+                                      "create, run, recover, inspect")
+    tsk.add_argument("action", nargs="?", default="list",
+                     choices=["create", "list", "status", "inspect",
+                              "run", "pause", "resume", "cancel",
+                              "recover", "history", "doctor"])
+    tsk.add_argument("text", nargs="*",
+                     help="title for create, task id otherwise")
+    tsk.add_argument("--steps", default="",
+                     help="semicolon-separated step titles for create")
+    tsk.add_argument("--priority", type=int, default=5)
+    tsk.add_argument("--deadline-s", type=float, default=0.0,
+                     help="seconds from now after which the task fails")
+    tsk.add_argument("--reason", default="", help="reason/context")
+    tsk.add_argument("--json", action="store_true",
                      help="machine-readable output")
 
     pro = sub.add_parser("proactive", help="proactive attention + decisions")
@@ -1563,6 +1585,24 @@ def _service_run(jarvis: Any) -> int:
         jarvis.close()
         return 1
     presence = PresenceRuntime(home, interval_s=cfg.interval_s)
+    from .durable import DurableRunner, TaskStore, mesh_executor
+    from .service.runtime import PRIORITY_NORMAL as _PRIO_NORMAL
+    durable = DurableRunner(TaskStore(home),
+                            executor=mesh_executor(jarvis),
+                            policy=getattr(jarvis, "policy", None),
+                            events=getattr(jarvis, "events", None))
+    try:
+        recovered = durable.recover_all(
+            policy=getattr(jarvis, "policy", None))
+    except Exception:
+        recovered = []
+    if recovered:
+        print(f"durable tasks recovered at startup: {len(recovered)}")
+    svc.schedule(Trigger(
+        trigger_id="durable-tasks-init", source="service",
+        kind="durable_tasks", priority=_PRIO_NORMAL,
+        run_at=_time.monotonic(), dedupe_key="durable-tasks:init",
+        correlation_id=f"svc-{int(_time.time())}"))
 
     def _handle(trigger: Trigger) -> dict[str, Any]:
         try:
@@ -1585,6 +1625,20 @@ def _service_run(jarvis: Any) -> int:
             if trigger.kind == "maintenance":
                 pruned = _service_maintenance(home, cfg)
                 return {"ok": True, "detail": pruned}
+            if trigger.kind == "durable_tasks":
+                summary = _durable_sweep(jarvis, durable)
+                try:
+                    svc.schedule(Trigger(
+                        trigger_id="durable-tasks-next",
+                        source="service", kind="durable_tasks",
+                        priority=_PRIO_NORMAL,
+                        run_at=_time.monotonic() + max(
+                            60.0, float(cfg.interval_s)),
+                        dedupe_key="durable-tasks:next",
+                        correlation_id=trigger.correlation_id))
+                except Exception:
+                    pass
+                return {"ok": True, "detail": summary}
         except Exception as exc:
             return {"ok": False,
                     "error": f"{type(exc).__name__}: {exc}"}
@@ -1599,6 +1653,42 @@ def _service_run(jarvis: Any) -> int:
             pass
     print(f"service exited: {result}")
     return 0 if result.get("ok") else 1
+
+
+def _durable_sweep(jarvis: Any, durable: Any,
+                   max_advances: int = 3) -> dict[str, Any]:
+    """One bounded durable-task pass: recover strays, then advance a
+    few ready tasks by one step each. Never raises; a sweep never
+    blocks the service loop."""
+    from .durable.task import TaskState
+    summary: dict[str, Any] = {"recovered": 0, "advanced": [],
+                               "errors": []}
+    try:
+        recovered = durable.recover_all(
+            policy=getattr(jarvis, "policy", None))
+        summary["recovered"] = len(recovered)
+    except Exception as exc:
+        summary["errors"].append(f"recover: {type(exc).__name__}")
+        return summary
+    advanced = 0
+    try:
+        for task in durable.store.list():
+            if advanced >= max_advances:
+                break
+            if task.state not in (TaskState.READY, TaskState.RETRYING,
+                                  TaskState.CHECKPOINTED):
+                continue
+            try:
+                durable.advance(task.task_id)
+                summary["advanced"].append(
+                    f"{task.task_id}:{durable.store.get(task.task_id).state.value}")
+                advanced += 1
+            except Exception as exc:
+                summary["errors"].append(
+                    f"{task.task_id}: {type(exc).__name__}"[:160])
+    except Exception as exc:
+        summary["errors"].append(f"sweep: {type(exc).__name__}")
+    return summary
 
 
 def _service_maintenance(home: str, cfg: Any) -> dict[str, Any]:
@@ -2980,6 +3070,200 @@ def _device_policy(jarvis: Any, args: Any, _out: Any) -> int:
     return 2
 
 
+def _task_doctor_checks(home: str) -> list[dict[str, str]]:
+    """Durable task health checks. Read-only; shared by CLI + service."""
+    import time as _time
+    from .durable import TaskStore
+    from .durable.task import TaskState
+    checks: list[dict[str, str]] = []
+
+    def _add(name: str, ok: bool, detail: str) -> None:
+        checks.append({"name": f"durable.{name}",
+                       "status": "OK" if ok else "FAIL",
+                       "detail": detail})
+    try:
+        store = TaskStore(home)
+    except Exception as exc:
+        _add("store", False, f"open failed: {type(exc).__name__}")
+        return checks
+    if store.corrupt:
+        _add("store", False, f"fail-closed: {store.corrupt}")
+        return checks
+    _add("store", True, f"{len(store.list())} task(s) persisted")
+    now = _time.time()
+    stale = [t.task_id for t in store.list()
+             if t.state in (TaskState.RUNNING, TaskState.VERIFYING)
+             and now - t.updated_at > 3600]
+    _add("stale", not stale,
+         "none" if not stale else f"{len(stale)} running >1h: "
+         f"{', '.join(stale[:3])} (recover them)")
+    violations = [t.task_id for t in store.list()
+                  for s in t.steps
+                  if s.attempts > t.retry_policy.max_attempts]
+    _add("retries", not violations,
+         "bounded" if not violations else
+         f"over budget: {', '.join(violations[:3])}")
+    overdue = [t.task_id for t in store.list()
+               if t.deadline and now >= t.deadline and t.state not in (
+                   TaskState.COMPLETED, TaskState.FAILED,
+                   TaskState.CANCELLED, TaskState.EXPIRED)]
+    _add("deadlines", not overdue,
+         "none overdue" if not overdue else
+         f"overdue: {', '.join(overdue[:3])}")
+    return checks
+
+
+def _task_action(jarvis: Any, args: Any) -> int:
+    """Durable tasks: crash-safe goals with checkpoints + recovery."""
+    import time as _time
+    from .durable import DurableRunner, TaskStore, mesh_executor
+    from .durable.task import TaskState
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "list")
+    text = " ".join(getattr(args, "text", []) or []).strip()
+    home = str(jarvis.config.paths.home)
+
+    def _out(payload: Any, lines: list[str]) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print("\n".join(lines) or "(no durable tasks)")
+        jarvis.close()
+        return 0
+
+    runner = DurableRunner(
+        TaskStore(home), executor=mesh_executor(jarvis),
+        policy=getattr(jarvis, "policy", None),
+        events=getattr(jarvis, "events", None))
+    store = runner.store
+    if store.corrupt:
+        jarvis.close()
+        print(f"durable store fail-closed: {store.corrupt}")
+        return 1
+
+    if action == "create":
+        title = text[:300]
+        if not title:
+            jarvis.close()
+            print("usage: jarvis task create <goal> "
+                  "[--steps 'a; b'] [--priority N] [--deadline-s S]")
+            return 2
+        raw_steps = [s.strip() for s in
+                     str(getattr(args, "steps", "")).split(";")]
+        steps = [{"title": s[:500]} for s in raw_steps if s]
+        if not steps:
+            steps = [{"title": title[:500]}]
+        deadline = _time.time() + float(
+            getattr(args, "deadline_s", 0.0) or 0.0) \
+            if float(getattr(args, "deadline_s", 0.0) or 0.0) > 0 \
+            else 0.0
+        task = runner.create(title=title, source="cli",
+                             priority=int(getattr(args, "priority",
+                                                  5)),
+                             deadline=deadline,
+                             steps=steps)
+        runner.mark_ready(task.task_id, plan_version="task-cli-v1")
+        payload = {"task_id": task.task_id, "state": "ready",
+                   "steps": len(task.steps)}
+        return _out(payload, [f"TASK {task.task_id} ready: {title}",
+                              f"{len(task.steps)} step(s). "
+                              f"`jarvis task run {task.task_id}` "
+                              "advances one step."])
+    if action in ("list", "status"):
+        tasks = store.list()
+        payload = {"tasks": [{"task_id": t.task_id, "title": t.title,
+                              "state": t.state.value,
+                              "steps": f"{sum(1 for s in t.steps if s.state.value == 'succeeded')}/{len(t.steps)}",
+                              "updated_at": t.updated_at}
+                             for t in tasks]}
+        lines = [f"{t['task_id']:22} {t['state']:13} "
+                 f"{t['steps']:>7}  {t['title'][:60]}"
+                 for t in payload["tasks"]]
+        return _out(payload, ["TASKS"] + lines)
+    if action == "doctor":
+        checks = _task_doctor_checks(home)
+        return _out({"checks": checks},
+                    ["TASK DOCTOR"] + [
+                        f"{c['name']:22} {c['status']:4} {c['detail']}"
+                        for c in checks])
+    task_id = text.split()[0] if text else ""
+    task = store.get(task_id)
+    if task is None:
+        jarvis.close()
+        print(f"unknown task: {task_id or '(none given)'}")
+        return 1
+    if action == "inspect":
+        payload = task.to_dict()
+        lines = [f"TASK {task.task_id} [{task.state.value}]",
+                 f"title: {task.title}",
+                 f"plan: {task.plan_ref} ({task.plan_version})",
+                 f"current: {task.current_step or '-'}"]
+        for step in task.steps:
+            lines.append(
+                f"  {step.step_id} [{step.state.value}] "
+                f"att={step.attempts} verify={step.verification} "
+                f"{step.title[:70]}")
+        lines.append(f"checkpoints: {len(task.checkpoints)}")
+        for entry in (task.provenance.get("recovery_log") or [])[-5:]:
+            lines.append(f"  recovery: {entry.get('action')} — "
+                         f"{entry.get('reason', '')}"[:120])
+        return _out(payload, lines)
+    if action == "run":
+        try:
+            if task.state == TaskState.PLANNING:
+                runner.mark_ready(task_id, plan_version="task-cli-v1")
+            runner.advance(task_id)
+        except Exception as exc:
+            jarvis.close()
+            print(f"advance failed: {type(exc).__name__}: {exc}"[:300])
+            return 1
+        fresh = store.get(task_id)
+        payload = {"task_id": task_id, "state": fresh.state.value}
+        return _out(payload, [f"TASK {task_id} → {fresh.state.value}"])
+    if action == "pause":
+        runner.pause(task_id)
+        return _out({"task_id": task_id, "state": "paused"},
+                    [f"TASK {task_id} paused"])
+    if action == "resume":
+        runner.resume(task_id)
+        return _out({"task_id": task_id, "state": "ready"},
+                    [f"TASK {task_id} resumed → ready"])
+    if action == "cancel":
+        runner.cancel(task_id,
+                      reason=str(getattr(args, "reason", "")))
+        return _out({"task_id": task_id, "state": "cancelled"},
+                    [f"TASK {task_id} cancelled"])
+    if action == "recover":
+        decision = runner.recover(
+            task_id, policy_ok=_task_policy_ok(jarvis))
+        return _out(decision, [f"TASK {task_id} recover → "
+                               f"{decision.get('action')}: "
+                               f"{decision.get('reason', '')}"[:160]])
+    if action == "history":
+        trail = task.provenance.get("recovery_log", [])
+        payload = {"task_id": task_id, "recovery": trail,
+                   "checkpoints": [c.to_dict()
+                                   for c in task.checkpoints]}
+        lines = [f"HISTORY {task_id}"] + [
+            f"  {e.get('action')}: {e.get('reason', '')}"[:120]
+            for e in trail] or ["  (no recovery events yet)"]
+        lines.append(f"checkpoints: {len(task.checkpoints)}")
+        return _out(payload, lines)
+    jarvis.close()
+    return 2
+
+
+def _task_policy_ok(jarvis: Any) -> bool:
+    try:
+        check = getattr(getattr(jarvis, "policy", None),
+                        "emergency_stop_engaged", None)
+        if callable(check):
+            return not bool(check())
+    except Exception:
+        pass
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     raw = list(sys.argv[1:] if argv is None else argv)
@@ -3067,6 +3351,14 @@ def main(argv: list[str] | None = None) -> int:
                       f"error: {out.get('error', 'unknown')}") + spoken)
         finally:
             jarvis.close()
+        return 0
+
+    if args.command == "board":
+        url = f"http://{args.host}:{args.port}/board"
+        print(f"status board: {url}")
+        print("served by `jarvis serve` (same host/port/token). "
+              "read-only, localhost by default.")
+        jarvis.close()
         return 0
 
     if args.command == "serve":
@@ -3237,6 +3529,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(payload, indent=2, default=str))
         jarvis.close()
         return 0
+
+    if args.command == "task":
+        return _task_action(jarvis, args)
 
     if args.command == "dots":
         from .dots.manager import DotManager
