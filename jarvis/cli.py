@@ -1415,7 +1415,8 @@ def _service_action(jarvis: Any, args: Any) -> int:
                         _service_health(jarvis), indent=2, default=str))
     if action == "doctor":
         checks = _service_doctor(jarvis)
-        failed = [c for c in checks if c.get("status") != "OK"]
+        failed = [c for c in checks
+                  if c.get("status") not in ("OK", "PASS")]
         return _out({"checks": checks},
                     "SERVICE DOCTOR\n" + "\n".join(
                         f"{c['name']:24} {c['status']:4} {c['detail']}"
@@ -3272,7 +3273,8 @@ def _task_action(jarvis: Any, args: Any) -> int:
         return _out(payload, ["TASKS"] + lines)
     if action == "doctor":
         checks = _task_doctor_checks(home)
-        failed = [c for c in checks if c.get("status") != "OK"]
+        failed = [c for c in checks
+                  if c.get("status") not in ("OK", "PASS")]
         return _out({"checks": checks},
                     ["TASK DOCTOR"] + [
                         f"{c['name']:22} {c['status']:4} {c['detail']}"

@@ -80,6 +80,13 @@ def test_voice_profile_helpers_unit(tmp_path):
     assert load_overrides(str(tmp_path)) == {}
 
 
+def test_task_doctor_fails_closed_on_corrupt_store(tmp_path):
+    (tmp_path / "durable-tasks.json").write_text("{corrupt")
+    code, out, _ = run_cli(tmp_path, "task", "doctor")
+    assert code == 1
+    assert "fail-closed" in out
+
+
 def test_status_summary_and_remote_pointer(tmp_path):
     code, out, _ = run_cli(tmp_path, "status-summary")
     assert code == 0
