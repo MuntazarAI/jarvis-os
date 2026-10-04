@@ -364,6 +364,16 @@ def default_registry() -> ToolRegistry:
                                 RiskLevel.SAFE, 5.0, []), system_probe))
     reg.register(Tool(ToolSpec("web_fetch", "Fetch a URL over http(s)",
                                 RiskLevel.LOW, 15.0, ["net.fetch"]), web_fetch))
+    from . import secaudit as _secaudit
+    for _name, _desc in (
+            ("net_inventory", "Ping-scan an explicitly named host or /24 (no port scan)"),
+            ("web_audit", "Nikto findings scan of one named URL (nothing exploited)"),
+            ("dir_enum", "Gobuster directory enum with your wordlist file"),
+            ("hash_audit", "Strength-audit your hash file (john/hashcat, your wordlist)"),
+            ("sqli_scan", "sqlmap detection-only scan, level 1 (no dump/exploit)"),
+            ("capture_read", "Read-only analysis of a capture file you provide")):
+        reg.register(Tool(ToolSpec(_name, _desc, RiskLevel.HIGH, 300.0,
+                                   ["sec.audit"]), getattr(_secaudit, _name)))
     return reg
 
 

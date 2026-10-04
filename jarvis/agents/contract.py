@@ -97,6 +97,9 @@ _DEFAULT_SKILLS = [
           [], [], "low"),
     Skill("security.scan", "injection/SSRF/secret scan",
           ["web_fetch"], ["net.fetch"], "low"),
+    Skill("security.audit", "defensive audit tools (inventory, web/dir/hash/sqli-scan, capture read)",
+          ["net_inventory", "web_audit", "dir_enum", "hash_audit",
+           "sqli_scan", "capture_read"], ["sec.audit"], "high"),
     Skill("model.route", "capability-based model selection", [], [], "low"),
 ]
 
@@ -251,9 +254,10 @@ def role_cards() -> list[AgentCard]:
           ["advisory only — never blocks by itself"],
           ["code.search"], ["fs.read"], may_act=False),
         R("security", "Security Agent", "guardian", "fast",
-          ["tool-request review", "injection/SSRF/secret detection"],
+          ["tool-request review", "injection/SSRF/secret detection",
+           "defensive audit scans of operator-named targets"],
           ["integrate with PolicyEngine, never bypass it"],
-          ["security.scan"], []),
+          ["security.scan", "security.audit"], []),
         R("privacy", "Privacy Agent", "guardian", "fast",
           ["PII/secret classification", "outbound + log review", "minimization"],
           ["block unnecessary exposure"],
