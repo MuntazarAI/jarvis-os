@@ -24,6 +24,9 @@ state lives in `--home` (default `~/.jarvis-os`).
   `GET /api/experience` (command-center snapshot) ·
   `POST /api/tasks/<id>/<advance|pause|resume|cancel|recover>` ·
   `POST /api/approvals/decision` (single-use token in body)
+- `command` (AI command centre at `/command`: elfaria-style layout,
+  100% live data) · `POST /api/tasks` (file a mission) ·
+  `GET /api/tasks/<id>` (steps for checklists)
 - Memory: `remember <fact>` · `consolidate`
 - Agents/work: `agents` · `dots` · `missions` · `task create/run/inspect/recover`
 - Proof/review: `proof <claim>` (receipts or honest unverified) ·
