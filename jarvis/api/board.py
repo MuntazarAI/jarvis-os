@@ -37,7 +37,10 @@ def _scrub(value: Any, depth: int = 0) -> Any:
         out = {}
         for key, item in value.items():
             name = str(key).lower()
-            if any(hint in name for hint in _SECRET_HINTS):
+            if name == "token_hint":
+                # Designed for display (truncated at the source).
+                out[key] = str(item)[:12]
+            elif any(hint in name for hint in _SECRET_HINTS):
                 out[key] = "[redacted]"
             else:
                 out[key] = _scrub(item, depth + 1)
@@ -299,6 +302,10 @@ let p = b.policy || {};
 g.push(card("policy", [["conflicts", p.conflicts ?? "?"],
 ["emergency", p.emergency]]));
 document.getElementById("grid").innerHTML = g.join("");
+// TRIAGED (self-review pattern:xss-sink): `g` is built only by card()
+// and pill(), which escape every interpolated value via esc(). No
+// untrusted string reaches this sink unescaped. Do not add raw HTML
+// here without extending the review test.
 }
 function live() {
 let el = document.getElementById("tick");

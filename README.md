@@ -259,6 +259,21 @@ jarvis restart
 jarvis serve --port 8765
 ```
 
+### Experience Layer (command center)
+
+```bash
+jarvis serve --token <pick-one>   # terminal 1: API + live events
+jarvis board --open               # status dashboard
+# http://127.0.0.1:8765/experience  # full command center:
+# presence orb, agent mesh, tasks + approvals, timeline, world, voice
+jarvis proof "gate code"          # receipts for a claim
+jarvis setup                      # first-run checklist
+```
+
+See [`docs/EXPERIENCE.md`](docs/EXPERIENCE.md) for the architecture map,
+API surface, security model, and offline behavior. The UI only displays
+what the existing subsystems report — it holds no authority of its own.
+
 ### Test the project
 
 ```bash

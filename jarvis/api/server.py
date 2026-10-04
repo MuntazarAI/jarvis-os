@@ -12,6 +12,32 @@ from typing import Any
 from ..core.loop import Jarvis
 
 
+def _bearer_ok(provided: str, expected: str) -> bool:
+    import hmac
+    want = f"Bearer {expected}"
+    if len(provided) != len(want):
+        return False
+    return hmac.compare_digest(provided, want)
+
+
+def _ws_token_ok(path: str, expected: str) -> bool:
+    """WebSocket auth via ?token= (browsers cannot set headers on WS
+    upgrades). Empty server token means open (same as REST)."""
+    if not expected:
+        return True
+    import hmac
+    import urllib.parse
+    try:
+        params = urllib.parse.parse_qs(
+            urllib.parse.urlsplit(path).query)
+        provided = params.get("token", [""])[0]
+    except Exception:
+        return False
+    if len(provided) != len(expected):
+        return False
+    return hmac.compare_digest(provided, expected)
+
+
 class JarvisAPI:
     """REST endpoints plus a WebSocket broadcast of bus events."""
 
@@ -33,6 +59,10 @@ class JarvisAPI:
                           if world else 10),
             window_s=float(getattr(world, "api_rate_window_s", 60.0)
                            if world else 60.0))
+        # Approval decisions are authority acts: bound them per client
+        # even for legitimate token holders (no brute-forcing tokens).
+        self._approval_limiter = RateLimiter(max_calls=10,
+                                             window_s=60.0)
 
     # -- routing -----------------------------------------------------------
     def handle(self, method: str, path: str, body: bytes,
@@ -47,7 +77,8 @@ class JarvisAPI:
         if method == "GET" and path.split("?", 1)[0] == "/remote":
             from .remote import REMOTE_HTML
             return 200, {"__html__": REMOTE_HTML}
-        if self.token and headers.get("authorization", "") != f"Bearer {self.token}":
+        if self.token and not _bearer_ok(
+                headers.get("authorization", ""), self.token):
             return 401, {"error": "unauthorized"}
         try:
             if method == "GET" and path == "/health":
@@ -69,6 +100,12 @@ class JarvisAPI:
             if method == "GET" and path.split("?", 1)[0] == "/api/board":
                 from .board import build_board
                 return 200, build_board(self.jarvis)
+            if method == "GET" and path.split("?", 1)[0] == "/api/experience":
+                from .experience import build_experience
+                return 200, build_experience(self.jarvis)
+            if method == "GET" and path.split("?", 1)[0] == "/experience":
+                from .experience_page import EXPERIENCE_HTML
+                return 200, {"__html__": EXPERIENCE_HTML}
             # NOTE: query strings are stripped for API routes only;
             # legacy routes above keep exact-match behavior.
             api_path = path.split("?", 1)[0].rstrip("/") or "/"
@@ -102,6 +139,10 @@ class JarvisAPI:
                 if info is None:
                     return 404, {"error": f"unknown mission: {mid}"}
                 return 200, info
+            if method == "POST" and api_path == "/api/approvals/decision":
+                return self._approval_decision(body, headers)
+            if method == "POST" and api_path.startswith("/api/tasks/"):
+                return self._task_action(api_path, body)
             if method == "POST" and path == "/mentalist":
                 payload = json.loads(body.decode() or "{}")
                 text = str(payload.get("input", ""))
@@ -164,6 +205,131 @@ class JarvisAPI:
         except Exception as exc:
             return 500, {"error": f"{type(exc).__name__}: {exc}"}
 
+    # -- operator endpoints (authenticated; validated; audited) --------
+
+    def _approval_decision(self, body: bytes,
+                           headers: dict[str, str]
+                           ) -> tuple[int, dict[str, Any]]:
+        """Decide one pending approval via its single-use token.
+
+        Authority still lives in PolicyEngine: this only carries the
+        decision. The approval token itself is the credential (never
+        echoed back); the bearer token gates the endpoint. Rate-limited
+        against token guessing. Every decision lands in the EventStore.
+        """
+        import re
+        try:
+            payload = json.loads(body.decode() or "{}")
+        except Exception:
+            return 400, {"error": "invalid JSON"}
+        if not isinstance(payload, dict):
+            return 400, {"error": "object body required"}
+        token = str(payload.get("token", ""))[:128]
+        approve = payload.get("approve")
+        by = str(payload.get("by", "user"))[:40] or "user"
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", token):
+            return 400, {"error": "malformed approval token"}
+        if not isinstance(approve, bool):
+            return 400, {"error": "'approve' must be boolean"}
+        gate = self._approval_limiter.check(
+            str(headers.get("authorization", "") or "anonymous")[:120])
+        if not gate["allowed"]:
+            return 429, {"error": gate["reason"],
+                         "retry_after_s": gate["retry_after_s"]}
+        policy = getattr(self.jarvis, "policy", None)
+        action = ""
+        try:
+            records = getattr(policy, "approvals", None)
+            if isinstance(records, dict):
+                entry = records.get(token)
+                if isinstance(entry, dict):
+                    action = str(entry.get("action", ""))[:120]
+        except Exception:
+            action = ""
+        try:
+            ok = bool(policy.approve(token, by) if approve
+                      else policy.deny(token, by))
+        except Exception as exc:
+            return 500, {"error": f"{type(exc).__name__}"}
+        try:
+            self.jarvis.events.record(
+                "approval.decided",
+                {"action": action, "approved": bool(approve and ok),
+                 "by": by, "token_hint": token[:8] + "…"})
+        except Exception:
+            pass
+        if not ok:
+            return 200, {"ok": False,
+                         "reason": "unknown or already redeemed"}
+        return 200, {"ok": True, "approved": bool(approve)}
+
+    def _task_action(self, api_path: str, body: bytes
+                     ) -> tuple[int, dict[str, Any]]:
+        """Operator actions on durable tasks (pause/resume/cancel/
+        recover/advance). Same runner the CLI and service use; policy
+        (e-stop) is re-checked on every call. Terminal-state violations
+        return 409, unknown ids 404 — never silent."""
+        import re
+        from .board import _scrub
+        parts = api_path.split("/")
+        if len(parts) != 5 or not parts[3] or not parts[4]:
+            return 404, {"error": "no route"}
+        task_id, verb = parts[3], parts[4]
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", task_id):
+            return 400, {"error": "malformed task id"}
+        if verb not in ("advance", "pause", "resume", "cancel",
+                        "recover"):
+            return 404, {"error": "no route"}
+        try:
+            payload = json.loads(body.decode() or "{}")
+            if not isinstance(payload, dict):
+                payload = {}
+        except Exception:
+            return 400, {"error": "invalid JSON"}
+        try:
+            from ..durable import (DurableRunner, TaskStore,
+                                   mesh_executor)
+            from ..durable.store import TaskStoreError
+            home = str(self.jarvis.config.paths.home)
+            runner = DurableRunner(
+                TaskStore(home), executor=mesh_executor(self.jarvis),
+                policy=getattr(self.jarvis, "policy", None),
+                events=getattr(self.jarvis, "events", None))
+            if runner.store.corrupt:
+                return 500, {"error": "task store fail-closed"}
+            if verb == "advance":
+                runner.advance(task_id)
+            elif verb == "pause":
+                runner.pause(task_id)
+            elif verb == "resume":
+                runner.resume(task_id)
+            elif verb == "cancel":
+                runner.cancel(task_id, reason=str(
+                    payload.get("reason", ""))[:300])
+            elif verb == "recover":
+                policy = getattr(self.jarvis, "policy", None)
+                ok = True
+                try:
+                    check = getattr(policy, "emergency_stop_engaged",
+                                    None)
+                    ok = not bool(check()) if callable(check) else True
+                except Exception:
+                    ok = True
+                runner.recover(task_id, policy_ok=ok)
+            task = runner.store.get(task_id)
+            if task is None:
+                return 404, {"error": "unknown task"}
+            return 200, _scrub({"task_id": task.task_id,
+                                "state": task.state.value,
+                                "title": task.title})
+        except TaskStoreError as exc:
+            text = str(exc)
+            if "unknown task" in text:
+                return 404, {"error": "unknown task"}
+            return 409, {"error": text[:200]}
+        except Exception as exc:
+            return 500, {"error": f"{type(exc).__name__}"}
+
     # -- websocket -----------------------------------------------------------
     def _broadcast(self, event: Any) -> None:
         with self._sockets_lock:
@@ -195,6 +361,9 @@ class JarvisAPI:
 
     @staticmethod
     def _ws_accept(key: str) -> str:
+        # TRIAGED (self-review pattern:weak-crypto): SHA-1 here is
+        # mandated by RFC 6455 §1.3 for the WebSocket handshake, not a
+        # password hash. Not negotiable, not a finding.
         magic = "258EAFA5-E914-47DA-95CA-C5940E9E065"
         digest = hashlib.sha1((key + magic).encode()).digest()
         return base64.b64encode(digest).decode()
@@ -233,7 +402,9 @@ class JarvisAPI:
                 body = json.dumps(payload, default=str).encode()
                 bare = self.path.split("?", 1)[0]
                 self._headers(code, "application/json",
-                              nocache if bare in ("/api/board",) else None)
+                              nocache if bare in ("/api/board",
+                                                  "/api/experience")
+                              else None)
                 self.wfile.write(body)
 
             def do_POST(self) -> None:  # noqa: N802
@@ -246,6 +417,9 @@ class JarvisAPI:
                 self.wfile.write(raw)
 
             def _ws(self) -> None:
+                if not _ws_token_ok(self.path, api.token or ""):
+                    self._headers(403)
+                    return
                 key = self.headers.get("Sec-WebSocket-Key", "")
                 if not key:
                     self._headers(400)
