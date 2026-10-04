@@ -1,13 +1,15 @@
-"""Static self-review (heuristic SAST-lite, no dependencies).
+"""Static self-review: deterministic vulnerability scanner (no LLM).
 
-Walks a target directory and flags: probable hardcoded secrets
-(high), dangerous call patterns (medium), and prompt-injection
-markers via the existing guards (medium). Binary, hidden, oversized,
-and over-count files are skipped and counted, never read blindly.
+Fully offline heuristic SAST. No models, no network, no execution —
+it reads text and matches patterns, which bounds both its power and
+its honesty: findings are LEADS with file:line evidence, never proof
+of exploitability. Severity + OWASP mapping triage the queue; a clean
+result means `no heuristic hits`, never `secure`.
 
-This is a tripwire, not a pentest: a clean result is `unknown`-leaning
-(`no heuristic hits`), never a clean bill of health. Dynamic proof
-belongs to `security scan` (Strix bridge).
+Vuln classes: hardcoded secrets, SQL concatenation, reflected XSS
+sinks, SSRF-prone fetches, weak crypto, path traversal, dangerous
+execution, deserialization, debug exposure, prompt-injection markers
+(via existing guards).
 """
 
 from __future__ import annotations
@@ -35,11 +37,50 @@ _SECRET_PATTERNS = (
 )
 
 _DANGEROUS_PATTERNS = (
-    ("eval-exec", re.compile(r"\b(eval|exec)\s*\(")),
-    ("shell-true", re.compile(r"shell\s*=\s*True")),
-    ("pickle-loads", re.compile(r"pickle\.loads?\s*\(")),
-    ("curl-pipe-shell", re.compile(r"curl[^\n|]*\|\s*(ba)?sh")),
-    ("os-system", re.compile(r"os\.system\s*\(")),
+    # (name, regex, severity, owasp, remediation hint)
+    ("eval-exec", re.compile(r"\b(eval|exec)\s*\("),
+     "medium", "A03",
+     "avoid eval/exec; parse or dispatch explicitly"),
+    ("shell-true", re.compile(r"shell\s*=\s*True"),
+     "medium", "A03",
+     "use list-args and never enable a shell"),
+    ("pickle-loads", re.compile(r"pickle\.loads?\s*\("),
+     "medium", "A08",
+     "unpickle trusted data only; prefer JSON"),
+    ("yaml-load", re.compile(r"yaml\.load\s*\("),
+     "medium", "A08",
+     "use yaml.safe_load"),
+    ("curl-pipe-shell", re.compile(r"curl[^\n|]*\|\s*(ba)?sh"),
+     "medium", "A08",
+     "inspect installers before piping to shell"),
+    ("os-system", re.compile(r"os\.system\s*\("),
+     "medium", "A03",
+     "use subprocess list-args"),
+    ("sql-concat", re.compile(
+        r"(execute|executemany|query)\s*\(\s*(f['\"]|['\"].*?\+|%\s)"),
+     "high", "A03",
+     "use parameterized queries, never string building"),
+    ("xss-sink", re.compile(
+        r"(innerHTML\s*=|document\.write\s*\(|outerHTML\s*=)"),
+     "medium", "A03",
+     "sink untrusted data via textContent or an escaper"),
+    ("ssrf-fetch", re.compile(
+        r"(requests\.(get|post)|urllib.*\.urlopen|fetch\s*\(|"
+        r"axios\.(get|post))\s*\(\s*[a-zA-Z_\"']"),
+     "medium", "A10",
+     "validate target against an allowlist; reuse the SSRF guard"),
+    ("weak-crypto", re.compile(
+        r"\b(md5|sha1|DES|RC4)\s*\(|hashlib\.(md5|sha1)\s*\("),
+     "medium", "A02",
+     "use SHA-256+ / bcrypt / argon2 as appropriate"),
+    ("path-traversal", re.compile(
+        r"open\s*\(\s*[^)]*(\+|%|format\s*\(|f['\"])"),
+     "medium", "A01",
+     "resolve + jail paths under an allowed root"),
+    ("debug-enabled", re.compile(
+        r"(?i)\bDEBUG\s*=\s*True|app\.run\s*\([^)]*debug\s*=\s*True"),
+     "low", "A05",
+     "never ship debug mode enabled"),
 )
 
 _SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv",
@@ -97,6 +138,11 @@ def review_path(target: str | Path) -> dict[str, Any]:
             _scan_text(str(path), text, report)
         highs = sum(1 for f in report["findings"]
                     if f["severity"] == "high")
+        by_severity = {}
+        for finding in report["findings"]:
+            by_severity[finding["severity"]] = \
+                by_severity.get(finding["severity"], 0) + 1
+        report["by_severity"] = by_severity
         report["status"] = "fail" if highs else "pass"
         if report["findings"]:
             report["verdict"] = (
@@ -118,21 +164,25 @@ def _scan_text(path: str, text: str, report: dict) -> None:
             report["findings"].append({
                 "file": path[-200:], "line": lineno,
                 "severity": "high", "kind": f"secret:{name}",
+                "owasp": "A07",
+                "evidence": f"line {lineno}: <credential redacted>",
                 "detail": "probable hardcoded credential — move to "
                           "vault/env (match redacted)"})
-    for name, pattern in _DANGEROUS_PATTERNS:
+    for name, pattern, severity, owasp, hint in _DANGEROUS_PATTERNS:
         match = pattern.search(text)
         if match:
             lineno = text.count("\n", 0, match.start()) + 1
+            line = text.splitlines()[lineno - 1].strip()[:120]
             report["findings"].append({
                 "file": path[-200:], "line": lineno,
-                "severity": "medium", "kind": f"danger:{name}",
-                "detail": "dangerous pattern — needs human review"})
+                "severity": severity, "kind": f"pattern:{name}",
+                "owasp": owasp, "evidence": line, "detail": hint})
     injection = scan_injection(text)
     if not injection["clean"]:
         report["findings"].append({
             "file": path[-200:], "line": 0, "severity": "medium",
-            "kind": "injection-markers",
+            "kind": "injection-markers", "owasp": "A03",
+            "evidence": "marker set present (content not echoed)",
             "detail": str(injection["verdict"])[:200]})
 
 

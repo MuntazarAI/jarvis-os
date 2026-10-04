@@ -46,7 +46,38 @@ def test_review_flags_dangerous_pattern_as_medium(tmp_path):
     (tmp_path / "run.py").write_text("import os\nos.system('ls')\n")
     report = review_path(tmp_path)
     assert report["status"] == "pass"  # mediums don't fail the gate
-    assert any("danger" in f["kind"] for f in report["findings"])
+    assert any(f["kind"] == "pattern:os-system" and
+               f["owasp"] == "A03" and f["evidence"]
+               for f in report["findings"])
+
+
+def test_review_vuln_classes_with_owasp(tmp_path):
+    cases = {
+        "s.py": ("cursor.execute(f\"SELECT * FROM u WHERE n='{n}'\")\n",
+                 "pattern:sql-concat", "high", "A03"),
+        "x.js": ("el.innerHTML = location.hash;\n",
+                 "pattern:xss-sink", "medium", "A03"),
+        "f.py": ("requests.get(url_from_user)\n",
+                 "pattern:ssrf-fetch", "medium", "A10"),
+        "c.py": ("import hashlib\nhashlib.md5(pw).hexdigest()\n",
+                 "pattern:weak-crypto", "medium", "A02"),
+        "t.py": ("open(BASE + name)\n",
+                 "pattern:path-traversal", "medium", "A01"),
+        "d.py": ("yaml.load(blob)\n",
+                 "pattern:yaml-load", "medium", "A08"),
+        "g.py": ("DEBUG = True\n",
+                 "pattern:debug-enabled", "low", "A05"),
+    }
+    for name, (code, kind, severity, owasp) in cases.items():
+        (tmp_path / name).write_text(code)
+    report = review_path(tmp_path)
+    kinds = {f["kind"]: f for f in report["findings"]}
+    for _, (_, kind, severity, owasp) in cases.items():
+        assert kind in kinds, kind
+        assert kinds[kind]["severity"] == severity
+        assert kinds[kind]["owasp"] == owasp
+    assert report["status"] == "fail"  # the SQL concat is high
+    assert report["by_severity"]["high"] >= 1
 
 
 def test_review_clean_tree_and_missing_target(tmp_path):

@@ -28,6 +28,56 @@ from typing import Any
 DEFAULT_TIMEOUT_S = 600.0
 MAX_OUTPUT_CHARS = 20_000
 SCAN_MODES = ("quick", "standard", "deep")
+HISTORY_FILENAME = "security-scans.json"
+HISTORY_MAX = 20
+
+
+def record_history(home: str, entry: dict[str, Any]) -> None:
+    """Append one scan record to the bounded local history. Never raises.
+    History holds summaries + counts only — never raw logs (bounded)."""
+    import json as _json
+    import os as _os
+    import tempfile as _tmp
+    try:
+        from pathlib import Path as _Path
+        path = _Path(str(home)) / HISTORY_FILENAME
+        try:
+            raw = _json.loads(path.read_text(encoding="utf-8"))
+            items = raw.get("scans", []) if isinstance(raw,
+                                                       dict) else []
+        except (OSError, ValueError):
+            items = []
+        items = [e for e in items if isinstance(e, dict)][-HISTORY_MAX
+                                                          + 1:]
+        items.append({key: entry.get(key) for key in
+                      ("at", "target", "mode", "status", "summary",
+                       "duration_s", "findings")})
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = _tmp.mkstemp(prefix=".scans-",
+                               dir=str(path.parent))
+        try:
+            with _os.fdopen(fd, "w", encoding="utf-8") as handle:
+                _json.dump({"version": 1, "scans": items}, handle,
+                           default=str)
+            _os.replace(tmp, path)
+        finally:
+            if _os.path.exists(tmp):
+                _os.unlink(tmp)
+    except Exception:
+        pass
+
+
+def read_history(home: str) -> list[dict[str, Any]]:
+    """Recent scan records, newest last. Never raises."""
+    import json as _json
+    try:
+        from pathlib import Path as _Path
+        raw = _json.loads((_Path(str(home)) / HISTORY_FILENAME
+                           ).read_text(encoding="utf-8"))
+        items = raw.get("scans", []) if isinstance(raw, dict) else []
+        return [e for e in items if isinstance(e, dict)][-HISTORY_MAX:]
+    except (OSError, ValueError):
+        return []
 
 
 def strix_binary() -> str:
@@ -77,6 +127,7 @@ def run_scan(target: str, *, mode: str = "quick",
              allow_nonlocal: bool = False,
              authorized: bool = False,
              max_turns: int = 100,
+             history_home: str = "",
              policy: Any = None) -> dict[str, Any]:
     """Run one bounded non-interactive scan. Never raises."""
     started = time.time()
@@ -165,6 +216,15 @@ def run_scan(target: str, *, mode: str = "quick",
                           summary="strix reported no findings — "
                           "absence of tool findings, not proof of safety")
         result["duration_s"] = round(time.time() - started, 2)
+        if history_home and result.get("status") not in (
+                "refused", "unknown"):
+            import time as _time
+            record_history(history_home, {
+                "at": _time.time(), "target": result["target"],
+                "mode": mode, "status": result["status"],
+                "summary": result["summary"],
+                "duration_s": result["duration_s"],
+                "findings": result["findings"]})
         return result
     except Exception as exc:
         return _refuse(result, started,

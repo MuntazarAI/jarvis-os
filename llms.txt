@@ -19,9 +19,16 @@ state lives in `--home` (default `~/.jarvis-os`).
 - Ask: `talk "<request>"` (one-shot) · `repl` (interactive)
 - Health: `doctor` (deps/hardware/models) · `service doctor` ·
   `task doctor` · `status` (system JSON)
-- Observe: `board [--open]` (dashboard URL) · `serve` (API+WS)
+- Observe: `board [--open]` (dashboard URL) · `serve` (API+WS) ·
+  `remote` (phone/local remote URL) · `/experience` page + 
+  `GET /api/experience` (command-center snapshot) ·
+  `POST /api/tasks/<id>/<advance|pause|resume|cancel|recover>` ·
+  `POST /api/approvals/decision` (single-use token in body)
 - Memory: `remember <fact>` · `consolidate`
 - Agents/work: `agents` · `dots` · `missions` · `task create/run/inspect/recover`
+- Proof/review: `proof <claim>` (receipts or honest unverified) ·
+  `feedback <text>` · `setup` (checklist, exit 1 on failure) ·
+  `voice profile [--style]` · `status-summary`
 - Voice/audio: `say/say` (`say`, `listen`) · `audio` · `voice` · `voice-test`
 - World: `world` (sources, search, events, research)
 - Policy: `approvals` · `grants` · `autonomy`

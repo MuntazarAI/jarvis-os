@@ -3413,6 +3413,9 @@ def _security_action(jarvis: Any, args: Any) -> int:
             max_turns=int(getattr(args, "max_turns", 100) or 100),
             allow_nonlocal=bool(getattr(args, "allow_nonlocal", False)),
             authorized=bool(getattr(args, "yes", False)),
+            history_home=str(getattr(
+                getattr(getattr(jarvis, "config", None),
+                        "paths", None), "home", "") or ""),
             policy=getattr(jarvis, "policy", None))
         result["evidence"] = to_evidence(result)
         status = result["status"]
