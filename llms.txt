@@ -1,0 +1,41 @@
+# JARVIS-OS — machine-readable CLI reference
+
+Local-first AI system. CLI-first. Everything below runs on your machine;
+state lives in `--home` (default `~/.jarvis-os`).
+
+## Conventions (for agents)
+
+- Read-only commands print JSON with `--json` and exit 0 on success.
+- Health gates exit non-zero on failure: `doctor`, `service doctor`,
+  `task doctor` (use them in scripts and CI).
+- Mutations NEVER run from prose: approvals use single-use tokens
+  (`approvals approve --token <tok>`), dangerous targets need explicit flags.
+- The HTTP API (`serve --host 127.0.0.1 --port 8765 --token <tok>`)
+  exposes `GET /health /status /events /api/board` and the read-only
+  status page at `/board`. POST routes actuate — gate them.
+
+## Command map
+
+- Ask: `talk "<request>"` (one-shot) · `repl` (interactive)
+- Health: `doctor` (deps/hardware/models) · `service doctor` ·
+  `task doctor` · `status` (system JSON)
+- Observe: `board [--open]` (dashboard URL) · `serve` (API+WS)
+- Memory: `remember <fact>` · `consolidate`
+- Agents/work: `agents` · `dots` · `missions` · `task create/run/inspect/recover`
+- Voice/audio: `say/say` (`say`, `listen`) · `audio` · `voice` · `voice-test`
+- World: `world` (sources, search, events, research)
+- Policy: `approvals` · `grants` · `autonomy`
+- Ops: `service` (lifecycle/health/logs) · `backup` · `benchmark` ·
+  `devices` · `pi` · `integration`
+- Security: `security review` (static self-review) ·
+  `security scan` (dynamic scan via Strix sandbox, policy-gated)
+
+## Rules for agentic use
+
+1. Prefer `--json` and parse it; never scrape human-readable text.
+2. Check `doctor` before diagnosing; check `task doctor` before touching tasks.
+3. Never pass secrets on the command line; use env or the vault.
+4. A successful run is not proof: look for `verification: verified`,
+   not merely `ok: true`.
+5. Dynamic security scans (`security scan`) run ONLY against targets you
+   own or have explicit written permission to test.

@@ -35,6 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
                                       "(served by `jarvis serve`)")
     brd.add_argument("--host", default="127.0.0.1")
     brd.add_argument("--port", type=int, default=8765)
+    brd.add_argument("--open", action="store_true",
+                     help="open the board in the default browser")
 
     sub.add_parser("status", help="print system status JSON")
 
@@ -426,6 +428,27 @@ def build_parser() -> argparse.ArgumentParser:
                         help="grant id for show/revoke")
     grants.add_argument("--json", action="store_true",
                         help="machine-readable output")
+
+    sec = sub.add_parser("security", help="security: static self-review "
+                                         "(review) and policy-gated dynamic "
+                                         "scan (scan via Strix)")
+    sec.add_argument("action", nargs="?", default="review",
+                     choices=["review", "scan"])
+    sec.add_argument("--target", default=".",
+                     help="directory/file (review) or path/URL (scan)")
+    sec.add_argument("--mode", default="quick",
+                     choices=["quick", "standard", "deep"],
+                     help="scan depth for `scan`")
+    sec.add_argument("--timeout", type=float, default=600.0,
+                     help="scan timeout seconds (30-3600)")
+    sec.add_argument("--yes", action="store_true",
+                     help="REQUIRED for scan: confirms you own the target "
+                          "or have explicit written permission to test it")
+    sec.add_argument("--allow-nonlocal", action="store_true",
+                     help="REQUIRED for scan: target is not local "
+                          "(with --yes)")
+    sec.add_argument("--json", action="store_true",
+                     help="machine-readable output")
 
     backup = sub.add_parser(
         "backup",
@@ -1358,10 +1381,13 @@ def _service_action(jarvis: Any, args: Any) -> int:
                     "SERVICE HEALTH\n" + json.dumps(
                         _service_health(jarvis), indent=2, default=str))
     if action == "doctor":
-        return _out({"checks": _service_doctor(jarvis)},
+        checks = _service_doctor(jarvis)
+        failed = [c for c in checks if c.get("status") != "OK"]
+        return _out({"checks": checks},
                     "SERVICE DOCTOR\n" + "\n".join(
                         f"{c['name']:24} {c['status']:4} {c['detail']}"
-                        for c in _service_doctor(jarvis)))
+                        for c in checks),
+                    0 if not failed else 1)
     if action == "logs":
         lines = _service_logs(home, cfg,
                               max(1, int(getattr(args, "lines", 30))))
@@ -3123,13 +3149,13 @@ def _task_action(jarvis: Any, args: Any) -> int:
     text = " ".join(getattr(args, "text", []) or []).strip()
     home = str(jarvis.config.paths.home)
 
-    def _out(payload: Any, lines: list[str]) -> int:
+    def _out(payload: Any, lines: list[str], code: int = 0) -> int:
         if as_json:
             print(json.dumps(payload, indent=2, default=str))
         else:
             print("\n".join(lines) or "(no durable tasks)")
         jarvis.close()
-        return 0
+        return code
 
     runner = DurableRunner(
         TaskStore(home), executor=mesh_executor(jarvis),
@@ -3182,10 +3208,12 @@ def _task_action(jarvis: Any, args: Any) -> int:
         return _out(payload, ["TASKS"] + lines)
     if action == "doctor":
         checks = _task_doctor_checks(home)
+        failed = [c for c in checks if c.get("status") != "OK"]
         return _out({"checks": checks},
                     ["TASK DOCTOR"] + [
                         f"{c['name']:22} {c['status']:4} {c['detail']}"
-                        for c in checks])
+                        for c in checks],
+                    0 if not failed else 1)
     task_id = text.split()[0] if text else ""
     task = store.get(task_id)
     if task is None:
@@ -3249,6 +3277,62 @@ def _task_action(jarvis: Any, args: Any) -> int:
             for e in trail] or ["  (no recovery events yet)"]
         lines.append(f"checkpoints: {len(task.checkpoints)}")
         return _out(payload, lines)
+    jarvis.close()
+    return 2
+
+
+def _security_action(jarvis: Any, args: Any) -> int:
+    """Static self-review and policy-gated dynamic scanning.
+
+    Exit codes are API: 0 clean/refused-nothing-to-do, 1 findings,
+    2 refused/misuse (incl. missing authorization), 3 unavailable/error.
+    """
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "review")
+    target = str(getattr(args, "target", ".") or ".")
+
+    def _out(payload: Any, lines: list[str], code: int) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print("\n".join(lines))
+        jarvis.close()
+        return code
+
+    if action == "review":
+        from .security.review import review_path
+        report = review_path(target)
+        highs = sum(1 for f in report["findings"]
+                    if f["severity"] == "high")
+        lines = [f"REVIEW {report['target']}: {report['verdict']}",
+                 f"scanned={report['scanned']} "
+                 f"skipped={report['skipped']}"]
+        for finding in report["findings"][:10]:
+            lines.append(f"  [{finding['severity']}] "
+                         f"{finding['kind']} {finding['file']}:"
+                         f"{finding['line']}")
+        if report["status"] == "error":
+            return _out(report, lines, 3)
+        return _out(report, lines, 1 if highs else 0)
+    if action == "scan":
+        from .security.strix import run_scan
+        result = run_scan(
+            target, mode=str(getattr(args, "mode", "quick")),
+            timeout_s=float(getattr(args, "timeout", 600.0) or 600.0),
+            allow_nonlocal=bool(getattr(args, "allow_nonlocal", False)),
+            authorized=bool(getattr(args, "yes", False)),
+            policy=getattr(jarvis, "policy", None))
+        status = result["status"]
+        lines = [f"SCAN {result['target']} [{result['mode']}]: "
+                 f"{result['summary']}"]
+        if status == "refused":
+            lines.append("refused: authorization/target policy not met")
+            return _out(result, lines, 2)
+        if status == "unavailable":
+            return _out(result, lines, 3)
+        if status in ("findings", "tool-failed", "timeout"):
+            return _out(result, lines, 1)
+        return _out(result, lines, 0)
     jarvis.close()
     return 2
 
@@ -3358,6 +3442,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"status board: {url}")
         print("served by `jarvis serve` (same host/port/token). "
               "read-only, localhost by default.")
+        if bool(getattr(args, "open", False)):
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception as exc:
+                print(f"could not open browser: {type(exc).__name__}")
+                jarvis.close()
+                return 1
         jarvis.close()
         return 0
 
@@ -3532,6 +3624,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "task":
         return _task_action(jarvis, args)
+
+    if args.command == "security":
+        return _security_action(jarvis, args)
 
     if args.command == "dots":
         from .dots.manager import DotManager
