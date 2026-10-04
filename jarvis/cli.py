@@ -3347,6 +3347,30 @@ def _task_action(jarvis: Any, args: Any) -> int:
     return 2
 
 
+def _scrub_payload(value: Any) -> Any:
+    """Redact secret-looking content before display. Keys naming
+    credentials become [redacted]; URL userinfo (`://user:pass@`) is
+    masked inline since scan targets may carry auth."""
+    import re as _re
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            name = str(key).lower()
+            if any(hint in name for hint in
+                   ("token", "secret", "password", "api_key",
+                    "apikey", "private_key", "authorization")):
+                out[key] = "[redacted]"
+            else:
+                out[key] = _scrub_payload(item)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_scrub_payload(item) for item in value[:100]]
+    if isinstance(value, str):
+        masked = _re.sub(r"(://)[^/@\s]+@", r"\1***@", value)
+        return masked[:2000] + ("…" if len(masked) > 2000 else "")
+    return value
+
+
 def _security_action(jarvis: Any, args: Any) -> int:
     """Static self-review and policy-gated dynamic scanning.
 
@@ -3359,7 +3383,8 @@ def _security_action(jarvis: Any, args: Any) -> int:
 
     def _out(payload: Any, lines: list[str], code: int) -> int:
         if as_json:
-            print(json.dumps(payload, indent=2, default=str))
+            print(json.dumps(_scrub_payload(payload), indent=2,
+                             default=str))
         else:
             print("\n".join(lines))
         jarvis.close()

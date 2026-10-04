@@ -206,3 +206,16 @@ def test_cli_scan_refusal_is_exit_2(tmp_path, capsys):
         action="scan", target=str(tmp_path), yes=False))
     assert code == 2
     capsys.readouterr()
+
+
+def test_url_credentials_never_echoed(tmp_path, capsys):
+    from jarvis.cli import _scrub_payload, _security_action
+    assert "s3cret" not in str(_scrub_payload(
+        {"target": "https://user:s3cret@93.184.216.0/"}))
+    code = _security_action(_jarvis(), _args(
+        action="scan", target="https://user:s3cret@93.184.216.0/",
+        yes=True, json=True))
+    assert code == 2
+    out, _ = capsys.readouterr()
+    assert "s3cret" not in out
+    assert "user" not in out or "***" in out
