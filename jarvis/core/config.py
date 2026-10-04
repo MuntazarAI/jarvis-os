@@ -181,6 +181,18 @@ class VoiceConfig:
 
 
 @dataclass
+class AutonomyConfig:
+    """Bounded autonomy: disabled-by-default presence and grants."""
+
+    enabled: bool = False
+    max_concurrent_tasks: int = 2
+    max_notifications_per_hour: int = 6
+    default_grant_days: float = 30.0
+    presence_interval_s: float = 300.0
+    watch_paths: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ConductorConfig:
     """Unified front door: routing knobs only, never permissions."""
 
@@ -219,6 +231,7 @@ class JarvisConfig:
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     world: WorldConfig = field(default_factory=WorldConfig)
     conductor: ConductorConfig = field(default_factory=ConductorConfig)
+    autonomy: AutonomyConfig = field(default_factory=AutonomyConfig)
     personality: dict[str, Any] = field(
         default_factory=lambda: {
             "formality": "professional",

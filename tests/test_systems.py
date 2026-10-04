@@ -113,7 +113,9 @@ def test_mentalist_full_sequence():
 # -- tools / policy ------------------------------------------------------
 def test_tools_registry_and_sandbox():
     reg = default_registry()
-    assert len(reg.list_tools()) == 7
+    assert len(reg.list_tools()) == 8  # + filesystem_move (autonomy)
+    move = reg.get("filesystem_move")
+    assert move.spec.required_permissions == ["fs.write"]
     assert reg.call("python_run", code="2 + 3 * 4").output["result"] == 14
     assert not reg.call("python_run", code="import os").ok
     assert not reg.call("python_run", code='open("/etc/passwd").read()').ok

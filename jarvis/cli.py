@@ -370,6 +370,38 @@ def build_parser() -> argparse.ArgumentParser:
     world.add_argument("--notify", action="store_true",
                        help="emit proactive events for genuine changes "
                             "(with refresh)")
+
+    grants = sub.add_parser("grants", help="standing grants: create, list, inspect, revoke")
+    grants.add_argument("action", nargs="?", default="list",
+                        choices=["create", "list", "show", "revoke"])
+    grants.add_argument("--capability", default="",
+                        help="capability, e.g. media.organize")
+    grants.add_argument("--scope", default="",
+                        help="scope resource, e.g. ~/Downloads")
+    grants.add_argument("--scope-kind", default="path",
+                        choices=["path", "device", "topic", "capability"],
+                        help="scope kind")
+    grants.add_argument("--allow", default="",
+                        help="comma-separated allowed operations")
+    grants.add_argument("--deny", default="",
+                        help="comma-separated denied operations")
+    grants.add_argument("--risk", default="low",
+                        choices=["read_only", "low", "moderate", "high",
+                                 "critical"],
+                        help="risk class")
+    grants.add_argument("--days", type=float, default=0.0,
+                        help="expiry in days (0 = 30-day default)")
+    grants.add_argument("--id", default="",
+                        help="grant id for show/revoke")
+    grants.add_argument("--json", action="store_true",
+                        help="machine-readable output")
+
+    autonomy = sub.add_parser("autonomy", help="bounded autonomy: status, presence control")
+    autonomy.add_argument("action", nargs="?", default="status",
+                          choices=["status", "start", "stop", "tick",
+                                   "health"])
+    autonomy.add_argument("--json", action="store_true",
+                          help="machine-readable output")
     world.add_argument("--kind", default="morning",
                        help="briefing kind: morning, evening, topic, project, change")
     world.add_argument("--json", action="store_true",
@@ -962,6 +994,135 @@ def _integration_action(jarvis: Any, args: Any) -> int:
     return _out({"checks": [{"name": n, "ok": o, "detail": d}
                             for n, o, d in checks]},
                 "INTEGRATION\n" + "\n".join(lines))
+
+
+def _grants_store(home: str) -> Any:
+    from .policy.standing import StandingGrantStore
+    return StandingGrantStore(home)
+
+
+def _grants_action(jarvis: Any, args: Any) -> int:
+    """Standing grants: explicit bounded durable authorizations."""
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "list")
+
+    def _out(payload: Any, text: str, code: int = 0) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print(text)
+        jarvis.close()
+        return code
+
+    home = str(jarvis.config.paths.home)
+    store = _grants_store(home)
+    if action == "list":
+        grants = [g.to_dict() for g in store.list()]
+        lines = [f"{g['grant_id'][:16]:18} {g['capability']:20} "
+                 f"{g['scope_kind']}:{g['scope'][:40]:44} "
+                 f"{g['risk_class']:10} "
+                 f"{'live' if g['live'] else g['status']}"
+                 for g in grants]
+        return _out({"grants": grants},
+                    "GRANTS\n" + "\n".join(lines) or "no grants")
+    if action == "show":
+        grant = store.get(getattr(args, "id", ""))
+        if grant is None:
+            return _out({"error": "unknown grant"}, "unknown grant", 1)
+        info = grant.to_dict()
+        return _out(info, "\n".join(
+            f"{key}={info.get(key, '')}" for key in
+            ("grant_id", "capability", "scope_kind", "scope",
+             "allowed_operations", "denied_operations", "risk_class",
+             "status", "expires_at", "created_by")))
+    if action == "revoke":
+        ok = store.revoke(getattr(args, "id", ""), by="cli")
+        return _out({"revoked": ok}, "revoked" if ok else
+                    "unknown or dead grant", 0 if ok else 1)
+    if action == "create":
+        capability = getattr(args, "capability", "").strip()
+        scope = getattr(args, "scope", "").strip()
+        allow = [o.strip() for o in getattr(args, "allow", "").split(",")
+                 if o.strip()]
+        if not capability or not scope or not allow:
+            return _out(
+                {"error": "need --capability, --scope, --allow"},
+                "usage: jarvis grants create --capability media.organize "
+                "--scope ~/Downloads --allow move,list [--deny delete] "
+                "[--risk low] [--days 30]", 2)
+        try:
+            from .policy.standing import GrantError
+            grant = store.create(
+                capability, getattr(args, "scope_kind", "path"), scope,
+                allowed_operations=allow,
+                denied_operations=[
+                    o.strip() for o in getattr(args, "deny", "").split(
+                        ",") if o.strip()],
+                risk_class=getattr(args, "risk", "low"),
+                by="cli",
+                expires_in_s=(float(getattr(args, "days", 0.0) or 0.0)
+                              * 86400.0 if float(
+                                  getattr(args, "days", 0.0) or 0.0) > 0
+                              else float(jarvis.config.autonomy.
+                                         default_grant_days) * 86400.0),
+                provenance={"origin": "cli"})
+        except GrantError as exc:
+            return _out({"error": str(exc)}, f"rejected: {exc}", 1)
+        return _out({"grant_id": grant.grant_id},
+                    f"granted {grant.grant_id} "
+                    f"(expires in "
+                    f"{round((grant.expires_at - __import__('time').time()) / 86400.0, 1)}d)")
+    jarvis.close()
+    return 2
+
+
+def _autonomy_action(jarvis: Any, args: Any) -> int:
+    """Bounded autonomy controls: status, presence start/stop/tick."""
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "status")
+
+    def _out(payload: Any, text: str, code: int = 0) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print(text)
+        jarvis.close()
+        return code
+
+    from .autonomy.presence import PresenceRuntime
+    home = str(jarvis.config.paths.home)
+    runtime = PresenceRuntime(
+        home,
+        interval_s=float(jarvis.config.autonomy.presence_interval_s))
+    if action == "status":
+        from .policy.standing import StandingGrantStore
+        grants = len(StandingGrantStore(home).list())
+        payload = {"autonomy_enabled": bool(
+            jarvis.config.autonomy.enabled),
+            "live_grants": grants, "presence": runtime.health()}
+        lines = [f"autonomy={'on' if payload['autonomy_enabled'] else 'off'}",
+                 f"grants={grants}",
+                 f"presence={'claimed pid ' + str(payload['presence']['pid']) if payload['presence']['claimed'] else 'idle'} "
+                 f"ticks={payload['presence']['ticks']}"]
+        return _out(payload, "AUTONOMY\n" + "\n".join(lines))
+    if action == "health":
+        return _out(runtime.health(), json.dumps(runtime.health(),
+                                                 indent=2, default=str))
+    if action == "start":
+        result = runtime.start()
+        return _out(result, json.dumps(result) if result.get("ok")
+                    else f"start failed: {result.get('error')}",
+                    0 if result.get("ok") else 1)
+    if action == "stop":
+        return _out(runtime.stop(), "presence stopped")
+    if action == "tick":
+        report = runtime.tick(jarvis)
+        lines = [f"actions={len(report.get('actions', []))}",
+                 f"notifications={report.get('notifications', 0)}",
+                 f"errors={len(report.get('errors', []))}"]
+        return _out(report, "TICK\n" + "\n".join(lines))
+    jarvis.close()
+    return 2
 
 
 def _audio_spool_depth(jarvis: Any) -> dict[str, Any]:
@@ -3988,6 +4149,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "world":
         return _world_action(jarvis, args)
+
+    if args.command == "grants":
+        return _grants_action(jarvis, args)
+
+    if args.command == "autonomy":
+        return _autonomy_action(jarvis, args)
 
     parser.print_help()
     jarvis.close()

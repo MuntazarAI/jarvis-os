@@ -65,7 +65,18 @@ def _hostile(text: str) -> str:
 
 
 def _has(words: tuple[str, ...], lowered: str) -> bool:
-    return any(w in lowered for w in words)
+    padded = f" {lowered} "
+    for word in words:
+        token = word.strip()
+        if not token:
+            continue
+        if " " in token:
+            if token in lowered:
+                return True
+        elif re.search(r"(?<![a-z0-9])" + re.escape(token) + r"(?![a-z0-9])",
+                       lowered):
+            return True
+    return False
 
 
 _VOICE_OUT = ("speak ", "say ", "read aloud", "read this aloud",
@@ -93,6 +104,11 @@ _SECURITY_ANALYSIS = ("is this safe", "is it safe", "is .* safe",
                        "threat", "suspicious", "audit ")
 _TASK = ("track ", "remind me", "mission", "goal", "todo",
          "add a task")
+_AUTONOMY = ("standing permission", "standing grant", "grant list",
+             "my grants", "my permissions", "revoke", "autonom",
+             "background", "what is jarvis watching",
+             "why did you act", "stop background", "start background",
+             "autonomous tasks")
 
 
 def route(text: str, *, session_context: str = "",
@@ -200,6 +216,14 @@ def route(text: str, *, session_context: str = "",
         return RouteDecision(intent="TASK", target="tasks",
                              confidence=0.75, reason="task wording",
                              risk_level="low")
+
+    if _has(_AUTONOMY, lowered):
+        mutating = any(w in lowered for w in
+                       ("revoke", "stop background", "start background"))
+        return RouteDecision(
+            intent="AUTONOMY", target="autonomy", confidence=0.8,
+            reason="autonomy wording",
+            risk_level="medium" if mutating else "low")
 
     # World Intel currentness routing (existing infrastructure).
     try:

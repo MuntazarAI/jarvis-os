@@ -155,6 +155,32 @@ class PolicyEngine:
         self._grants_error: str = ""
         if self.grant_store_path is not None:
             self._load_grants()
+        # Optional standing-grant registry (Autonomy 1.0). Consulted only
+        # through authorize_standing(); evaluate() is untouched, so risk
+        # assessment, approval requirements, egress rules, and emergency
+        # stop behave exactly as before.
+        self._standing = None
+
+    def bind_standing_grants(self, store: Any) -> None:
+        """Attach a StandingGrantStore. Reversible via bind_standing_grants(None)."""
+        self._standing = store
+
+    def authorize_standing(self, actor: str, capability: str,
+                           scope_kind: str, resource: str,
+                           operation: str) -> tuple[bool, str]:
+        """Standing-grant check as authorization INPUT. Returns
+        (allowed, reason). A grant can only satisfy scope coverage; it
+        never clears risk-driven approval, egress, or emergency-stop
+        decisions — those stay inside evaluate()."""
+        if self._emergency_stop():
+            return False, "EMERGENCY STOP engaged"
+        if self._standing is None:
+            return False, "no standing-grant registry bound"
+        try:
+            return self._standing.authorize(
+                actor, capability, scope_kind, resource, operation)
+        except Exception as exc:
+            return False, f"grant check failed: {type(exc).__name__}"
 
     # -- permissions -----------------------------------------------------
     def grant(self, actor: str, permission: str) -> None:
