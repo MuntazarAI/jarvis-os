@@ -39,7 +39,10 @@ def _ctx(**kw):
 # -- contracts -------------------------------------------------------------
 def test_role_cards_complete_and_bound():
     cards = role_cards()
-    assert len(cards) == 30
+    assert len(cards) == 31  # 30 original roles + tester agent
+    by_id = {c.role_id: c for c in cards}
+    assert by_id["tester"].skills == ["code.test"]
+    assert by_id["tester"].version == "1.0"
     executors = {"supervisor", "planner", "researcher", "coder", "analyst",
                  "computer", "guardian", "librarian"}
     for card in cards:

@@ -209,7 +209,8 @@ class PersistentTTSClient:
         self.model = model
         self.reference_audio = reference_audio
         self.device = device
-        self.workdir = Path(workdir) if workdir else Path(
+        self.workdir = Path(os.path.expanduser(str(workdir))) \
+            if workdir else Path(
             os.path.expanduser("~/.config/jarvis/tts-worker"))
         self.limits = dict(LIMITS)
         if limits:
@@ -572,6 +573,8 @@ def get_client(*, python: str, model: str, reference_audio: str,
     """Process-wide singleton per runtime identity. Repeated calls
     converge on one client (single-owner principle)."""
     global _ATEXIT_ARMED
+    workdir = os.path.expanduser(workdir or
+                                 "~/.config/jarvis/tts-worker")
     key = client_key(python, model, reference_audio, device, workdir)
     client = _CLIENTS.get(key)
     if client is None:

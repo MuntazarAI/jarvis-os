@@ -16,7 +16,7 @@ from typing import Any, Callable
 from ..core.types import new_id, now
 from .blackboard import Blackboard
 from .bus import AgentMessage, Classification, MessageBus, MessageType
-from .contract import AgentCard, AgentResult, VerificationStatus, role_cards
+from .contract import AgentCard, AgentResult, SkillRegistry, VerificationStatus, role_cards
 
 
 @dataclass
@@ -177,6 +177,7 @@ class Orchestrator:
         self.budgets = budgets or Budgets()
         self.bus = ctx.bus or MessageBus()
         self.cards: dict[str, AgentCard] = {c.role_id: c for c in role_cards()}
+        self.skills = ctx.skills if ctx.skills is not None else SkillRegistry()
         self.traces: dict[str, list[TraceEvent]] = {}
         self.runs: dict[str, RunRecord] = {}
         self.boards: dict[str, dict[str, Any]] = {}
@@ -494,6 +495,11 @@ class Orchestrator:
         if time.monotonic() > deadline:
             return AgentResult.failure(role_id, "deadline exceeded")
         state["agents_used"] += 1
+        chain = state.setdefault("chain", [])
+        chain.append(role_id)
+        if chain.count(role_id) > 2:
+            return AgentResult.failure(
+                role_id, "role revisited twice (loop guard)")
         handler = self._handlers.get(role_id, self._default_handler)
         started = time.monotonic()
         self._trace(task_id, agent=card.executor or role_id, role=role_id,
@@ -558,6 +564,7 @@ class Orchestrator:
             "critic": self._h_critic,
             "verifier": self._h_verifier,
             "planner": self._h_planner,
+            "tester": self._h_tester,
             "coder": self._h_coder,
             "debugger": self._h_debugger,
             "reviewer": self._h_reviewer,
@@ -585,12 +592,47 @@ class Orchestrator:
         subsystem = getattr(self.ctx, name, None)
         return subsystem
 
+    def _tool_in_role(self, role_id: str, tool_name: str) -> bool:
+        """Capability pre-check shared by handlers: the tool must be in
+        the role's declared skills, or every permission it requires
+        must be in the role's declared permissions (covers
+        permissionless observables like system_probe). PolicyEngine
+        still authorizes every actual call."""
+        card = self.cards.get(role_id)
+        if card is None:
+            return True
+        allowed: set[str] = set()
+        if card.skills:
+            for skill_name in card.skills:
+                skill = self.skills.get(skill_name)
+                if skill is not None:
+                    allowed.update(skill.tools)
+            if tool_name in allowed:
+                return True
+        tool = self.ctx.tools.get(tool_name) \
+            if self.ctx.tools is not None else None
+        required = list(getattr(getattr(tool, "spec", None),
+                                "required_permissions", []) or [])
+        if not required:
+            return True
+        return all(p in (card.permissions or []) for p in required)
+
     def _gated_tool(self, actor: str, tool_name: str,
                     args: dict[str, Any], state: dict[str, Any],
                     budgets: Budgets, description: str) -> AgentResult:
-        """Every tool call passes PolicyEngine. No exceptions, no bypasses."""
+        """Every tool call passes PolicyEngine. No exceptions, no bypasses.
+
+        Least privilege is enforced first: the tool must belong to one
+        of the acting role's declared skills (when a skill registry is
+        bound). PolicyEngine remains the authorization authority."""
         if self.ctx.tools is None or self.ctx.policy is None:
             return AgentResult.failure(actor, "no tools/policy bound")
+        card = self.cards.get(actor)
+        if card is not None and card.skills and \
+                not self._tool_in_role(actor, tool_name):
+            return AgentResult.failure(
+                actor, f"tool '{tool_name}' not in role "
+                       f"capabilities {sorted(card.skills)}")
         if state["tool_calls"] >= budgets.max_tool_calls:
             return AgentResult.failure(
                 actor, f"tool budget {budgets.max_tool_calls} exhausted")
@@ -788,6 +830,51 @@ class Orchestrator:
         return self._ok("critic", task_id, {"findings": findings},
                         evidence=findings, confidence=0.7)
 
+    def _h_tester(self, card, goal, board, task_id, state, budgets,
+                  *a) -> AgentResult:
+        """Bounded regression runs. Only in-repo test paths, validated
+        against traversal; never weakens or deletes tests."""
+        import re as _re
+        import sys as _sys
+        from pathlib import Path as _Path
+        root = _Path(__file__).resolve().parent.parent.parent
+        tests_dir = root / "tests"
+        found = _re.findall(r"tests/[A-Za-z0-9_./-]+\.py", goal)
+        targets = []
+        for candidate in found[:3]:
+            resolved = (root / candidate).resolve()
+            try:
+                resolved.relative_to(tests_dir.resolve())
+            except ValueError:
+                continue
+            if resolved.is_file():
+                targets.append(str(resolved))
+        if not targets:
+            targets = [str(tests_dir / "test_agents2.py")]
+        result = self._gated_tool(
+            "tester", "terminal_run",
+            {"command": f"{_sys.executable} -m pytest "
+                        f"{' '.join(targets)} -q",
+             "timeout": 120.0, "cwd": str(root)},
+            state, budgets, "bounded regression run")
+        if not result.success:
+            return result
+        output = result.output if isinstance(result.output, dict) else {}
+        passed = output.get("returncode") == 0
+        board.write("verification",
+                    {"subject": goal, "verdict": "verified" if passed
+                     else "failed", "targets": targets},
+                    author="tester", provenance="tester-agent",
+                    confidence=0.7)
+        return AgentResult(
+            success=passed, role="tester",
+            output={"targets": targets,
+                    "stdout_tail": str(output.get("stdout", ""))[-2000:]},
+            verification_status=VerificationStatus.VERIFIED if passed
+            else VerificationStatus.FAILED, ended_at=now(),
+            confidence=0.7,
+            errors=[] if passed else ["regression run failed"])
+
     def _h_verifier(self, card, goal, board, task_id, *a) -> AgentResult:
         checks: list[str] = []
         results = [e for e in board.read("results")]
@@ -826,17 +913,32 @@ class Orchestrator:
             return AgentResult.failure("coder", "no planner bound")
         steps = self.ctx.planner.plan(goal)
         outputs: list[str] = []
+        skipped = 0
         for step in steps:
             if state["tool_calls"] >= budgets.max_tool_calls:
                 break
             if not step.tool or self.ctx.tools.get(step.tool) is None:
                 outputs.append(f"skip {step.step_id}: no tool bound")
+                skipped += 1
+                continue
+            if not self._tool_in_role("coder", step.tool):
+                outputs.append(
+                    f"skip {step.step_id}: {step.tool} outside role "
+                    "capabilities (needs researcher/computer role)")
+                skipped += 1
                 continue
             result = self._gated_tool("coder", step.tool, step.args, state,
                                       budgets, step.description)
             outputs.append(f"{step.step_id}: {'ok' if result.success else result.errors}")
             if not result.success:
                 return AgentResult.failure("coder", "; ".join(result.errors))
+        if not outputs or skipped == len(steps):
+            return self._ok(
+                "coder", task_id,
+                {"steps": outputs or ["no coder-executable steps"]},
+                uncertainties=["plan assigned no steps in coder "
+                               "capabilities; planning gap noted"],
+                confidence=0.3)
         board.write("results", {"subject": goal, "verdict": "implemented",
                                  "steps": outputs},
                     author="coder", provenance="coder-agent", confidence=0.65)
@@ -892,7 +994,7 @@ class Orchestrator:
             return AgentResult.failure("browser", f"{type(exc).__name__}: {exc}")
 
     def _h_devops(self, card, goal, board, task_id, state, budgets, *a) -> AgentResult:
-        return self._gated_tool("computer", "system_probe", {}, state,
+        return self._gated_tool("devops", "system_probe", {}, state,
                                 budgets, "system health read")
 
     def _h_system(self, card, goal, board, task_id, *a) -> AgentResult:
