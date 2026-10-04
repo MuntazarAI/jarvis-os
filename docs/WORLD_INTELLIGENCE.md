@@ -70,3 +70,13 @@ No background crawling (refresh is explicit, consent-gated).
 API research calls are per-client throttled
 (`WorldConfig.api_rate_limit_n` per `api_rate_window_s`, 429 with
 retry guidance); legitimate spaced calls are unaffected.
+
+## 1.1 — Subscriptions, scheduled refresh, proactive briefings
+
+- `world topics [--topic NAME | --topic -NAME]`: bounded (50) atomic
+  watch list, separate from code-side config topics.
+- `world refresh [--notify]`: live geo sync + per-topic research with
+  interval skip, snapshot history, and change diffing. First refresh
+  per topic establishes a silent baseline; only genuine deltas notify.
+- Notifications flow as untrusted `world_changed` proactive events
+  (cooldowns, quiet hours, and dedupe handled by the existing engine).
