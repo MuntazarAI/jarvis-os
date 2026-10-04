@@ -1,5 +1,6 @@
 """Office floor page: MD design tokens, live data, honesty mapping."""
 
+import json
 from types import SimpleNamespace
 
 from jarvis.api.office_page import OFFICE_HTML
@@ -53,6 +54,66 @@ def test_office_post_has_no_route():
     api = _api()
     code, _ = api.handle("POST", "/office", b"{}", {})
     assert code == 404
+
+
+def test_speak_endpoint():
+    from types import SimpleNamespace as NS
+    from jarvis.api.server import JarvisAPI as API
+    fake = NS(bus=_Bus(), cycle=0,
+              config=NS(paths=NS(home=""),
+                        voice=NS(tts_provider="fake", language="en",
+                                 reference_audio="", sample_rate=24000),
+                        world=None))
+    api = API(fake, token="tok")
+    code, _ = api.handle("POST", "/api/speak",
+                         json.dumps({"text": "hi"}).encode(), {})
+    assert code == 401
+    auth = {"authorization": "Bearer tok"}
+    code, _ = api.handle("POST", "/api/speak", b"{}", auth)
+    assert code == 400  # missing text
+    code, _ = api.handle("POST", "/api/speak", b"nope", auth)
+    assert code == 400
+    code, out = api.handle(
+        "POST", "/api/speak",
+        json.dumps({"text": "hello there"}).encode(), auth)
+    assert code == 200
+    assert out["ctype"] == "audio/wav"
+    assert out["__audio__"][:4] == b"RIFF"  # real wav bytes
+    code, _ = api.handle(
+        "POST", "/api/speak",
+        json.dumps({"text": "x" * 501}).encode(), auth)
+    assert code == 400  # bounded input
+
+
+def test_office_speaks_replies():
+    from jarvis.api.office_page import OFFICE_HTML
+    assert "api/speak" in OFFICE_HTML
+    assert "sound: on" in OFFICE_HTML
+
+
+def test_speak_audio_over_http():
+    import urllib.request
+    from types import SimpleNamespace as NS
+    from jarvis.api.server import JarvisAPI as API
+    fake = NS(bus=_Bus(), cycle=0,
+              config=NS(paths=NS(home=""),
+                        voice=NS(tts_provider="fake", language="en",
+                                 reference_audio="", sample_rate=24000),
+                        world=None))
+    api = API(fake, host="127.0.0.1", port=0, token="")
+    api.serve_forever()
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{api.port}/api/speak",
+            data=json.dumps({"text": "hi"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            assert resp.status == 200
+            assert resp.headers.get("Content-Type") == "audio/wav"
+            assert resp.read(4) == b"RIFF"
+    finally:
+        api.shutdown()
 
 
 def test_pending_endpoint_gated_and_shaped():

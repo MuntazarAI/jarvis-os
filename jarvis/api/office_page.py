@@ -111,6 +111,7 @@ body.still canvas { image-rendering:pixelated; }
 <body>
 <div class="top"><h1>JARVIS OFFICE</h1>
 <span>your agents, at their desks</span>
+<button id="sndbtn" style="font-size:12px;padding:4px 10px;cursor:pointer;">sound: on</button>
 <span class="live" id="meta">…</span></div>
 <div class="layout">
 <div>
@@ -143,7 +144,23 @@ body.still canvas { image-rendering:pixelated; }
 <script>
 let token = sessionStorage.getItem("jarvis-token") || "";
 let team = [], selected = null, prevDone = {}, sparks = [];
-let seenApprovals = {}, currentAppr = null;
+let seenApprovals = {}, currentAppr = null, soundOn = true;
+document.getElementById("sndbtn").onclick = () => {
+soundOn = !soundOn;
+document.getElementById("sndbtn").textContent =
+soundOn ? "sound: on" : "sound: off"; };
+async function speak(text) {
+if (!soundOn || !text) return;
+try { let r = await fetch("api/speak", {method: "POST",
+headers: Object.assign({"Content-Type": "application/json"}, authz()),
+body: JSON.stringify({text: String(text).slice(0, 500)})});
+if (!r.ok) return;
+let blob = await r.blob();
+let audio = new Audio(URL.createObjectURL(blob));
+let sup = team.find(a => a.n === "supervisor");
+if (sup) { sup.b = "speaking…"; }
+await audio.play().catch(() => {});
+audio.onended = () => refresh(); } catch (e) { /* silent: voice optional */ } }
 let reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 function saveTok() { token = document.getElementById("tok").value;
 sessionStorage.setItem("jarvis-token", token);
@@ -249,7 +266,8 @@ let el = document.getElementById("reply"); el.textContent = "one sec…";
 try { let out = await api("cycle", {method: "POST",
 headers: Object.assign({"Content-Type": "application/json"}, authz()),
 body: JSON.stringify({input: text})});
-el.textContent = out.response || out.error || "(no reply)"; refresh(); }
+el.textContent = out.response || out.error || "(no reply)";
+speak(out.response); }
 catch (e) { el.textContent = "unreachable or locked."; }
 bar.classList.remove("busy"); }
 document.getElementById("box").addEventListener("keydown", e => {
