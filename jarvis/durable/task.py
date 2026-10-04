@@ -65,8 +65,10 @@ TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
                                    TaskState.CANCELLED}),
     TaskState.READY: frozenset({TaskState.RUNNING, TaskState.PAUSED,
                                 TaskState.CANCELLED, TaskState.EXPIRED,
-                                TaskState.WAITING, TaskState.FAILED}),
+                                TaskState.WAITING, TaskState.FAILED,
+                                TaskState.RECOVERING}),
     # FAILED from READY: a deadline kill must land from any live state.
+    # RECOVERING from READY: recovery triage may start from a ready task.
     TaskState.RUNNING: frozenset({TaskState.VERIFYING,
                                   TaskState.WAITING, TaskState.PAUSED,
                                   TaskState.FAILED, TaskState.CANCELLED,
