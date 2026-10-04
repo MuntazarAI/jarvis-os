@@ -77,6 +77,9 @@ class JarvisAPI:
         if method == "GET" and path.split("?", 1)[0] == "/remote":
             from .remote import REMOTE_HTML
             return 200, {"__html__": REMOTE_HTML}
+        if method == "GET" and path.split("?", 1)[0] == "/office":
+            from .office_page import OFFICE_HTML
+            return 200, {"__html__": OFFICE_HTML}
         if self.token and not _bearer_ok(
                 headers.get("authorization", ""), self.token):
             return 401, {"error": "unauthorized"}
