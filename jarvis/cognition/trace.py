@@ -61,7 +61,8 @@ def trace_cycle(home: str | Path, correlation_id: str,
                     if sid in wanted:
                         trace["conversation"].append({
                             "content": memory.content[:200],
-                            "at": memory.created_at})
+                            "at": memory.created_at,
+                            "session_id": sid})
                 for memory in palace.all(tier="episodic", limit=50):
                     meta = memory.metadata or {}
                     if meta.get("correlation") in wanted:
