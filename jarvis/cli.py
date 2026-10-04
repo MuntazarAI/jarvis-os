@@ -396,6 +396,22 @@ def build_parser() -> argparse.ArgumentParser:
     grants.add_argument("--json", action="store_true",
                         help="machine-readable output")
 
+    backup = sub.add_parser(
+        "backup",
+        help="state backup: create, list, verify, restore (code lives on GitHub)")
+    backup.add_argument("action", nargs="?", default="create",
+                        choices=["create", "list", "verify", "restore"])
+    backup.add_argument("--dest", default="",
+                        help="backup directory (default ~/jarvis-backups)")
+    backup.add_argument("--file", default="",
+                        help="archive for verify/restore")
+    backup.add_argument("--force", action="store_true",
+                        help="required for restore")
+    backup.add_argument("--keep", type=int, default=10,
+                        help="archives to retain")
+    backup.add_argument("--json", action="store_true",
+                        help="machine-readable output")
+
     approvals = sub.add_parser(
         "approvals",
         help="policy approvals: list pending, approve, deny (single-use tokens)")
@@ -1190,6 +1206,79 @@ def _approvals_action(jarvis: Any, args: Any) -> int:
         ok = policy.deny(full, by="cli")
         return _out({"denied": ok}, "denied" if ok else
                     "cannot deny", 0 if ok else 1)
+    jarvis.close()
+    return 2
+
+
+def _backup_paths(jarvis: Any) -> tuple[Any, Any, Any]:
+    from pathlib import Path as _Path
+    home = _Path(jarvis.config.paths.home)
+    voices = _Path.home() / ".config" / "jarvis" / "voices"
+    dest = _Path.home() / "jarvis-backups"
+    return home, voices, dest
+
+
+def _backup_action(jarvis: Any, args: Any) -> int:
+    """State backup lifecycle. Code is on GitHub; this protects state."""
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "create")
+
+    def _out(payload: Any, text: str, code: int = 0) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print(text)
+        jarvis.close()
+        return code
+
+    from pathlib import Path as _Path
+    from . import backup as _backup
+    home, voices, default_dest = _backup_paths(jarvis)
+    dest = _Path(getattr(args, "dest", "") or default_dest)
+    if action == "create":
+        manifest = _backup.create(
+            home, voices, dest,
+            keep=max(1, int(getattr(args, "keep", 10) or 10)))
+        check = _backup.verify(_Path(manifest["archive"]))
+        payload = {"manifest": manifest,
+                   "verified": check["ok"]}
+        lines = [f"archive={manifest['archive']}",
+                 f"files={manifest['file_count']} "
+                 f"bytes={manifest['total_bytes']} "
+                 f"archive_bytes={manifest['archive_bytes']}",
+                 f"verified={'yes' if check['ok'] else 'NO — DO NOT TRUST'}"]
+        return _out(payload, "BACKUP\n" + "\n".join(lines),
+                    0 if check["ok"] else 1)
+    if action == "list":
+        found = _backup.list_backups(dest)
+        lines = [f"{_Path(f['archive']).name:32} "
+                 f"{f['bytes'] // 1024:>8}KB "
+                 f"{'verified' if f['verified'] else 'UNVERIFIED'}"
+                 for f in found]
+        return _out({"backups": found},
+                    "BACKUPS\n" + "\n".join(lines) or "no backups")
+    if action == "verify":
+        target = getattr(args, "file", "")
+        if not target:
+            return _out({"error": "need --file"}, "need --file", 2)
+        check = _backup.verify(_Path(target))
+        return _out(check, "verified" if check["ok"] else
+                    f"BROKEN: {check.get('error', check.get('mismatches'))}",
+                    0 if check["ok"] else 1)
+    if action == "restore":
+        target = getattr(args, "file", "")
+        if not target:
+            return _out({"error": "need --file"}, "need --file", 2)
+        if not getattr(args, "force", False):
+            return _out({"error": "restore requires --force"},
+                        "restore overwrites live state: re-run with --force",
+                        2)
+        result = _backup.restore(_Path(target), home, voices, force=True)
+        return _out(result,
+                    f"restored {result.get('count', 0)} files"
+                    if result.get("ok")
+                    else f"refused: {result.get('error')}",
+                    0 if result.get("ok") else 1)
     jarvis.close()
     return 2
 
@@ -4221,6 +4310,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "grants":
         return _grants_action(jarvis, args)
+
+    if args.command == "backup":
+        return _backup_action(jarvis, args)
 
     if args.command == "approvals":
         return _approvals_action(jarvis, args)
