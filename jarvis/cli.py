@@ -359,9 +359,15 @@ def build_parser() -> argparse.ArgumentParser:
     world.add_argument("action", nargs="?", default="status",
                        choices=["status", "sources", "search", "events",
                                 "changes", "refresh", "research",
-                                "briefing", "health", "diagnostics"])
+                                "briefing", "health", "diagnostics",
+                                "topics"])
     world.add_argument("--text", default="",
                        help="query for search/research/briefing")
+    world.add_argument("--topic", default="",
+                       help="topic for topics add/remove")
+    world.add_argument("--notify", action="store_true",
+                       help="emit proactive events for genuine changes "
+                            "(with refresh)")
     world.add_argument("--kind", default="morning",
                        help="briefing kind: morning, evening, topic, project, change")
     world.add_argument("--json", action="store_true",
@@ -576,6 +582,25 @@ def _world_action(jarvis: Any, args: Any) -> int:
                  f"{'on' if s['enabled'] else 'off'}  "
                  f"{s['trust_basis']}" for s in payload["sources"]]
         return _out(payload, "SOURCES\n" + "\n".join(lines))
+    if action == "topics":
+        from .worldintel.subscriptions import TopicStore
+        store = TopicStore(home)
+        name = (getattr(args, "topic", "") or "").strip()
+        if name.startswith("-"):
+            name = name[1:].strip()
+            ok = store.remove(name)
+            return _out({"removed": ok, "topic": name},
+                        f"unsubscribed: {name}" if ok
+                        else f"unknown topic: {name}")
+        if name:
+            ok = store.add(name)
+            return _out({"added": ok, "topic": name},
+                        f"subscribed: {name}" if ok
+                        else f"not added: {name}")
+        found = store.list()
+        return _out({"topics": found},
+                    "TOPICS\n" + "\n".join(
+                        t["topic"] for t in found) or "no topics")
     if action == "health":
         from .worldintel.health import check as world_check
         report = world_check(cfg.__dict__, registry, cache)
@@ -662,18 +687,44 @@ def _world_action(jarvis: Any, args: Any) -> int:
                     "CHANGES\n" + ("\n".join(lines) or "no changes"))
     if action == "refresh":
         from .geospatial.live import LiveIntelligenceService
+        from .worldintel.refresh import refresh_all
+        from .worldintel.subscriptions import TopicStore
         try:
             service = LiveIntelligenceService(home=home)
             # Explicit operator consent: refresh means network egress.
             result = service.sync(allow_remote=True)
-            return _out({"refreshed": True, "result": result},
-                        f"refreshed: ingested="
-                        f"{result.get('ingested', 0)} "
-                        f"alerts={result.get('alerts', 0)}")
+            live = {"ingested": result.get("ingested", 0),
+                    "alerts": result.get("alerts", 0)}
         except Exception as exc:
-            return _out({"refreshed": False,
-                         "error": f"{type(exc).__name__}: {exc}"},
-                        f"refresh failed: {type(exc).__name__}")
+            live = {"error": f"{type(exc).__name__}"}
+        store = TopicStore(home)
+        topics = sorted(set(store.names()) | set(cfg.topics))
+        notifier = None
+        if getattr(args, "notify", False):
+            def notifier(event: Any) -> Any:
+                try:
+                    return jarvis.proactive.notify(event)
+                except Exception:
+                    return None
+        try:
+            summary = refresh_all(
+                home, topics=topics,
+                interval_s=cfg.refresh_interval_s,
+                notifier=notifier, world_registry=jarvis.world_registry,
+                graph=jarvis.graph)
+            try:
+                jarvis.world_registry.save(jarvis.world_store)
+            except Exception:
+                pass
+        except Exception as exc:
+            summary = {"error": f"{type(exc).__name__}"}
+        payload = {"live": live, "topics": summary}
+        lines = [f"live: ingested={live.get('ingested', 0)} "
+                 f"alerts={live.get('alerts', 0)}",
+                 f"topics: refreshed={summary.get('refreshed', 0)} "
+                 f"skipped={summary.get('skipped', 0)} "
+                 f"notified={summary.get('notified', 0)}"]
+        return _out(payload, "REFRESHED\n" + "\n".join(lines))
     if action == "briefing":
         from .worldintel.briefing import build_briefing
         snaps = _world_snapshots(home)

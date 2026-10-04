@@ -541,3 +541,92 @@ def test_api_research_telemetry_on_throttle(tmp_path):
         assert "world.api.throttled" in names
     finally:
         api.jarvis.close()
+
+
+def test_topic_store_add_remove_list(tmp_path):
+    from jarvis.worldintel.subscriptions import TopicStore
+    store = TopicStore(tmp_path)
+    assert store.add("Linux kernel") is True
+    assert store.add("Linux kernel") is False  # duplicate
+    assert store.add("") is False
+    assert [t["topic"] for t in store.list()] == ["Linux kernel"]
+    assert TopicStore(tmp_path).names() == ["Linux kernel"]
+    assert store.remove("linux KERNEL") is True  # case-insensitive
+    assert store.remove("nope") is False
+    assert store.names() == []
+
+
+def test_topic_store_bounded_and_recovers(tmp_path):
+    from jarvis.worldintel import subscriptions as subs_mod
+    from jarvis.worldintel.subscriptions import TopicStore
+    old_max, subs_mod.MAX_TOPICS = subs_mod.MAX_TOPICS, 2
+    try:
+        store = TopicStore(tmp_path)
+        assert store.add("a") and store.add("b")
+        assert store.add("c") is False
+    finally:
+        subs_mod.MAX_TOPICS = old_max
+    (tmp_path / "worldintel-topics.json").write_text("{broken")
+    assert TopicStore(tmp_path).names() == []
+
+
+def test_refresh_skips_fresh_and_reports(tmp_path, monkeypatch):
+    import time as _time
+    from jarvis.worldintel.refresh import refresh_all
+    from jarvis.worldintel.subscriptions import TopicStore
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    TopicStore(home).add("Linux kernel")
+    calls = {"n": 0}
+
+    def _fake_research(self, question, **kw):
+        calls["n"] += 1
+        from jarvis.worldintel.research import Answer
+        return Answer(question=question, scope="current",
+                      summary="s", provenance=[])
+    monkeypatch.setattr(
+        "jarvis.worldintel.research.Researcher.research",
+        _fake_research)
+    first = refresh_all(str(home), interval_s=3600.0)
+    assert first["refreshed"] == 1 and calls["n"] == 1
+    second = refresh_all(str(home), interval_s=3600.0)
+    assert second["skipped"] == 1 and calls["n"] == 1
+    third = refresh_all(str(home), interval_s=0.0)
+    assert third["refreshed"] == 1 and calls["n"] == 2
+
+
+def test_refresh_notifies_on_change(tmp_path, monkeypatch):
+    from jarvis.worldintel.refresh import refresh_all
+    from jarvis.worldintel.research import Answer
+    from jarvis.worldintel.subscriptions import TopicStore
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    TopicStore(home).add("Acme")
+    states = [{"claims": [{"subject": "Acme", "predicate": "released",
+                            "object": "Nova", "confidence": 0.8}]}]
+
+    def _fake_research(self, question, **kw):
+        claims = states[0]["claims"]
+        return Answer(question=question, scope="current",
+                      summary="s", claims=claims,
+                      provenance=[{"source_id": "t"}])
+    monkeypatch.setattr(
+        "jarvis.worldintel.research.Researcher.research",
+        _fake_research)
+    notified: list = []
+
+    def _notify(event):
+        notified.append(event)
+        return object()
+
+    first = refresh_all(str(home), interval_s=0.0,
+                        notifier=_notify)
+    assert first["refreshed"] == 1 and first["notified"] == 0
+    states[0] = {"claims": [{"subject": "Acme",
+                             "predicate": "released",
+                             "object": "Orion", "confidence": 0.8}]}
+    second = refresh_all(str(home), interval_s=0.0,
+                         notifier=_notify)
+    assert second["notified"] == 1
+    assert notified[0].type == "world_changed"
+    assert notified[0].trusted is False
