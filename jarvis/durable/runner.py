@@ -87,40 +87,48 @@ class DurableRunner:
 
     def advance(self, task_id: str) -> Task:
         """Advance one task by one step. Process may die after this
-        call; all state is already persisted."""
+        call; all state is already persisted. Guard halts (cancel
+        honored, deadline, e-stop) are normal outcomes, not errors:
+        the task is returned in its terminal state."""
         with self.store.mutate(task_id) as task:
-            self._guard(task)
-            task.transition(TaskState.RUNNING)
-            step = self._current(task)
-            if step is None:
-                # A failed current step is retried, not skipped:
-                # reset to PENDING so it actually re-executes.
-                prev = next((s for s in task.steps
-                             if s.step_id == task.current_step), None)
-                if prev is not None and prev.state == StepState.FAILED:
-                    prev.state = StepState.PENDING
-                    prev.verification = "unknown"
-                    step = prev
-            if step is None:
-                self._finish(task)
-                return task
-            step.state = StepState.RUNNING
-            step.attempts += 1
-            step.started_at = time.time()
-            step.idempotency_key = (
-                f"{task.task_id}:{step.step_id}:attempt-{step.attempts}")
-            task.current_step = step.step_id
-            self._emit("durable.step.started", task, step.title)
-            result = self._safe_execute(task, step)
-            step.finished_at = time.time()
-            step.output_ref = str(result.get("output_ref", ""))[:500]
-            step.verification = str(
-                result.get("verification", "unknown"))[:20]
-            if step.verification not in ("verified", "failed",
-                                         "partial", "unknown"):
-                step.verification = "unknown"
-            self._after_step(task, step, result)
+            try:
+                return self._advance_inner(task)
+            except _Halt as halt:
+                return halt.task
+
+    def _advance_inner(self, task: Task) -> Task:
+        self._guard(task)
+        task.transition(TaskState.RUNNING)
+        step = self._current(task)
+        if step is None:
+            # A failed current step is retried, not skipped:
+            # reset to PENDING so it actually re-executes.
+            prev = next((s for s in task.steps
+                         if s.step_id == task.current_step), None)
+            if prev is not None and prev.state == StepState.FAILED:
+                prev.state = StepState.PENDING
+                prev.verification = "unknown"
+                step = prev
+        if step is None:
+            self._finish(task)
             return task
+        step.state = StepState.RUNNING
+        step.attempts += 1
+        step.started_at = time.time()
+        step.idempotency_key = (
+            f"{task.task_id}:{step.step_id}:attempt-{step.attempts}")
+        task.current_step = step.step_id
+        self._emit("durable.step.started", task, step.title)
+        result = self._safe_execute(task, step)
+        step.finished_at = time.time()
+        step.output_ref = str(result.get("output_ref", ""))[:500]
+        step.verification = str(
+            result.get("verification", "unknown"))[:20]
+        if step.verification not in ("verified", "failed",
+                                     "partial", "unknown"):
+            step.verification = "unknown"
+        self._after_step(task, step, result)
+        return task
 
     def _guard(self, task: Task) -> None:
         if task.cancel_requested and task.state in (

@@ -179,7 +179,11 @@ class TaskStore:
         @contextlib.contextmanager
         def _guard():
             with store._locked(store._lock_path()):
-                store._maybe_reload()
+                # Unconditional reload under the write lock. The mtime
+                # shortcut is for unlocked reads only: two saves can
+                # share an mtime tick, and a stale read here would
+                # silently clobber another writer's task.
+                store.load()
                 task = store._tasks.get(task_id)
                 if task is None:
                     raise TaskStoreError(f"unknown task: {task_id}")
@@ -190,7 +194,7 @@ class TaskStore:
 
     def create(self, task: Task) -> Task:
         with self._locked(self._lock_path()):
-            self._maybe_reload()
+            self.load()  # same lost-update rule as mutate()
             if len(self._tasks) >= self.max_tasks:
                 raise TaskStoreError("task registry full")
             if task.task_id in self._tasks:
@@ -213,7 +217,7 @@ class TaskStore:
 
     def remove(self, task_id: str) -> bool:
         with self._locked(self._lock_path()):
-            self._maybe_reload()
+            self.load()  # same lost-update rule as mutate()
             if task_id not in self._tasks:
                 return False
             del self._tasks[task_id]

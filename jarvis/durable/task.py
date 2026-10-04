@@ -65,7 +65,8 @@ TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
                                    TaskState.CANCELLED}),
     TaskState.READY: frozenset({TaskState.RUNNING, TaskState.PAUSED,
                                 TaskState.CANCELLED, TaskState.EXPIRED,
-                                TaskState.WAITING}),
+                                TaskState.WAITING, TaskState.FAILED}),
+    # FAILED from READY: a deadline kill must land from any live state.
     TaskState.RUNNING: frozenset({TaskState.VERIFYING,
                                   TaskState.WAITING, TaskState.PAUSED,
                                   TaskState.FAILED, TaskState.CANCELLED,
@@ -88,7 +89,8 @@ TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
     # CHECKPOINTED is a stable rest state: resume goes through READY
     # via recover(); direct RUNNING covers same-process continuation.
     TaskState.PAUSED: frozenset({TaskState.READY, TaskState.CANCELLED,
-                                 TaskState.RECOVERING}),
+                                 TaskState.RECOVERING, TaskState.FAILED}),
+    # FAILED from PAUSED: same deadline-kill rule as READY.
     TaskState.RECOVERING: frozenset({TaskState.READY,
                                      TaskState.RETRYING,
                                      TaskState.WAITING,
