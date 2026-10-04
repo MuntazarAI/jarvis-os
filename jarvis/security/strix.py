@@ -76,6 +76,7 @@ def run_scan(target: str, *, mode: str = "quick",
              timeout_s: float = DEFAULT_TIMEOUT_S,
              allow_nonlocal: bool = False,
              authorized: bool = False,
+             max_turns: int = 100,
              policy: Any = None) -> dict[str, Any]:
     """Run one bounded non-interactive scan. Never raises."""
     started = time.time()
@@ -128,9 +129,11 @@ def run_scan(target: str, *, mode: str = "quick",
             return result
         timeout = max(30.0, min(3600.0, float(timeout_s or 0.0)
                                 or DEFAULT_TIMEOUT_S))
+        turns = max(1, min(500, int(max_turns or 0) or 100))
         try:
             proc = subprocess.run(
-                [binary, "-n", "-t", target, "--scan-mode", mode],
+                [binary, "-n", "-t", target, "--scan-mode", mode,
+                 "--max-turns", str(turns)],
                 capture_output=True, text=True, timeout=timeout,
                 shell=False)
         except subprocess.TimeoutExpired:

@@ -441,6 +441,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help="scan depth for `scan`")
     sec.add_argument("--timeout", type=float, default=600.0,
                      help="scan timeout seconds (30-3600)")
+    sec.add_argument("--max-turns", type=int, default=100,
+                     help="scan agent turn cap (1-500)")
     sec.add_argument("--yes", action="store_true",
                      help="REQUIRED for scan: confirms you own the target "
                           "or have explicit written permission to test it")
@@ -3315,13 +3317,15 @@ def _security_action(jarvis: Any, args: Any) -> int:
             return _out(report, lines, 3)
         return _out(report, lines, 1 if highs else 0)
     if action == "scan":
-        from .security.strix import run_scan
+        from .security.strix import run_scan, to_evidence
         result = run_scan(
             target, mode=str(getattr(args, "mode", "quick")),
             timeout_s=float(getattr(args, "timeout", 600.0) or 600.0),
+            max_turns=int(getattr(args, "max_turns", 100) or 100),
             allow_nonlocal=bool(getattr(args, "allow_nonlocal", False)),
             authorized=bool(getattr(args, "yes", False)),
             policy=getattr(jarvis, "policy", None))
+        result["evidence"] = to_evidence(result)
         status = result["status"]
         lines = [f"SCAN {result['target']} [{result['mode']}]: "
                  f"{result['summary']}"]
