@@ -101,7 +101,7 @@ body.still canvas { image-rendering:pixelated; }
 <div class="layout">
 <div>
 <div class="panel"><h2 id="floor-title">Floor</h2>
-<canvas id="floor" width="480" height="300"></canvas></div>
+<canvas id="floor" width="1280" height="800"></canvas></div>
 <div class="strip" id="strip"></div>
 </div>
 <div>
@@ -247,6 +247,7 @@ g.clearRect(0, 0, 24, 24);
 drawAvatar(g, a, performance.now(), 0); }
 function tile(x0, y0, w, h, c) { x.fillStyle = c; x.fillRect(x0, y0, w, h); }
 function draw(t) {
+x.setTransform(2, 0, 0, 2, 0, 0); // 2x supersample: crisp at any size
 x.clearRect(0, 0, 640, 400);
 for (let tx = 0; tx < 640; tx += 32) for (let ty = 0; ty < 400; ty += 32) {
 tile(tx, ty, 32, 32, ((tx + ty) / 32) % 2 ? "#E5C896" : "#C9A66B"); }
