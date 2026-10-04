@@ -1,0 +1,62 @@
+[Unit]
+Description=JARVIS OS 24/7 background service (user instance)
+Documentation=https://github.com/MuntazarAI/jarvis-os/blob/main/docs/BACKGROUND_SERVICE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Project checkout; adjust JARVIS_HOME_DIR for your machine.
+Environment=JARVIS_HOME_DIR=%h/Projects/jarvis-os
+WorkingDirectory=%h/Projects/jarvis-os
+ExecStart=/usr/bin/python3 -m jarvis.cli service run
+Restart=on-failure
+# Bounded restarts: 5 tries in 10 minutes, then stay down for humans.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+# Graceful shutdown window matches SHUTDOWN_GRACE_S (20s) + margin.
+TimeoutStopSec=40
+# Logging: stdout/stderr go to the journal; the app also keeps a
+# bounded rotated log under <home>/logs/.
+StandardOutput=journal
+StandardError=journal
+
+# --- Hardening review (each option audited) ---
+# NoNewPrivileges=yes :
+#   SAFE. Service never needs setuid; blocks privilege escalation.
+NoNewPrivileges=yes
+# PrivateTmp=yes :
+#   SAFE. Service uses home state + repo checkout, never /tmp sharing.
+PrivateTmp=yes
+# RestrictSUIDSGID=yes :
+#   SAFE. No setuid/setgid binaries are invoked.
+RestrictSUIDSGID=yes
+# RestrictRealtime=yes :
+#   SAFE. No realtime scheduling used.
+RestrictRealtime=yes
+# LockPersonality=yes :
+#   SAFE. No personality(2) syscalls.
+LockPersonality=yes
+# MemoryMax=2G :
+#   SAFE with margin. Measured idle+RSS is in the tens of MB; voice
+#   synthesis spikes are short-lived in a child that exits. If the
+#   host runs local voice turns in-process, raise to 4G.
+MemoryMax=2G
+# TasksMax=64 :
+#   SAFE. Single-loop service, no thread pool; 64 is generous headroom.
+TasksMax=64
+# OMITTED deliberately:
+# ProtectSystem/ProtectHome : would break the state dir, repo checkout,
+#   voice reference, and model cache the service legitimately uses.
+#   Sandboxing those paths needs per-machine path allowlists; anyone
+#   wanting it should add ReadWritePaths for their layout.
+# CPUQuota/MemoryHigh : not set; the scheduler already sleeps when idle
+#   and budgets all work. Add only with measured need.
+# RestrictNamespaces/ProtectKernelTunables/etc : marginal benefit here,
+#   real risk of breaking audio/input backends; omitted.
+
+[Install]
+# Mode A (default): start after user login. Do NOT enable lingering
+# unless you explicitly want JARVIS alive with no session open:
+#   loginctl enable-linger $USER   (Mode B — your explicit choice)
+WantedBy=default.target

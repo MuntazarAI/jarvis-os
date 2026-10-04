@@ -95,19 +95,53 @@ class ConductorService:
         if target == "diagnostic":
             return self._diagnostic(decision, text, started)
         if target == "tasks":
-            return self._result(target, decision.confidence, decision,
-                                response="Task tracking lives under "
-                                "`jarvis dots` / `jarvis missions` — "
-                                "tell me a concrete goal to log there.",
-                                latency_ms=self._ms(started))
+            return self._tasks(decision, text, started)
         if target == "autonomy":
             return self._autonomy(decision, started)
         if target == "security":
             return self._refuse(decision, started)
         return self._clarify(decision, started)
 
+    def _tasks(self, decision: RouteDecision, text: str,
+               started: float) -> dict[str, Any]:
+        """Durable task creation. Only the explicit `create task:`
+        form creates anything — every other TASK request gets the
+        pointer to the explicit CLI, never an implicit side effect."""
+        import re as _re
+        match = _re.search(r"create task:\s*(.+)", text,
+                           flags=_re.IGNORECASE | _re.DOTALL)
+        if not match:
+            return self._result(
+                "tasks", decision.confidence, decision,
+                response="Durable tasks live under `jarvis task` — "
+                "say `create task: <goal>` to file one, or run "
+                "`jarvis task create --title <goal>`. "
+                "Ephemeral tracking stays under `jarvis dots` / "
+                "`jarvis missions`.",
+                latency_ms=self._ms(started))
+        title = " ".join(match.group(1).split())[:300]
+        if not title:
+            return self._clarify(decision, started)
+        try:
+            from ..durable import DurableRunner, TaskStore
+            home = str(self.jarvis.config.paths.home)
+            runner = DurableRunner(TaskStore(home))
+            task = runner.create(title=title, source="conductor")
+            response = (f"Durable task {task.task_id} created: "
+                        f"{title}. Advance it with "
+                        f"`jarvis task run {task.task_id}` or let the "
+                        f"background service pick it up.")
+            return self._result("tasks", decision.confidence,
+                                decision, response=response,
+                                latency_ms=self._ms(started))
+        except Exception as exc:
+            return self._result(
+                "tasks", decision.confidence, decision,
+                error=f"task creation failed: {type(exc).__name__}",
+                latency_ms=self._ms(started))
+
     def _autonomy(self, decision: RouteDecision,
-                    started: float) -> dict[str, Any]:
+                started: float) -> dict[str, Any]:
         """Read-only autonomy answers. Mutations (grant/revoke/start/
         stop) are NEVER executed from prose — the response names the
         explicit CLI command instead."""

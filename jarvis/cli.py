@@ -31,6 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--token", default="")
 
+    brd = sub.add_parser("board", help="local status board URL "
+                                      "(served by `jarvis serve`)")
+    brd.add_argument("--host", default="127.0.0.1")
+    brd.add_argument("--port", type=int, default=8765)
+
     sub.add_parser("status", help="print system status JSON")
 
     gev = sub.add_parser("gods-eye", help="manage the local God's Eye View application")
@@ -240,6 +245,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("restart", help="restart the JARVIS service")
     sub.add_parser("doctor", help="dependency + hardware + model health checks")
 
+    svc = sub.add_parser("service", help="24/7 background service: lifecycle, health, logs")
+    svc.add_argument("action", nargs="?", default="status",
+                     choices=["start", "stop", "restart", "status",
+                              "health", "doctor", "logs", "run"])
+    svc.add_argument("--json", action="store_true",
+                     help="machine-readable output")
+    svc.add_argument("--lines", type=int, default=30,
+                     help="log lines for service logs")
+
     ag = sub.add_parser("agents", help="multi-agent organization")
     ag.add_argument("action", nargs="?", default="list",
                     choices=["list", "status", "run", "explain", "teams",
@@ -297,6 +311,23 @@ def build_parser() -> argparse.ArgumentParser:
                      help="JSON success criteria list")
     msn.add_argument("--reason", default="", help="reason/context")
     msn.add_argument("--json", action="store_true",
+                     help="machine-readable output")
+
+    tsk = sub.add_parser("task", help="durable autonomous tasks: "
+                                      "create, run, recover, inspect")
+    tsk.add_argument("action", nargs="?", default="list",
+                     choices=["create", "list", "status", "inspect",
+                              "run", "pause", "resume", "cancel",
+                              "recover", "history", "doctor"])
+    tsk.add_argument("text", nargs="*",
+                     help="title for create, task id otherwise")
+    tsk.add_argument("--steps", default="",
+                     help="semicolon-separated step titles for create")
+    tsk.add_argument("--priority", type=int, default=5)
+    tsk.add_argument("--deadline-s", type=float, default=0.0,
+                     help="seconds from now after which the task fails")
+    tsk.add_argument("--reason", default="", help="reason/context")
+    tsk.add_argument("--json", action="store_true",
                      help="machine-readable output")
 
     pro = sub.add_parser("proactive", help="proactive attention + decisions")
@@ -1281,6 +1312,401 @@ def _backup_action(jarvis: Any, args: Any) -> int:
                     0 if result.get("ok") else 1)
     jarvis.close()
     return 2
+
+
+def _service_action(jarvis: Any, args: Any) -> int:
+    """24/7 background service controls. Foreground `run` is what
+    systemd (or `start`) supervises; everything else inspects."""
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "status")
+
+    def _out(payload: Any, text: str, code: int = 0) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print(text)
+        jarvis.close()
+        return code
+
+    from .service.runtime import (BackgroundService, ServiceLock,
+                                  evaluate_state, read_pid_info)
+    home = str(jarvis.config.paths.home)
+    cfg = jarvis.config.service
+
+    def _service() -> BackgroundService:
+        return BackgroundService(
+            home, interval_s=cfg.interval_s,
+            heartbeat_every_s=cfg.heartbeat_every_s,
+            health_every_s=cfg.health_every_s,
+            max_queue=cfg.max_queue)
+
+    if action == "status":
+        info = read_pid_info(home)
+        heart = _service().read_heartbeat()
+        payload = {"service": info, "heartbeat": heart}
+        lines = []
+        if info.get("running"):
+            lines.append(f"running pid={info['pid']}")
+        else:
+            lines.append(f"stopped ({info.get('reason', '')})")
+        if heart.get("present") and not heart.get("corrupt"):
+            lines.append(f"heartbeat age={heart.get('age_s', '?')}s "
+                         f"state={heart.get('state', '?')}")
+        return _out(payload, "SERVICE\n" + "\n".join(lines))
+    if action == "health":
+        return _out(_service_health(jarvis),
+                    "SERVICE HEALTH\n" + json.dumps(
+                        _service_health(jarvis), indent=2, default=str))
+    if action == "doctor":
+        return _out({"checks": _service_doctor(jarvis)},
+                    "SERVICE DOCTOR\n" + "\n".join(
+                        f"{c['name']:24} {c['status']:4} {c['detail']}"
+                        for c in _service_doctor(jarvis)))
+    if action == "logs":
+        lines = _service_logs(home, cfg,
+                              max(1, int(getattr(args, "lines", 30))))
+        return _out({"lines": lines}, "\n".join(lines) or "(no logs)")
+    if action in ("start", "restart"):
+        if action == "restart":
+            _service_stop(home)
+        return _service_start(home, cfg)
+    if action == "stop":
+        return _service_stop(home)
+    if action == "run":
+        return _service_run(jarvis)
+    jarvis.close()
+    return 2
+
+
+def _service_log_path(home: str, cfg: Any) -> Any:
+    from pathlib import Path as _Path
+    return _Path(home) / "logs" / "background-service.log"
+
+
+def _service_rotate(home: str, cfg: Any) -> None:
+    from pathlib import Path as _Path
+    path = _service_log_path(home, cfg)
+    try:
+        if path.exists() and path.stat().st_size > int(
+                cfg.max_log_bytes):
+            for i in range(int(cfg.max_log_files) - 1, 0, -1):
+                older = path.with_name(f"{path.name}.{i}")
+                newer = path.with_name(f"{path.name}.{i + 1}")
+                if older.exists():
+                    if i + 1 >= int(cfg.max_log_files):
+                        older.unlink()
+                    else:
+                        older.replace(newer)
+            path.replace(path.with_name(f"{path.name}.1"))
+    except OSError:
+        pass
+
+
+def _service_start(home: str, cfg: Any) -> int:
+    import subprocess as _subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+    from .service.runtime import read_pid_info
+    info = read_pid_info(home)
+    if info.get("running"):
+        print(f"not started: already running (pid {info['pid']})")
+        return 1
+    _service_rotate(home, cfg)
+    project = str(_Path(__file__).resolve().parent.parent)
+    log = _service_log_path(home, cfg)
+    try:
+        log.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    cmd = [_sys.executable, "-m", "jarvis.cli", "service", "run"]
+    if home and home != str(_Path.home() / ".jarvis-os"):
+        cmd = [_sys.executable, "-m", "jarvis.cli", "--home", home,
+               "service", "run"]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = project + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    try:
+        with open(log, "ab") as handle:
+            _subprocess.Popen(cmd, cwd=project, env=env,
+                              stdout=handle, stderr=subprocess.STDOUT,
+                              start_new_session=True, close_fds=True)
+    except (OSError, ValueError) as exc:
+        print(f"start failed: {type(exc).__name__}: {exc}")
+        return 1
+    print("background service starting (see: jarvis service status)")
+    return 0
+
+
+def _service_stop(home: str) -> int:
+    import os as _os
+    import signal as _signal
+    import time as _time
+    from .service.runtime import read_pid_info
+    info = read_pid_info(home)
+    if not info.get("running"):
+        print(f"not running ({info.get('reason', '')})")
+        return 0
+    try:
+        _os.kill(int(info["pid"]), _signal.SIGTERM)
+    except (OSError, ValueError, TypeError):
+        pass
+    deadline = _time.monotonic() + 25.0
+    while _time.monotonic() < deadline:
+        if not read_pid_info(home).get("running"):
+            print("background service stopped")
+            return 0
+        _time.sleep(0.5)
+    print("stop timed out: process still alive")
+    return 1
+
+
+def _service_logs(home: str, cfg: Any, lines: int) -> list[str]:
+    path = _service_log_path(home, cfg)
+    try:
+        if not path.exists():
+            return []
+        return path.read_text(
+            encoding="utf-8", errors="replace").splitlines()[-lines:]
+    except OSError:
+        return []
+
+
+def _service_health(jarvis: Any) -> dict[str, Any]:
+    import time as _time
+    from .service.runtime import (BackgroundService, evaluate_state,
+                                  read_pid_info)
+    home = str(jarvis.config.paths.home)
+    cfg = jarvis.config.service
+    info = read_pid_info(home)
+    svc = BackgroundService(home)
+    heart = svc.read_heartbeat()
+    emergency = False
+    try:
+        check = getattr(jarvis.policy, "_emergency_stop", None)
+        emergency = bool(check()) if callable(check) else False
+    except Exception:
+        emergency = False
+    degraded: list[str] = []
+    try:
+        import shutil as _shutil
+        _, _, free = _shutil.disk_usage(home)
+        if free < 512 * 1024 * 1024:
+            degraded.append("disk low")
+    except OSError:
+        degraded.append("disk unreadable")
+    try:
+        jarvis.events.count()
+    except Exception as exc:
+        degraded.append(f"persistence: {type(exc).__name__}")
+    if not info.get("running", False) and not heart.get("present", False):
+        return {"state": "STOPPED", "uptime_seconds": 0.0,
+                "heartbeat_age_s": None,
+                "pid": info.get("pid"), "queue_depth": 0,
+                "restart_count": 0, "degraded": degraded,
+                "emergency_stop": emergency}
+    failed = not info.get("running", False)
+    state = evaluate_state(
+        emergency=emergency, failed=failed,
+        heartbeat_stale=bool(heart.get("stale", True)),
+        degraded_reasons=degraded,
+        recovering=False)
+    return {"state": state,
+            "uptime_seconds": round(_time.time() - float(
+                heart.get("started_at", _time.time())), 1)
+            if heart.get("present") else 0.0,
+            "heartbeat_age_s": heart.get("age_s"),
+            "pid": info.get("pid"),
+            "queue_depth": 0,
+            "restart_count": int(heart.get("restart_count", 0) or 0),
+            "degraded": degraded,
+            "emergency_stop": emergency}
+
+
+def _service_doctor(jarvis: Any) -> list[dict[str, str]]:
+    from .service.runtime import read_pid_info
+    home = str(jarvis.config.paths.home)
+    checks: list[dict[str, str]] = []
+
+    def _add(name: str, ok: bool, detail: str = "") -> None:
+        checks.append({"name": name,
+                       "status": "PASS" if ok else "FAIL",
+                       "detail": detail})
+
+    import shutil as _shutil
+    unit = _shutil.which("systemctl") is not None
+    _add("systemd present", unit, "systemctl found" if unit else
+         "no systemctl: unit file advisory only")
+    info = read_pid_info(home)
+    _add("single instance", True,
+         f"pid={info.get('pid')}" if info.get("running")
+         else info.get("reason", "stopped"))
+    svc_health = _service_health(jarvis)
+    _add("service state",
+         svc_health["state"] != "FAILED",
+         svc_health["state"] + (" (engaged: read-only mode)" 
+                                if svc_health["state"] == "EMERGENCY_STOP"
+                                else ""))
+    try:
+        jarvis.config.validate()
+        _add("configuration", True, "service.* bounds valid")
+    except ValueError as exc:
+        _add("configuration", False, str(exc)[:160])
+    try:
+        n = jarvis.events.count()
+        _add("eventstore", True, f"{n} events readable")
+    except Exception as exc:
+        _add("eventstore", False, f"{type(exc).__name__}")
+    try:
+        stopped = getattr(jarvis.policy, "_emergency_stop", lambda: False)()
+        _add("emergency stop", True,
+             "ENGAGED" if stopped else "clear")
+    except Exception as exc:
+        _add("emergency stop", False, f"{type(exc).__name__}")
+    _add("Presence", True, "tick runtime available")
+    return checks
+
+
+def _service_run(jarvis: Any) -> int:
+    """Foreground loop for systemd/`start`. Never returns until stop."""
+    import time as _time
+    from .autonomy.presence import PresenceRuntime
+    from .service.runtime import (BackgroundService, Trigger,
+                                  evaluate_state)
+    home = str(jarvis.config.paths.home)
+    cfg = jarvis.config.service
+    svc = BackgroundService(
+        home, interval_s=cfg.interval_s,
+        heartbeat_every_s=cfg.heartbeat_every_s,
+        health_every_s=cfg.health_every_s,
+        max_queue=cfg.max_queue)
+    started = svc.start()
+    if not started.get("ok"):
+        print(f"service refused: {started.get('error')}")
+        jarvis.close()
+        return 1
+    presence = PresenceRuntime(home, interval_s=cfg.interval_s)
+    from .durable import DurableRunner, TaskStore, mesh_executor
+    from .service.runtime import PRIORITY_NORMAL as _PRIO_NORMAL
+    durable = DurableRunner(TaskStore(home),
+                            executor=mesh_executor(jarvis),
+                            policy=getattr(jarvis, "policy", None),
+                            events=getattr(jarvis, "events", None))
+    try:
+        recovered = durable.recover_all(
+            policy=getattr(jarvis, "policy", None))
+    except Exception:
+        recovered = []
+    if recovered:
+        print(f"durable tasks recovered at startup: {len(recovered)}")
+    svc.schedule(Trigger(
+        trigger_id="durable-tasks-init", source="service",
+        kind="durable_tasks", priority=_PRIO_NORMAL,
+        run_at=_time.monotonic(), dedupe_key="durable-tasks:init",
+        correlation_id=f"svc-{int(_time.time())}"))
+
+    def _handle(trigger: Trigger) -> dict[str, Any]:
+        try:
+            if trigger.kind == "presence_tick":
+                report = presence.tick(jarvis)
+                return {"ok": not report.get("errors"),
+                        "detail": report}
+            if trigger.kind == "world_refresh":
+                from .worldintel.refresh import refresh_all
+                summary = refresh_all(
+                    home, interval_s=float(
+                        jarvis.config.world.refresh_interval_s))
+                return {"ok": True, "detail": summary}
+            if trigger.kind == "health_check":
+                health = _service_health(jarvis)
+                state = health.get("state", "?")
+                if state in ("FAILED",):
+                    svc.degraded_reasons.append("health FAILED")
+                return {"ok": state != "FAILED", "detail": health}
+            if trigger.kind == "maintenance":
+                pruned = _service_maintenance(home, cfg)
+                return {"ok": True, "detail": pruned}
+            if trigger.kind == "durable_tasks":
+                summary = _durable_sweep(jarvis, durable)
+                try:
+                    svc.schedule(Trigger(
+                        trigger_id="durable-tasks-next",
+                        source="service", kind="durable_tasks",
+                        priority=_PRIO_NORMAL,
+                        run_at=_time.monotonic() + max(
+                            60.0, float(cfg.interval_s)),
+                        dedupe_key="durable-tasks:next",
+                        correlation_id=trigger.correlation_id))
+                except Exception:
+                    pass
+                return {"ok": True, "detail": summary}
+        except Exception as exc:
+            return {"ok": False,
+                    "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "error": "unknown trigger kind"}
+
+    try:
+        result = svc.serve_forever(_handle)
+    finally:
+        try:
+            jarvis.close()
+        except Exception:
+            pass
+    print(f"service exited: {result}")
+    return 0 if result.get("ok") else 1
+
+
+def _durable_sweep(jarvis: Any, durable: Any,
+                   max_advances: int = 3) -> dict[str, Any]:
+    """One bounded durable-task pass: recover strays, then advance a
+    few ready tasks by one step each. Never raises; a sweep never
+    blocks the service loop."""
+    from .durable.task import TaskState
+    summary: dict[str, Any] = {"recovered": 0, "advanced": [],
+                               "errors": []}
+    try:
+        recovered = durable.recover_all(
+            policy=getattr(jarvis, "policy", None))
+        summary["recovered"] = len(recovered)
+    except Exception as exc:
+        summary["errors"].append(f"recover: {type(exc).__name__}")
+        return summary
+    advanced = 0
+    try:
+        for task in durable.store.list():
+            if advanced >= max_advances:
+                break
+            if task.state not in (TaskState.READY, TaskState.RETRYING,
+                                  TaskState.CHECKPOINTED):
+                continue
+            try:
+                durable.advance(task.task_id)
+                summary["advanced"].append(
+                    f"{task.task_id}:{durable.store.get(task.task_id).state.value}")
+                advanced += 1
+            except Exception as exc:
+                summary["errors"].append(
+                    f"{task.task_id}: {type(exc).__name__}"[:160])
+    except Exception as exc:
+        summary["errors"].append(f"sweep: {type(exc).__name__}")
+    return summary
+
+
+def _service_maintenance(home: str, cfg: Any) -> dict[str, Any]:
+    """Bounded janitor: prune heartbeat tmp files, cap trace growth."""
+    removed = 0
+    try:
+        from pathlib import Path as _Path
+        for pattern in ("service-heartbeat.json.tmp",
+                        ".device-approvals-*", ".policy-grants-*"):
+            for path in _Path(home).glob(pattern):
+                try:
+                    path.unlink()
+                    removed += 1
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return {"removed_temp_files": removed}
 
 
 def _audio_spool_depth(jarvis: Any) -> dict[str, Any]:
@@ -2644,6 +3070,200 @@ def _device_policy(jarvis: Any, args: Any, _out: Any) -> int:
     return 2
 
 
+def _task_doctor_checks(home: str) -> list[dict[str, str]]:
+    """Durable task health checks. Read-only; shared by CLI + service."""
+    import time as _time
+    from .durable import TaskStore
+    from .durable.task import TaskState
+    checks: list[dict[str, str]] = []
+
+    def _add(name: str, ok: bool, detail: str) -> None:
+        checks.append({"name": f"durable.{name}",
+                       "status": "OK" if ok else "FAIL",
+                       "detail": detail})
+    try:
+        store = TaskStore(home)
+    except Exception as exc:
+        _add("store", False, f"open failed: {type(exc).__name__}")
+        return checks
+    if store.corrupt:
+        _add("store", False, f"fail-closed: {store.corrupt}")
+        return checks
+    _add("store", True, f"{len(store.list())} task(s) persisted")
+    now = _time.time()
+    stale = [t.task_id for t in store.list()
+             if t.state in (TaskState.RUNNING, TaskState.VERIFYING)
+             and now - t.updated_at > 3600]
+    _add("stale", not stale,
+         "none" if not stale else f"{len(stale)} running >1h: "
+         f"{', '.join(stale[:3])} (recover them)")
+    violations = [t.task_id for t in store.list()
+                  for s in t.steps
+                  if s.attempts > t.retry_policy.max_attempts]
+    _add("retries", not violations,
+         "bounded" if not violations else
+         f"over budget: {', '.join(violations[:3])}")
+    overdue = [t.task_id for t in store.list()
+               if t.deadline and now >= t.deadline and t.state not in (
+                   TaskState.COMPLETED, TaskState.FAILED,
+                   TaskState.CANCELLED, TaskState.EXPIRED)]
+    _add("deadlines", not overdue,
+         "none overdue" if not overdue else
+         f"overdue: {', '.join(overdue[:3])}")
+    return checks
+
+
+def _task_action(jarvis: Any, args: Any) -> int:
+    """Durable tasks: crash-safe goals with checkpoints + recovery."""
+    import time as _time
+    from .durable import DurableRunner, TaskStore, mesh_executor
+    from .durable.task import TaskState
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "list")
+    text = " ".join(getattr(args, "text", []) or []).strip()
+    home = str(jarvis.config.paths.home)
+
+    def _out(payload: Any, lines: list[str]) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print("\n".join(lines) or "(no durable tasks)")
+        jarvis.close()
+        return 0
+
+    runner = DurableRunner(
+        TaskStore(home), executor=mesh_executor(jarvis),
+        policy=getattr(jarvis, "policy", None),
+        events=getattr(jarvis, "events", None))
+    store = runner.store
+    if store.corrupt:
+        jarvis.close()
+        print(f"durable store fail-closed: {store.corrupt}")
+        return 1
+
+    if action == "create":
+        title = text[:300]
+        if not title:
+            jarvis.close()
+            print("usage: jarvis task create <goal> "
+                  "[--steps 'a; b'] [--priority N] [--deadline-s S]")
+            return 2
+        raw_steps = [s.strip() for s in
+                     str(getattr(args, "steps", "")).split(";")]
+        steps = [{"title": s[:500]} for s in raw_steps if s]
+        if not steps:
+            steps = [{"title": title[:500]}]
+        deadline = _time.time() + float(
+            getattr(args, "deadline_s", 0.0) or 0.0) \
+            if float(getattr(args, "deadline_s", 0.0) or 0.0) > 0 \
+            else 0.0
+        task = runner.create(title=title, source="cli",
+                             priority=int(getattr(args, "priority",
+                                                  5)),
+                             deadline=deadline,
+                             steps=steps)
+        runner.mark_ready(task.task_id, plan_version="task-cli-v1")
+        payload = {"task_id": task.task_id, "state": "ready",
+                   "steps": len(task.steps)}
+        return _out(payload, [f"TASK {task.task_id} ready: {title}",
+                              f"{len(task.steps)} step(s). "
+                              f"`jarvis task run {task.task_id}` "
+                              "advances one step."])
+    if action in ("list", "status"):
+        tasks = store.list()
+        payload = {"tasks": [{"task_id": t.task_id, "title": t.title,
+                              "state": t.state.value,
+                              "steps": f"{sum(1 for s in t.steps if s.state.value == 'succeeded')}/{len(t.steps)}",
+                              "updated_at": t.updated_at}
+                             for t in tasks]}
+        lines = [f"{t['task_id']:22} {t['state']:13} "
+                 f"{t['steps']:>7}  {t['title'][:60]}"
+                 for t in payload["tasks"]]
+        return _out(payload, ["TASKS"] + lines)
+    if action == "doctor":
+        checks = _task_doctor_checks(home)
+        return _out({"checks": checks},
+                    ["TASK DOCTOR"] + [
+                        f"{c['name']:22} {c['status']:4} {c['detail']}"
+                        for c in checks])
+    task_id = text.split()[0] if text else ""
+    task = store.get(task_id)
+    if task is None:
+        jarvis.close()
+        print(f"unknown task: {task_id or '(none given)'}")
+        return 1
+    if action == "inspect":
+        payload = task.to_dict()
+        lines = [f"TASK {task.task_id} [{task.state.value}]",
+                 f"title: {task.title}",
+                 f"plan: {task.plan_ref} ({task.plan_version})",
+                 f"current: {task.current_step or '-'}"]
+        for step in task.steps:
+            lines.append(
+                f"  {step.step_id} [{step.state.value}] "
+                f"att={step.attempts} verify={step.verification} "
+                f"{step.title[:70]}")
+        lines.append(f"checkpoints: {len(task.checkpoints)}")
+        for entry in (task.provenance.get("recovery_log") or [])[-5:]:
+            lines.append(f"  recovery: {entry.get('action')} — "
+                         f"{entry.get('reason', '')}"[:120])
+        return _out(payload, lines)
+    if action == "run":
+        try:
+            if task.state == TaskState.PLANNING:
+                runner.mark_ready(task_id, plan_version="task-cli-v1")
+            runner.advance(task_id)
+        except Exception as exc:
+            jarvis.close()
+            print(f"advance failed: {type(exc).__name__}: {exc}"[:300])
+            return 1
+        fresh = store.get(task_id)
+        payload = {"task_id": task_id, "state": fresh.state.value}
+        return _out(payload, [f"TASK {task_id} → {fresh.state.value}"])
+    if action == "pause":
+        runner.pause(task_id)
+        return _out({"task_id": task_id, "state": "paused"},
+                    [f"TASK {task_id} paused"])
+    if action == "resume":
+        runner.resume(task_id)
+        return _out({"task_id": task_id, "state": "ready"},
+                    [f"TASK {task_id} resumed → ready"])
+    if action == "cancel":
+        runner.cancel(task_id,
+                      reason=str(getattr(args, "reason", "")))
+        return _out({"task_id": task_id, "state": "cancelled"},
+                    [f"TASK {task_id} cancelled"])
+    if action == "recover":
+        decision = runner.recover(
+            task_id, policy_ok=_task_policy_ok(jarvis))
+        return _out(decision, [f"TASK {task_id} recover → "
+                               f"{decision.get('action')}: "
+                               f"{decision.get('reason', '')}"[:160]])
+    if action == "history":
+        trail = task.provenance.get("recovery_log", [])
+        payload = {"task_id": task_id, "recovery": trail,
+                   "checkpoints": [c.to_dict()
+                                   for c in task.checkpoints]}
+        lines = [f"HISTORY {task_id}"] + [
+            f"  {e.get('action')}: {e.get('reason', '')}"[:120]
+            for e in trail] or ["  (no recovery events yet)"]
+        lines.append(f"checkpoints: {len(task.checkpoints)}")
+        return _out(payload, lines)
+    jarvis.close()
+    return 2
+
+
+def _task_policy_ok(jarvis: Any) -> bool:
+    try:
+        check = getattr(getattr(jarvis, "policy", None),
+                        "emergency_stop_engaged", None)
+        if callable(check):
+            return not bool(check())
+    except Exception:
+        pass
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     raw = list(sys.argv[1:] if argv is None else argv)
@@ -2731,6 +3351,14 @@ def main(argv: list[str] | None = None) -> int:
                       f"error: {out.get('error', 'unknown')}") + spoken)
         finally:
             jarvis.close()
+        return 0
+
+    if args.command == "board":
+        url = f"http://{args.host}:{args.port}/board"
+        print(f"status board: {url}")
+        print("served by `jarvis serve` (same host/port/token). "
+              "read-only, localhost by default.")
+        jarvis.close()
         return 0
 
     if args.command == "serve":
@@ -2901,6 +3529,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(payload, indent=2, default=str))
         jarvis.close()
         return 0
+
+    if args.command == "task":
+        return _task_action(jarvis, args)
 
     if args.command == "dots":
         from .dots.manager import DotManager
@@ -4319,6 +4950,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "autonomy":
         return _autonomy_action(jarvis, args)
+
+    if args.command == "service":
+        return _service_action(jarvis, args)
 
     parser.print_help()
     jarvis.close()

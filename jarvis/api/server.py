@@ -37,6 +37,13 @@ class JarvisAPI:
     # -- routing -----------------------------------------------------------
     def handle(self, method: str, path: str, body: bytes,
                headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        # The board page itself is a static shell with NO data in it —
+        # all data comes from /api/board, which stays token-gated
+        # below. Gating the shell too would hide the token prompt
+        # itself (chicken-and-egg: the login box locked behind login).
+        if method == "GET" and path.split("?", 1)[0] == "/board":
+            from .board import BOARD_HTML
+            return 200, {"__html__": BOARD_HTML}
         if self.token and headers.get("authorization", "") != f"Bearer {self.token}":
             return 401, {"error": "unauthorized"}
         try:
@@ -56,6 +63,9 @@ class JarvisAPI:
             if method == "GET" and path == "/events":
                 return 200, {"types": self.jarvis.events.types(),
                              "count": self.jarvis.events.count()}
+            if method == "GET" and path.split("?", 1)[0] == "/api/board":
+                from .board import build_board
+                return 200, build_board(self.jarvis)
             # NOTE: query strings are stripped for API routes only;
             # legacy routes above keep exact-match behavior.
             api_path = path.split("?", 1)[0].rstrip("/") or "/"
@@ -207,6 +217,11 @@ class JarvisAPI:
                     return
                 code, payload = api.handle("GET", self.path, b"",
                                            {k.lower(): v for k, v in self.headers.items()})
+                if isinstance(payload, dict) and "__html__" in payload:
+                    raw = payload["__html__"].encode()
+                    self._headers(code, "text/html; charset=utf-8")
+                    self.wfile.write(raw)
+                    return
                 body = json.dumps(payload, default=str).encode()
                 self._headers(code)
                 self.wfile.write(body)
