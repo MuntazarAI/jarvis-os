@@ -22,7 +22,9 @@ def build_parser() -> argparse.ArgumentParser:
     talk = sub.add_parser("talk", help="send one input through the loop")
     talk.add_argument("text", nargs="+", help="what to say to JARVIS")
 
-    sub.add_parser("repl", help="interactive prompt (Ctrl-D to quit)")
+    repl_parser = sub.add_parser("repl", help="interactive prompt (Ctrl-D to quit)")
+    repl_parser.add_argument("--speak", action="store_true",
+                             help="speak every reply aloud via the JARVIS voice stack")
 
     serve = sub.add_parser("serve", help="start the HTTP + WebSocket API")
     serve.add_argument("--host", default="127.0.0.1")
@@ -2336,6 +2338,16 @@ def main(argv: list[str] | None = None) -> int:
         return _conductor_oneshot(raw, home=home)
     args = parser.parse_args(argv)
     if not args.command:
+        # Bare `jarvis` drops into the chat: there is no wrong way to
+        # start talking to him. --help still prints help (argparse).
+        raw_home = list(sys.argv[1:] if argv is None else argv)
+        args = parser.parse_args(["repl"])
+        if "--home" in raw_home:
+            try:
+                args.home = raw_home[raw_home.index("--home") + 1]
+            except (ValueError, IndexError):
+                pass
+    if not args.command:
         parser.print_help()
         return 2
 
@@ -2384,8 +2396,20 @@ def main(argv: list[str] | None = None) -> int:
                     session_context=" | ".join(recent))
                 session.add(line, out.get("response", ""),
                             out.get("target", ""))
-                print("jarvis>", out.get("response") or
-                      f"error: {out.get('error', 'unknown')}")
+                spoken = ""
+                if getattr(args, "speak", False) and out.get("response"):
+                    try:
+                        from .voice.speak import VoiceSpeaker
+                        cfg = jarvis.config.voice.__dict__
+                        said = VoiceSpeaker(config=cfg).say(
+                            out["response"][:2000],
+                            workdir=str(jarvis.config.paths.home))
+                        spoken = " [spoken]" if said.get(
+                            "spoken_aloud") else " [voice unavailable]"
+                    except Exception:
+                        spoken = " [voice unavailable]"
+                print("jarvis>", (out.get("response") or
+                      f"error: {out.get('error', 'unknown')}") + spoken)
         finally:
             jarvis.close()
         return 0

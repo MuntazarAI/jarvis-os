@@ -60,6 +60,12 @@ ConversationManager sessions (`/reset`, `/summary`, `/quit`
 preserved). Exit codes: 0 with a response (including clarifications),
 1 on hard errors, 2 on usage errors.
 
+One way in: bare `jarvis`, `repl [--speak]`, and `jarvis "..."` all
+run the same ConductorService turns. `talk` stays a direct cycle call
+(routing short greetings through the conductor degraded them, so that
+was tried and reverted). `listen` stays the hardware voice loop;
+`say` stays direct TTS.
+
 ## Failure / degraded behavior
 
 Unknown → clarify. Hostile → refuse + policy record. Unavailable

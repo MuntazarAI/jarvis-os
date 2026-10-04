@@ -288,3 +288,26 @@ def test_cli_repl_routed(tmp_path):
     proc = _cli(home, "repl", stdin_text="help\n/quit\n")
     assert proc.returncode == 0
     assert "Ask me anything" in proc.stdout
+
+
+def test_cli_bare_invocation_opens_repl():
+    import subprocess
+    import sys as _sys
+    proc = subprocess.run(
+        [_sys.executable, "-m", "jarvis.cli"],
+        capture_output=True, text=True, timeout=120,
+        input="/quit\n", cwd=str(
+            __import__("pathlib").Path(
+                __file__).resolve().parent.parent))
+    assert proc.returncode == 0
+    assert "you>" in proc.stdout
+
+
+def test_cli_repl_speak_flag_plumbing(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    # No spoken turn: verifies the flag parses and the loop runs
+    # without attempting synthesis (model load stays out of unit tests).
+    proc = _cli(home, "repl", "--speak", stdin_text="/quit\n")
+    assert proc.returncode == 0
+    assert "you>" in proc.stdout
