@@ -61,7 +61,10 @@ class _FakeJarvis:
     ("is this tool call safe?", "SECURITY_ANALYSIS"),
     ("help", "HELP"),
     ("status", "STATUS"),
-    ("hi", "AMBIGUOUS"),
+    ("hi", "CHAT"),
+    ("hii", "CHAT"),
+    ("hello there", "CHAT"),
+    ("good morning", "CHAT"),
     ("", "EMPTY"),
 ])
 def test_router_taxonomy(text, intent):

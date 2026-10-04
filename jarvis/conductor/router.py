@@ -238,6 +238,15 @@ def route(text: str, *, session_context: str = "",
                              risk_level="high",
                              requires_clarification=True)
 
+    # Greetings need no routing object: say hello back via the cycle.
+    # Single greeting word, or greeting + max one extra word ("hi jarvis").
+    if len(words) <= 2 and re.match(
+            r"(hi+|hello+|hey+|yo|good\s?(morning|evening|"
+            r"afternoon)|howdy|greetings)\b", lowered.strip()):
+        return RouteDecision(intent="CHAT", target="cycle",
+                             confidence=0.95, reason="greeting",
+                             risk_level="low")
+
     if len(words) < 3:
         return RouteDecision(intent="AMBIGUOUS", target="clarify",
                              confidence=0.85,
