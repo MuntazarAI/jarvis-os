@@ -257,7 +257,12 @@ class Jarvis:
         started = now()
         self.cycle += 1
         corr = f"cycle-{self.cycle}"
-        self.bus.publish(Event(type="cycle.started", payload={"input": text[:200]},
+        # Durable telemetry must never carry credential shapes. The
+        # working text stays intact for reasoning; only persisted
+        # copies are scrubbed (high-precision spans only).
+        from ..perception.contract import redact_secret_spans
+        stored_input, _ = redact_secret_spans(text[:200])
+        self.bus.publish(Event(type="cycle.started", payload={"input": stored_input},
                                correlation_id=corr))
 
         # 1. perception
@@ -359,11 +364,16 @@ class Jarvis:
         # A caller session (e.g. a voice session spanning turns) links
         # conversation rows; otherwise the cycle correlation does.
         conv_session = session_id or corr
-        self.palace.store_conversation("user", text, session_id=conv_session, room="Home")
-        self.palace.store_conversation("jarvis", response, session_id=conv_session, room="Home")
+        from ..perception.contract import redact_secret_spans as _redact
+        stored_user, _ = _redact(text)
+        stored_response, _ = _redact(response)
+        self.palace.store_conversation("user", stored_user, session_id=conv_session, room="Home")
+        self.palace.store_conversation("jarvis", stored_response, session_id=conv_session, room="Home")
         outcome = "; ".join(actions[:2]) if actions else response[:120]
+        stored_outcome, _ = _redact(outcome)
+        stored_summary, _ = _redact(text[:120])
         self.palace.store_episode(
-            f"{understanding.intent}: {text[:120]} → {outcome[:160]}",
+            f"{understanding.intent}: {stored_summary} → {stored_outcome[:160]}",
             room="Experiences", importance=0.4,
             related_entities=extract_entities(text)[:6],
             metadata={"correlation": corr, "confidence": understanding.intent_confidence,

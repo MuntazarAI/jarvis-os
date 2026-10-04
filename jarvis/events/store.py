@@ -65,12 +65,21 @@ class Event:
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Event":
+        raw_payload = row["payload"]
+        try:
+            payload = json.loads(raw_payload)
+        except (ValueError, TypeError):
+            # A corrupt row must not break the whole stream: keep it
+            # visible with its raw content flagged.
+            payload = {"_corrupt": str(raw_payload)[:500]}
+        if not isinstance(payload, dict):
+            payload = {"_corrupt": str(raw_payload)[:500]}
         return cls(
             seq=row["seq"],
             event_id=row["event_id"],
             type=row["type"],
             schema_version=row["schema_version"],
-            payload=json.loads(row["payload"]),
+            payload=payload,
             correlation_id=row["correlation_id"] or "",
             causation_id=row["causation_id"] or "",
             dedup_key=row["dedup_key"] or "",
