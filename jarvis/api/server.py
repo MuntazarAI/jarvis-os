@@ -44,6 +44,9 @@ class JarvisAPI:
         if method == "GET" and path.split("?", 1)[0] == "/board":
             from .board import BOARD_HTML
             return 200, {"__html__": BOARD_HTML}
+        if method == "GET" and path.split("?", 1)[0] == "/remote":
+            from .remote import REMOTE_HTML
+            return 200, {"__html__": REMOTE_HTML}
         if self.token and headers.get("authorization", "") != f"Bearer {self.token}":
             return 401, {"error": "unauthorized"}
         try:
@@ -203,9 +206,12 @@ class JarvisAPI:
         class Handler(BaseHTTPRequestHandler):
             server_version = "jarvis-os/0.1"
 
-            def _headers(self, code: int, ctype: str = "application/json") -> None:
+            def _headers(self, code: int, ctype: str = "application/json",
+                           extra: dict[str, str] | None = None) -> None:
                 self.send_response(code)
                 self.send_header("Content-Type", ctype)
+                for key, value in (extra or {}).items():
+                    self.send_header(key, value)
                 self.end_headers()
 
             def log_message(self, *args: Any) -> None:  # keep quiet
@@ -217,13 +223,17 @@ class JarvisAPI:
                     return
                 code, payload = api.handle("GET", self.path, b"",
                                            {k.lower(): v for k, v in self.headers.items()})
+                nocache = {"Cache-Control": "no-store"}
                 if isinstance(payload, dict) and "__html__" in payload:
                     raw = payload["__html__"].encode()
-                    self._headers(code, "text/html; charset=utf-8")
+                    self._headers(code, "text/html; charset=utf-8",
+                                  nocache)
                     self.wfile.write(raw)
                     return
                 body = json.dumps(payload, default=str).encode()
-                self._headers(code)
+                bare = self.path.split("?", 1)[0]
+                self._headers(code, "application/json",
+                              nocache if bare in ("/api/board",) else None)
                 self.wfile.write(body)
 
             def do_POST(self) -> None:  # noqa: N802

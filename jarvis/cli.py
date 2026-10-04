@@ -38,7 +38,29 @@ def build_parser() -> argparse.ArgumentParser:
     brd.add_argument("--open", action="store_true",
                      help="open the board in the default browser")
 
+    rmt = sub.add_parser("remote", help="phone/local remote URL "
+                                        "(served by `jarvis serve`)")
+    rmt.add_argument("--host", default="127.0.0.1")
+    rmt.add_argument("--port", type=int, default=8765)
+    rmt.add_argument("--open", action="store_true",
+                     help="open the remote in the default browser")
+
     sub.add_parser("status", help="print system status JSON")
+    status_parser = sub.add_parser("status-summary",
+                                   help="one-line-per-system human status")
+
+    prf = sub.add_parser("proof", help="show receipts for a claim: "
+                                       "memory, tasks, policy audit")
+    prf.add_argument("claim", nargs="+", help="what to prove")
+    prf.add_argument("--json", action="store_true",
+                     help="machine-readable output")
+
+    fb = sub.add_parser("feedback", help="record feedback as a memory "
+                                         "episode for review")
+    fb.add_argument("text", nargs="+", help="the feedback")
+
+    su = sub.add_parser("setup", help="guided first-run checklist: "
+                                     "home, dependencies, voice, next steps")
 
     gev = sub.add_parser("gods-eye", help="manage the local God's Eye View application")
     gev.add_argument("action", nargs="?", default="status",
@@ -341,6 +363,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     say = sub.add_parser("say", help="speak text aloud via TTS")
     say.add_argument("text", nargs="+")
+    say.add_argument("--style", default="",
+                     choices=["", "normal", "warning", "error",
+                              "confirmation", "uncertain"],
+                     help="speaking style (default: saved profile)")
 
     listen = sub.add_parser("listen", help="voice turn: mic → STT → think → speak")
     listen.add_argument("--always", action="store_true",
@@ -372,7 +398,12 @@ def build_parser() -> argparse.ArgumentParser:
     voice = sub.add_parser("voice", help="JARVIS voice: status, setup, test, benchmark")
     voice.add_argument("action", nargs="?", default="status",
                        choices=["status", "setup", "test", "benchmark",
-                                "say", "diagnostics", "worker"])
+                                "say", "diagnostics", "worker", "profile"])
+    voice.add_argument("--style", default="",
+                       help="speaking style for profile/say "
+                            "(normal|warning|error|confirmation|uncertain)")
+    voice.add_argument("--emotion", default="",
+                       help="emotion for profile (free text, capped)")
     voice.add_argument("--op", default="status",
                        choices=["status", "start", "stop"],
                        help="worker lifecycle op (with: voice worker)")
@@ -1766,6 +1797,37 @@ def _voice_action(jarvis: Any, args: Any) -> int:
         return 0
 
     cfg = jarvis.config.voice
+    if action == "profile":
+        from .voice.voice_profile import (STYLE_GUIDANCE,
+                                          effective_style,
+                                          load_overrides,
+                                          save_overrides)
+        home = str(jarvis.config.paths.home)
+        updates = {}
+        style = str(getattr(args, "style", "") or "")
+        emotion = str(getattr(args, "emotion", "") or "")[:40]
+        if style:
+            if style not in STYLE_GUIDANCE:
+                print(f"unknown style (normal|warning|error|"
+                      f"confirmation|uncertain)")
+                jarvis.close()
+                return 2
+            updates["style"] = style
+        if emotion:
+            updates["emotion"] = emotion
+        try:
+            saved = save_overrides(home, updates) if updates else \
+                load_overrides(home)
+        except ValueError as exc:
+            print(f"profile refused: {exc}")
+            jarvis.close()
+            return 2
+        payload = {"saved": saved,
+                   "effective_style": effective_style(home)}
+        lines = ["VOICE PROFILE",
+                 f"saved: {saved or '(defaults)'}",
+                 f"effective style: {payload['effective_style']}"]
+        return _out(payload, "\n".join(lines))
     if action == "status":
         from .voice.output import output_for
         from .voice.setup import verify_reference
@@ -3341,6 +3403,160 @@ def _security_action(jarvis: Any, args: Any) -> int:
     return 2
 
 
+def _proof_action(jarvis: Any, args: Any) -> int:
+    """Show receipts for a claim: memory hits, matching tasks, policy
+    audit entries. Empty hands are reported honestly (`unverified`),
+    never filled with guesses. Exit 0 always — absence of receipts is
+    information, not failure."""
+    as_json = bool(getattr(args, "json", False))
+    claim = " ".join(getattr(args, "claim", []) or []).strip()
+    home = str(jarvis.config.paths.home)
+    receipts: dict[str, Any] = {"claim": claim[:300], "memory": [],
+                                "tasks": [], "policy": []}
+
+    def _out() -> int:
+        total = sum(len(receipts[key])
+                    for key in ("memory", "tasks", "policy"))
+        receipts["verdict"] = (
+            f"{total} receipt(s)" if total else
+            "no receipts — claim is unverified")
+        lines = [f"PROOF '{claim[:80]}': {receipts['verdict']}"]
+        for mem in receipts["memory"]:
+            lines.append(f"  memory {mem['id']} [{mem['room']} "
+                         f"score={mem['score']}] {mem['content']}"[:160])
+        for task in receipts["tasks"]:
+            lines.append(f"  task {task['task_id']} [{task['state']}] "
+                         f"{task['title']}"[:160])
+        for entry in receipts["policy"]:
+            lines.append(f"  policy {entry['action'][:60]} "
+                         f"allow={entry['allow']}"[:160])
+        if as_json:
+            print(json.dumps(receipts, indent=2, default=str))
+        else:
+            print("\n".join(lines))
+        jarvis.close()
+        return 0
+
+    if not claim:
+        print("usage: jarvis proof <claim>")
+        jarvis.close()
+        return 2
+    try:
+        # Proof is strict: weak semantic echoes (score < 0.4) are not
+        # receipts. A receipt must actually resemble the claim.
+        hits = jarvis.palace.search(claim, limit=3)
+        for mem, score in hits or []:
+            if score < 0.4:
+                continue
+            receipts["memory"].append({
+                "id": getattr(mem, "id", "?"),
+                "room": getattr(mem, "room", "?"),
+                "score": score,
+                "content": str(getattr(mem, "content", ""))[:200],
+                "provenance": str(getattr(mem, "provenance",
+                                          ""))[:120]})
+    except Exception:
+        pass
+    try:
+        from .durable import TaskStore
+        for task in TaskStore(home).list():
+            if claim.lower() in task.title.lower():
+                done = sum(1 for s in task.steps
+                           if s.state.value == "succeeded")
+                receipts["tasks"].append({
+                    "task_id": task.task_id, "title": task.title[:120],
+                    "state": task.state.value,
+                    "progress": f"{done}/{len(task.steps)}"})
+    except Exception:
+        pass
+    try:
+        words = {w.lower() for w in claim.split() if len(w) >= 4}
+        for entry in jarvis.policy.audit_trail(100) or []:
+            hay = (str(entry.get("action", "")) + " " +
+                   json.dumps(entry.get("args", ""),
+                              default=str)).lower()
+            if words & set(hay.split()):
+                receipts["policy"].append({
+                    "action": str(entry.get("action", ""))[:120],
+                    "allow": entry.get("allow"),
+                    "at": entry.get("at", 0.0)})
+        receipts["policy"] = receipts["policy"][-3:]
+    except Exception:
+        pass
+    return _out()
+
+
+def _feedback_action(jarvis: Any, args: Any) -> int:
+    """Record feedback as a reviewable memory episode. It becomes
+    training signal (surfaced in review), not decoration."""
+    text = " ".join(getattr(args, "text", []) or []).strip()[:2000]
+    if not text:
+        print("usage: jarvis feedback <what should improve>")
+        jarvis.close()
+        return 2
+    try:
+        mem = jarvis.palace.store_episode(text, room="Feedback",
+                                          importance=0.7)
+        print(f"noted ({mem.id}): will surface in review.")
+    except Exception as exc:
+        print(f"feedback failed: {type(exc).__name__}")
+        jarvis.close()
+        return 1
+    jarvis.close()
+    return 0
+
+
+def _setup_action(jarvis: Any, args: Any) -> int:
+    """Guided first-run checklist. Read-only; exit 1 when any required
+    check fails so scripts can gate on it."""
+    _ = args
+    home = str(jarvis.config.paths.home)
+    rows: list[tuple[str, bool, str]] = []
+
+    def _add(name: str, ok: bool, detail: str) -> None:
+        rows.append((name, ok, detail))
+
+    try:
+        from pathlib import Path as _Path
+        home_ok = _Path(home).exists()
+        _add("home", home_ok, home)
+    except Exception:
+        _add("home", False, home)
+    try:
+        from .core.service import check_dependencies
+        deps = check_dependencies(jarvis.config)
+        bad = [c.name for c in deps if c.required and not c.ok]
+        _add("dependencies", not bad,
+             "ok" if not bad else f"missing: {', '.join(bad)}")
+    except Exception as exc:
+        _add("dependencies", False, f"{type(exc).__name__}")
+    try:
+        from .voice.setup import verify_reference
+        ref = verify_reference(jarvis.config.voice.reference_audio)
+        _add("voice reference", bool(ref.get("ok")),
+             str(ref.get("detail", ref.get("path", "?")))[:120])
+    except Exception as exc:
+        _add("voice reference", False, f"{type(exc).__name__}")
+    try:
+        from .durable import TaskStore
+        store = TaskStore(home)
+        _add("task store", not store.corrupt,
+             "ready" if not store.corrupt else store.corrupt)
+    except Exception as exc:
+        _add("task store", False, f"{type(exc).__name__}")
+    failed = [name for name, ok, _ in rows if not ok]
+    print("SETUP")
+    for name, ok, detail in rows:
+        print(f"[{'ok ' if ok else 'FAIL'}] {name}: {detail}")
+    if failed:
+        print("fix the FAIL rows above, then re-run `jarvis setup`.")
+    else:
+        print("next: `jarvis serve` + `jarvis board --open`, or "
+              "`jarvis task create <goal>`.")
+    jarvis.close()
+    return 0 if not failed else 1
+
+
 def _task_policy_ok(jarvis: Any) -> bool:
     try:
         check = getattr(getattr(jarvis, "policy", None),
@@ -3392,6 +3608,15 @@ def main(argv: list[str] | None = None) -> int:
         manager = ConversationManager()
         service = ConductorService(jarvis)
         session_id = ""
+        try:
+            snap = jarvis.status()
+            nagents = len((snap.get("agents", {}) or {}).get(
+                "agents", [])) if isinstance(
+                snap.get("agents"), dict) else "?"
+            print(f"jarvis live · cycle {snap.get('cycle', '?')} · "
+                  f"{nagents} agents · {snap.get('events', '?')} events")
+        except Exception:
+            print("jarvis live.")
         print("commands: /reset (new topic) /summary (what I retain) /quit")
         try:
             while True:
@@ -3446,6 +3671,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"status board: {url}")
         print("served by `jarvis serve` (same host/port/token). "
               "read-only, localhost by default.")
+        if bool(getattr(args, "open", False)):
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception as exc:
+                print(f"could not open browser: {type(exc).__name__}")
+                jarvis.close()
+                return 1
+        jarvis.close()
+        return 0
+
+    if args.command == "remote":
+        url = f"http://{args.host}:{args.port}/remote"
+        print(f"remote: {url}")
+        print("same token as `serve`. LAN use only on networks you trust: "
+              "`serve --host <lan-ip>` (default stays localhost).")
         if bool(getattr(args, "open", False)):
             try:
                 import webbrowser
@@ -3512,6 +3753,27 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "status":
         print(json.dumps(jarvis.status(), indent=2, default=str))
+        jarvis.close()
+        return 0
+
+    if args.command == "status-summary":
+        snap = jarvis.status()
+        agents = snap.get("agents", {})
+        if isinstance(agents, dict) and isinstance(
+                agents.get("agents"), list):
+            agent_line = ", ".join(
+                f"{a.get('name', '?')}:{a.get('state', '?')}"
+                for a in agents["agents"][:8])
+        else:
+            agent_line = str(agents)[:120]
+        lines = ["STATUS",
+                 f"cycle: {snap.get('cycle', '?')}",
+                 f"agents: {agent_line or '—'}",
+                 f"memory: {snap.get('memory', '?')}",
+                 f"events: {snap.get('events', '?')}",
+                 f"policy conflicts: {snap.get('policy_conflicts', '?')}",
+                 f"tasks: {snap.get('tasks', '?')}"]
+        print("\n".join(str(line)[:200] for line in lines))
         jarvis.close()
         return 0
 
@@ -3625,6 +3887,15 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(payload, indent=2, default=str))
         jarvis.close()
         return 0
+
+    if args.command == "proof":
+        return _proof_action(jarvis, args)
+
+    if args.command == "feedback":
+        return _feedback_action(jarvis, args)
+
+    if args.command == "setup":
+        return _setup_action(jarvis, args)
 
     if args.command == "task":
         return _task_action(jarvis, args)
@@ -4974,8 +5245,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "say":
         from .voice.speak import speak_text
+        from .voice.voice_profile import effective_style
         cfg = jarvis.config.voice.__dict__
         result = speak_text(" ".join(args.text), config=cfg,
+                            style=effective_style(
+                                str(jarvis.config.paths.home),
+                                str(getattr(args, "style", "") or "")),
                             workdir=str(jarvis.config.paths.home))
         print(json.dumps(result, indent=2, default=str))
         jarvis.close()
