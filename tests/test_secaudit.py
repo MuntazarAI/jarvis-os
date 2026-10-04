@@ -114,3 +114,42 @@ def test_gated_tool_allowed_with_grant():
                               state, Budgets(), "sneaky scan")
     assert result.success is False  # coder lacks the skill: gate denies
     assert "capabilities" in "; ".join(result.errors)
+
+
+def test_scan_profiles_validated():
+    assert secaudit.net_inventory(
+        "192.168.1.1", profile="nukes")["ok"] is False
+    out = secaudit.dir_enum("https://example.com/", "/nonexistent",
+                            extensions="php,html", threads=99)
+    assert out["ok"] is False  # missing wordlist, not bad options
+
+
+def test_nmap_parser_fixture():
+    sample = ("Nmap scan report for router.local (192.168.1.1)\n"
+              "22/tcp   open  ssh     OpenSSH 9.2\n"
+              "80/tcp   closed http\n")
+    findings = secaudit._parse_nmap(sample)
+    assert findings[0]["host"] == "router.local"
+    assert findings[0]["ports"][0] == {
+        "port": 22, "proto": "tcp", "state": "open",
+        "service": "ssh", "version": "OpenSSH 9.2"}
+
+
+def test_gobuster_parser_fixture():
+    sample = "/admin (Status: 301)\n/login (Status: 200)\nnoise line\n"
+    findings = secaudit._parse_gobuster(sample)
+    assert findings == [{"path": "/admin", "status": 301},
+                        {"path": "/login", "status": 200}]
+
+
+def test_sqli_level_clamped():
+    import inspect as _inspect
+    params = _inspect.signature(secaudit.sqli_scan).parameters
+    assert "level" in params  # bounded 1-2 inside
+    assert "dump" not in params and "risk" not in params
+
+
+def test_cracked_parser_fixture():
+    sample = "5f4dcc3b5aa765d61d8327deb882cf99:password\nnoise\n"
+    findings = secaudit._parse_cracked(sample)
+    assert findings[0]["cracked"] == "password"

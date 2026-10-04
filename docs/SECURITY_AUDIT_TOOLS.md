@@ -8,12 +8,12 @@ and never will be.
 
 | tool | does | refuses |
 |---|---|---|
-| net_inventory | nmap ping-scan of one host or /24 | overbroad nets, non-routable targets |
+| net_inventory | nmap ping/fast-ports/service-version profiles + parsed host/port findings | overbroad nets, non-routable targets, bad profiles |
 | web_audit | nikto findings scan of one named URL | loopback, non-http |
-| dir_enum | gobuster with YOUR wordlist file | missing wordlist |
-| hash_audit | john/hashcat on YOUR hash + wordlist files | missing files |
-| sqli_scan | sqlmap level-1/risk-1 detection only | dump/exploit modes (don't exist here) |
-| capture_read | read-only analysis of a capture file | live sniffing (no interface flag exists) |
+| dir_enum | gobuster with YOUR wordlist + extensions/threads | missing wordlist |
+| hash_audit | john/hashcat with YOUR files + format/mode select | missing files |
+| sqli_scan | sqlmap detection-only, level 1-2, risk 1, parsed injectable findings | dump/exploit modes (don't exist here) |
+| capture_read | read-only capture analysis + display filter | live sniffing (no interface flag exists) |
 
 All run argv-list subprocesses (no shell), bounded time/output.
 Authorization: Security Guardian skill `security.audit` (least-privilege
