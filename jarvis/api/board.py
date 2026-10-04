@@ -259,12 +259,25 @@ document.getElementById("estop").style.display = es === true ?
 "block" : "none";
 let g = [];
 let s = b.service || {};
-g.push(card("service", [["running", s.running], ["pid", s.pid ?? "—"],
-["heartbeat", s.heartbeat_state ?? "?"]]));
-let sys = (b.system && b.system.agents) ? b.system.agents : b.system;
-g.push(card("agents / mesh", Object.entries(sys || {}).slice(0, 8)
-.map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v).slice(0,60)
-: v])));
+let svcRows = [["running", s.running], ["pid", s.pid ?? "—"],
+["heartbeat", s.heartbeat_state ?? "?"]];
+if (s.running !== true) svcRows.push(["hint",
+"jarvis service start"]);
+g.push(card("service", svcRows));
+let sys = b.system || {};
+let ag = sys.agents;
+let agentRows = [];
+if (ag && Array.isArray(ag.agents)) {
+agentRows = ag.agents.slice(0, 8).map(a => [(a.name || "?"),
+(a.state || "?") + " · done " + (a.tasks_done ?? 0)]);
+if (ag.delegations !== undefined) agentRows.push(["delegations",
+ag.delegations]);
+} else {
+agentRows = Object.entries(ag || sys).slice(0, 8).map(([k, v]) =>
+[k, typeof v === "object" ? JSON.stringify(v).slice(0, 60) : v]);
+}
+g.push(card("agents / mesh", agentRows.length ? agentRows :
+[["agents", "none"]]));
 let m = b.missions || {};
 g.push(card("missions", [["missions",
 (m.missions || []).length], ["objectives",
@@ -288,15 +301,28 @@ g.push(card("policy", [["conflicts", p.conflicts ?? "?"],
 document.getElementById("grid").innerHTML = g.join("");
 }
 function live() {
+let el = document.getElementById("tick");
+function note(t) { el.innerHTML = "<div>" + esc(t) + "</div>"; }
+function connect() {
 let proto = location.protocol === "https:" ? "wss" : "ws";
 let ws; try { ws = new WebSocket(proto + "://" + location.host +
-location.pathname.replace(/board.*$/, "")); } catch (e) { return; }
-ws.onmessage = ev => { let el = document.getElementById("tick");
-let d = document.createElement("div"); let m;
+location.pathname.replace(/board.*$/, "")); }
+catch (e) { note("live feed unavailable — retrying…");
+setTimeout(connect, 5000); return; }
+ws.onopen = () => note("live — waiting for events…");
+ws.onmessage = ev => { let m;
 try { m = JSON.parse(ev.data); } catch (e) { return; }
+if (el.children.length === 1 &&
+/live|waiting|retrying/.test(el.textContent)) el.innerHTML = "";
+let d = document.createElement("div");
 d.textContent = (m.type || "?") + " #" + (m.seq ?? "?");
 el.prepend(d); while (el.children.length > 30) el.lastChild.remove(); };
-ws.onerror = () => { try { ws.close(); } catch (e) {} };
+let retry = () => { note("live feed lost — retrying…");
+try { ws.close(); } catch (e) {}
+setTimeout(connect, 5000); };
+ws.onerror = retry; ws.onclose = retry;
+}
+connect();
 }
 refresh(); setInterval(refresh, 5000); live();
 </script>
