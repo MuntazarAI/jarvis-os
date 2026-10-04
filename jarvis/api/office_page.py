@@ -90,6 +90,20 @@ align-items:center; justify-content:center; }
 #gate div { background:var(--cream-50); padding:24px;
 box-shadow:inset 0 0 0 2px var(--cream-200), inset 0 0 0 3px var(--ink-700), inset 0 0 0 5px var(--ink-900); }
 #gate input { font-size:14px; padding:6px; margin-right:8px; }
+#appr-modal { position:fixed; inset:0; background:rgba(26,19,32,.6);
+display:none; align-items:center; justify-content:center; z-index:5; }
+#appr-modal .dlg { width:340px; background:var(--cream-50);
+box-shadow:inset 0 0 0 2px var(--cream-200), inset 0 0 0 3px var(--ink-700), inset 0 0 0 5px var(--ink-900),
+4px 4px 0 rgba(26,19,32,.25); padding:0 0 12px; }
+#appr-modal .stripe { height:12px; background:var(--st, #FFD93D); }
+#appr-modal .body { padding:10px 14px; font-size:14px; }
+#appr-modal .body small { color:var(--ink-500); }
+#appr-modal .actions { display:flex; gap:8px; padding:0 14px; }
+#appr-modal button { flex:1; padding:8px; cursor:pointer; font-size:14px;
+border:2px solid var(--ink-900); }
+#appr-yes { background:var(--ink-900); color:var(--cream-50); }
+#appr-no { background:var(--cream-100); color:var(--ink-900); }
+#appr-modal button:active { transform:translate(0,2px); }
 @media (prefers-reduced-motion: reduce) { * { animation:none !important; } }
 body.still canvas { image-rendering:pixelated; }
 </style>
@@ -117,12 +131,19 @@ body.still canvas { image-rendering:pixelated; }
 <div id="mailbox" class="kv">no pending messages</div></div>
 </div>
 </div>
+<div id="appr-modal"><div class="dlg">
+<div class="stripe" id="appr-stripe"></div>
+<div class="body"><b>Approval needed</b><br><span id="appr-what"></span><br>
+<small id="appr-meta"></small></div>
+<div class="actions"><button id="appr-yes">approve</button>
+<button id="appr-no">deny</button></div></div></div>
 <div id="gate"><div><h2>API token</h2>
 <input id="tok" type="password" placeholder="token">
 <button onclick="saveTok()">Unlock</button></div></div>
 <script>
 let token = sessionStorage.getItem("jarvis-token") || "";
 let team = [], selected = null, prevDone = {}, sparks = [];
+let seenApprovals = {}, currentAppr = null;
 let reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 function saveTok() { token = document.getElementById("tok").value;
 sessionStorage.setItem("jarvis-token", token);
@@ -166,7 +187,7 @@ team.forEach(a => {
 if (a.n === "supervisor" && running.length) { a.s = "working";
 a.b = String(running[0].title || running[0].task_id).slice(0, 40); }
 if (a.n === "computer" && approvals.length) { a.s = "blocked";
-a.b = "needs you — approval waiting"; }
+a.b = "needs you!"; }
 if (a.s === "thinking" && !a.b) a.b = "…"; });
 if (!team.some(a => a.n === selected)) selected = team[0].n;
 let mb = document.getElementById("mailbox");
@@ -174,6 +195,7 @@ mb.textContent = approvals.length ? approvals.length + " waiting — computer ne
 "no pending messages";
 document.getElementById("floor-title").textContent =
 "Floor · " + team.length + " at desks";
+checkApprovals(approvals);
 document.getElementById("strip").innerHTML = team.map(a =>
 '<div class="acard' + (a.n === selected ? " sel" : "") +
 '" style="--ac:' + a.shirt + '" data-n="' + a.n + '"><b>' + a.n + "</b><br>" +
@@ -191,6 +213,34 @@ document.getElementById("selinfo").innerHTML = "<b>" + a.n + "</b><br>" +
 '<span class="badge" style="--bc:' + STC[a.s] + '">' + a.s + "</span>" +
 '<div class="kv">done ' + a.done + " · failed " + a.failed + "</div>" +
 (a.b ? '<div class="kv">“' + a.b + '”</div>' : ""); }
+async function checkApprovals(approvals) {
+if (!approvals.length) {
+document.getElementById("appr-modal").style.display = "none";
+currentAppr = null; return; }
+let det = null;
+try { let r = await api("api/approvals/pending"); det = r; }
+catch (e) { return; }
+let list = (det && det.approvals) || [];
+let fresh = list.filter(x => !seenApprovals[x.token]);
+if (!fresh.length) return;
+let one = fresh[0];
+seenApprovals[one.token] = true; currentAppr = one.token;
+document.getElementById("appr-what").textContent =
+(one.actor ? one.actor + " wants: " : "") + one.action;
+document.getElementById("appr-meta").textContent =
+"risk " + one.risk + " · single-use · decide here, no terminal needed";
+document.getElementById("appr-modal").style.display = "flex"; }
+async function decideAppr(ok) {
+if (!currentAppr) return;
+let tok = currentAppr; currentAppr = null;
+document.getElementById("appr-modal").style.display = "none";
+try { await api("api/approvals/decision", {method: "POST",
+headers: Object.assign({"Content-Type": "application/json"}, authz()),
+body: JSON.stringify({token: tok, approve: ok})}); }
+catch (e) { /* gate shown */ }
+refresh(); }
+document.getElementById("appr-yes").onclick = () => decideAppr(true);
+document.getElementById("appr-no").onclick = () => decideAppr(false);
 async function sendCmd() {
 let box = document.getElementById("box"); let text = box.value.trim();
 if (!text) return; box.value = "";

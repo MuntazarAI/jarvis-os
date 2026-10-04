@@ -144,6 +144,8 @@ class JarvisAPI:
                 return 200, info
             if method == "POST" and api_path == "/api/approvals/decision":
                 return self._approval_decision(body, headers)
+            if method == "GET" and api_path == "/api/approvals/pending":
+                return self._approvals_pending()
             if method == "POST" and api_path.startswith("/api/tasks/"):
                 return self._task_action(api_path, body)
             if method == "POST" and path == "/mentalist":
@@ -210,8 +212,45 @@ class JarvisAPI:
 
     # -- operator endpoints (authenticated; validated; audited) --------
 
-    def _approval_decision(self, body: bytes,
-                           headers: dict[str, str]
+    def _approvals_pending(self) -> tuple[int, dict[str, Any]]:
+        """List pending approvals WITH full single-use tokens.
+
+        Trust model (documented, deliberate): this endpoint is
+        bearer-gated, and bearer holders are the human operator, never
+        the model — the model only ever sees tool outputs, never this
+        page or its fetches. So showing tokens here is equivalent to
+        `approvals list` in the operator's own terminal: it lets the
+        human click approve in their browser instead. Snapshots,
+        logs, and the EventStore still carry hints only.
+        """
+        try:
+            policy = getattr(self.jarvis, "policy", None)
+            try:
+                loader = getattr(policy, "_load_approvals", None)
+                if callable(loader):
+                    loader()  # file-seeded approvals survive restarts
+            except Exception:
+                pass
+            records = getattr(policy, "approvals", None)
+            out = []
+            if isinstance(records, dict):
+                for token, record in records.items():
+                    if not isinstance(record, dict):
+                        continue
+                    if record.get("status") != "pending":
+                        continue
+                    out.append({
+                        "token": str(token)[:128],
+                        "action": str(record.get("action", ""))[:200],
+                        "actor": str(record.get("actor", ""))[:40],
+                        "risk": record.get("risk", "?"),
+                        "requested_at": record.get(
+                            "requested_at", 0.0)})
+            return 200, {"approvals": out[:10]}
+        except Exception as exc:
+            return 500, {"error": f"{type(exc).__name__}"}
+
+    def _approval_decision(self, body: bytes,                           headers: dict[str, str]
                            ) -> tuple[int, dict[str, Any]]:
         """Decide one pending approval via its single-use token.
 

@@ -53,3 +53,35 @@ def test_office_post_has_no_route():
     api = _api()
     code, _ = api.handle("POST", "/office", b"{}", {})
     assert code == 404
+
+
+def test_pending_endpoint_gated_and_shaped():
+    from jarvis.api.server import JarvisAPI as API
+    from types import SimpleNamespace as NS
+
+    policy = NS(approvals={
+        "appr-full-secret-1": {"actor": "computer", "action": "restart",
+                               "risk": 0.8, "requested_at": 1.0,
+                               "status": "pending"},
+        "appr-old": {"actor": "x", "action": "y",
+                     "status": "approved"}})
+    fake = NS(bus=_Bus(), cycle=0,
+              config=NS(paths=NS(home=""), voice=NS(), world=None),
+              policy=policy,
+              events=NS(record=lambda *a, **k: None))
+    api = API(fake, token="tok")
+    code, _ = api.handle("GET", "/api/approvals/pending", b"", {})
+    assert code == 401  # bearer gate holds: no leak, ever
+    code, out = api.handle("GET", "/api/approvals/pending", b"", {
+        "authorization": "Bearer tok"})
+    assert code == 200
+    assert len(out["approvals"]) == 1  # only pending
+    assert out["approvals"][0]["token"] == "appr-full-secret-1"
+    assert out["approvals"][0]["action"] == "restart"
+
+
+def test_office_has_approval_modal():
+    from jarvis.api.office_page import OFFICE_HTML
+    assert "appr-modal" in OFFICE_HTML
+    assert "api/approvals/pending" in OFFICE_HTML
+    assert "api/approvals/decision" in OFFICE_HTML
