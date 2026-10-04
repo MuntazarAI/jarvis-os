@@ -39,6 +39,27 @@ JARVIS-OS is an experimental, modular personal AI platform designed to turn a lo
 
 It combines **cognition, memory, world modeling, evidence-based reasoning, agents, tools, automation, voice, vision, and security controls** behind one architecture.
 
+## What it looks like
+
+Real screenshots, real data — every number below came from a live system:
+
+**Command centre** (`jarvis serve`, then `/command`) — agents, mission
+checklist, task queue, approvals, system status, working command bar:
+
+![JARVIS command centre with live agents, mission checklist and task queue](docs/assets/command.png)
+
+**Status board** (`/board`) and **experience view** (`/experience`) —
+presence, mesh, durable tasks, policy, voice, events:
+
+![JARVIS status board](docs/assets/board.png)
+
+![JARVIS experience view](docs/assets/experience.png)
+
+```bash
+jarvis serve --token <pick-one>   # terminal 1: API + live events
+jarvis board --open               # terminal 2: dashboard in your browser
+```
+
 > **Status:** Active development · public repository · architecture evolving rapidly
 
 ## What is JARVIS-OS?

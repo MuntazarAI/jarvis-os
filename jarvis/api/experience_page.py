@@ -132,7 +132,8 @@ el.textContent = out.response || out.error || "(no reply)"; }
 catch (e) { el.textContent = "unreachable or locked."; } }
 document.getElementById("box").addEventListener("keydown", e => {
 if (e.key === "Enter") sendCmd(); });
-async function taskOp(id, verb) {
+async function taskOp(btn) {
+let id = btn.dataset.id, verb = btn.dataset.verb;
 let opts = {method: "POST",
 headers: Object.assign({"Content-Type": "application/json"}, authz()),
 body: "{}"};
@@ -155,17 +156,18 @@ document.getElementById("reply").textContent = out.ok ?
 ("not decided: " + (out.reason || out.error || "?")); refresh(); }
 catch (e) { /* gate shown by api() */ } }
 function drawSky(topics) {
-let c = document.getElementById("sky"); if (!c) return;
-let x = c.getContext("2d"); let W = c.width = c.offsetWidth; let H = 120;
-c.fillStyle = "#0d1320"; c.fillRect(0, 0, W, H);
-c.fillStyle = "#263049";
+let el = document.getElementById("sky"); if (!el) return;
+let g = el.getContext("2d");
+let W = el.width = el.offsetWidth || 260; let H = 120;
+g.fillStyle = "#0d1320"; g.fillRect(0, 0, W, H);
+g.fillStyle = "#263049";
 for (let gx = 0; gx < W; gx += 14) for (let gy = 0; gy < H; gy += 14)
-c.fillRect(gx, gy, 1, 1);
-c.fillStyle = "#5eb1ef"; let n = Math.min((topics || []).length, 24);
+g.fillRect(gx, gy, 1, 1);
+g.fillStyle = "#5eb1ef"; let n = Math.min((topics || []).length, 24);
 for (let i = 0; i < n; i++) { let px = (i * 97) % W; let py = (i * 53) % H;
-c.beginPath(); c.arc(px, py, 3, 0, 7); c.fill(); }
-c.fillStyle = "#8b96ad"; c.font = "11px sans-serif";
-c.fillText("schematic — topics as blips, not geography", 8, H - 8); }
+g.beginPath(); g.arc(px, py, 3, 0, 7); g.fill(); }
+g.fillStyle = "#8b96ad"; g.font = "11px sans-serif";
+g.fillText("schematic — topics as blips, not geography", 8, H - 8); }
 async function refresh() {
 let b; try { b = await api("api/experience"); } catch (e) { return; }
 document.getElementById("meta").textContent = "updated " +
@@ -186,8 +188,9 @@ let dt = d.slice(0, 5).map(t =>
 '<div class="row"><span class="k">' + esc(t.task_id) + " " +
 esc(t.state) + " " + esc(t.progress || "") + "</span><span class='btns'>" +
 ["advance", "pause", "resume", "recover", "cancel"].map(v =>
-'<button onclick="taskOp(\'' + esc(t.task_id) + "','" + v + "')\">" + v +
-"</button>").join("") + "</span></div>").join("");
+'<button data-id="' + esc(t.task_id) + '" data-verb="' + v +
+'" onclick="taskOp(this)">' + v + "</button>").join("") +
+"</span></div>").join("");
 g.push(card("durable tasks", (dt || "none") +
 '<div class="note">Actions reuse the existing runner + policy checks.</div>'));
 let a = b.approvals || [];
@@ -215,8 +218,7 @@ let w = b.world || {};
 g.push(card("world intel", '<canvas id="sky"></canvas>' +
 rows([["topics", (w.topics || []).length],
 ["sources", w.sources_configured ?? "?"]]) +
-'<div class="note">' + esc(w.live || "") +
-" External items are untrusted input.</div>"));
+'<div class="note">' + esc(w.live || "") + "</div>"));
 let v = b.voice || {};
 g.push(card("voice", rows([["provider", v.provider ?? "?"],
 ["profile", v.profile ?? "—"], ["style", v.style ?? "—"]]) +
