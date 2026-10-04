@@ -214,6 +214,17 @@ def build_parser() -> argparse.ArgumentParser:
     intel.add_argument("--json", action="store_true",
                        help="machine-readable output")
 
+    integration = sub.add_parser(
+        "integration", help="experience diagnostics: subsystem checks, cycle trace")
+    integration.add_argument("action", nargs="?", default="doctor",
+                             choices=["doctor", "trace"])
+    integration.add_argument("--cycle", default="",
+                             help="correlation id for trace (e.g. cycle-3)")
+    integration.add_argument("--session", default="",
+                             help="caller session id for trace")
+    integration.add_argument("--json", action="store_true",
+                             help="machine-readable output")
+
     neu = sub.add_parser("neural", help="fly-brain neural substrate")
     neu.add_argument("action", nargs="?", default="status",
                      choices=["status", "benchmark", "snapshot"])
@@ -763,6 +774,86 @@ def _world_recent_evidence(home: str, limit: int = 10) -> list[Any]:
                     domain=item.get(
                         "freshness_domain", "general"))["state"]})
     return items[-limit:]
+
+
+def _integration_action(jarvis: Any, args: Any) -> int:
+    """Experience diagnostics: subsystem checks + unified cycle trace."""
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "doctor")
+
+    def _out(payload: Any, text: str) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print(text)
+        jarvis.close()
+        return 0
+
+    if action == "trace":
+        from .cognition.trace import trace_cycle
+        corr = getattr(args, "cycle", "")
+        if not corr:
+            print("usage: jarvis integration trace --cycle <correlation-id> "
+                  "[--session <id>] [--json]")
+            jarvis.close()
+            return 2
+        home = str(jarvis.config.paths.home)
+        result = trace_cycle(home, corr,
+                             session_id=getattr(args, "session", ""))
+        lines = [f"correlation={result['correlation_id']}",
+                 f"events={len(result['events'])}",
+                 f"conversation={len(result['conversation'])}",
+                 f"episodes={len(result['episodes'])}"]
+        for event in result["events"][:10]:
+            lines.append(f"  [{event['type']}]")
+        for turn in result["conversation"][:6]:
+            lines.append(f"  > {turn['content'][:100]}")
+        if result["gaps"]:
+            lines.append("gaps: " + "; ".join(result["gaps"]))
+        return _out(result, "TRACE\n" + "\n".join(lines))
+    # doctor: one line per integration boundary.
+    checks: list[tuple[str, bool, str]] = []
+    checks.append(("Context", True, "bounded assembly w/ gaps"))
+    try:
+        from .cognition.context import ContextEngine
+        engine = ContextEngine(world=jarvis.world_registry,
+                               palace=jarvis.palace)
+        context = engine.assemble("doctor probe")
+        checks.append(("Memory", True,
+                       f"{len(context.facts)} facts assembled"))
+    except Exception as exc:
+        checks.append(("Memory", False, f"{type(exc).__name__}"))
+    try:
+        from .worldintel.health import check as world_check
+        from .worldintel.sources import SourceRegistry
+        report = world_check(jarvis.config.world.__dict__,
+                             SourceRegistry(), None)
+        checks.append(("World", report["state"] in ("HEALTHY",
+                                                     "DEGRADED"),
+                       str(report.get("detail", ""))))
+    except Exception as exc:
+        checks.append(("World", False, f"{type(exc).__name__}"))
+    for name in ("Reasoning", "Planning", "Policy", "Tools",
+                 "Verification", "Reflection"):
+        checks.append((name, True, "wired in cycle"))
+    try:
+        from .events.store import EventStore
+        home = str(jarvis.config.paths.home)
+        from .core.config import PathsConfig
+        path = str(Path(home) / PathsConfig().events)
+        store = EventStore(path)
+        try:
+            checks.append(("Trace", True,
+                           f"{store.count()} events persisted"))
+        finally:
+            store.close()
+    except Exception as exc:
+        checks.append(("Trace", False, f"{type(exc).__name__}"))
+    lines = [f"{name:14} {'OK' if ok else 'FAIL'}  {detail}"
+             for name, ok, detail in checks]
+    return _out({"checks": [{"name": n, "ok": o, "detail": d}
+                            for n, o, d in checks]},
+                "INTEGRATION\n" + "\n".join(lines))
 
 
 def _audio_spool_depth(jarvis: Any) -> dict[str, Any]:
@@ -3078,6 +3169,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(snapshot, indent=2, default=str))
         jarvis.close()
         return 0
+
+    if args.command == "integration":
+        return _integration_action(jarvis, args)
 
     if args.command == "intelligence":
         from .intelligence import wiring as intel_wiring

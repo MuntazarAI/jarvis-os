@@ -42,6 +42,8 @@ class CycleResult:
     blocked: bool = False
     duration: float = 0.0
     report: CognitiveReport | None = None
+    verification: str = "UNKNOWN"
+    learned: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -51,6 +53,7 @@ class CycleResult:
             "hypotheses": self.hypotheses, "unknowns": self.unknowns,
             "risk_max": self.risk_max, "blocked": self.blocked,
             "duration": round(self.duration, 3),
+            "verification": self.verification, "learned": self.learned,
         }
 
 
@@ -66,7 +69,8 @@ class Jarvis:
         self.config.ensure_dirs()
         # persistence
         db_path = str(self.config.paths.resolve("home") / self.config.paths.db)
-        self.events = EventStore()
+        self.events = EventStore(
+            str(self.config.paths.resolve("home") / self.config.paths.events))
         self.bus = EventBus(self.events)
         self.palace = MemoryPalace(db_path)
         self.graph = KnowledgeGraph(db_path)
@@ -139,6 +143,10 @@ class Jarvis:
         self.orchestrator = self._build_orchestrator()
         self.tasks = TaskEngine()
         self.triggers = TriggerEngine()
+        from ..cognition.beliefs import BeliefStore
+        from ..cognition.learning import LearningEngine
+        self.beliefs = BeliefStore(self.config.paths.home)
+        self.learner = LearningEngine(self.beliefs)
         from ..dots.manager import DotDependencies, DotManager
         from ..world.registry import JsonFileWorldStore as DotStore
         self.dot_store = DotStore(
@@ -244,7 +252,8 @@ class Jarvis:
                 "issues": issues}
 
     # -- the loop ---------------------------------------------------------------
-    def cycle_once(self, text: str, source: str = "user") -> CycleResult:
+    def cycle_once(self, text: str, source: str = "user",
+                   session_id: str = "") -> CycleResult:
         started = now()
         self.cycle += 1
         corr = f"cycle-{self.cycle}"
@@ -324,6 +333,9 @@ class Jarvis:
                                "error_explained") for a in actions)
         # NON_ACTING dialogue acts never reach tool execution, even when
         # the coarse classifier said "command" (e.g. a question misread).
+        # Tool history length is captured so verification can tell which
+        # tool results belong to this cycle.
+        tool_calls_before = len(self.tools.history)
         if (understanding.intent == "command" and not blocked
                 and not assessment.requires_approval and not handled
                 and route.act not in NON_ACTING
@@ -336,17 +348,26 @@ class Jarvis:
         if issues and "empty output" in issues:
             response = "I processed that but have nothing to report yet."
 
+        # 8b. evaluate outcome + selective learning (bounded,
+        # privacy-respecting: private experiences are never learned).
+        verification, learned = self._evaluate_cycle(
+            corr, actions, tools_used, tool_calls_before)
+
         # 9. learn: store episode + conversation.
         # Episodes record what HAPPENED (input + outcome), not the full
         # response blob — verbose echoes pollute future recall summaries.
-        self.palace.store_conversation("user", text, session_id=corr, room="Home")
-        self.palace.store_conversation("jarvis", response, session_id=corr, room="Home")
+        # A caller session (e.g. a voice session spanning turns) links
+        # conversation rows; otherwise the cycle correlation does.
+        conv_session = session_id or corr
+        self.palace.store_conversation("user", text, session_id=conv_session, room="Home")
+        self.palace.store_conversation("jarvis", response, session_id=conv_session, room="Home")
         outcome = "; ".join(actions[:2]) if actions else response[:120]
         self.palace.store_episode(
             f"{understanding.intent}: {text[:120]} → {outcome[:160]}",
             room="Experiences", importance=0.4,
             related_entities=extract_entities(text)[:6],
-            metadata={"correlation": corr, "confidence": understanding.intent_confidence},
+            metadata={"correlation": corr, "confidence": understanding.intent_confidence,
+                        "session_id": session_id},
         )
 
         # 10. world + event store + consolidation schedule
@@ -385,6 +406,7 @@ class Jarvis:
             hypotheses=cycle_hypotheses,
             unknowns=unknowns, risk_max=risk_max, blocked=blocked,
             duration=now() - started,
+            verification=verification, learned=learned,
             report=self.mentalist.report(unknowns=unknowns,
                                          next_test="none pending"),
         )
@@ -504,6 +526,9 @@ class Jarvis:
             if mem_context:
                 return (f"Based on what I remember: {mem_context[0][:300]}",
                         ["memory_recall"], [])
+            world_answer = self._world_answer(text)
+            if world_answer is not None:
+                return world_answer
             answer = self._ask_model(text)
             if answer is not None:
                 return (answer, ["llm_answer"], ["llm"])
@@ -519,6 +544,43 @@ class Jarvis:
         if answer is not None:
             return (answer, ["conversed"], [])
         return ("Noted.", ["conversed"], [])
+
+    def _evaluate_cycle(self, corr: str, actions: list[str],
+                          tools_used: list[str],
+                          tool_calls_before: int,
+                          ) -> tuple[str, bool]:
+        """Verify this cycle's tool results, evaluate the outcome, and
+        selectively learn. Returns (verification, learned). Bounded and
+        fail-open for learning (a learning failure never breaks the
+        cycle); verification states are honest, never inflated."""
+        from ..cognition.experience import Experience, OutcomeEvaluator
+        cycle_results = self.tools.history[tool_calls_before:]
+        if not cycle_results and not actions:
+            verification = "UNKNOWN"
+        elif cycle_results and all(r.ok for r in cycle_results):
+            verification = "VERIFIED"
+        elif cycle_results and any(not r.ok for r in cycle_results):
+            verification = "FAILED"
+        else:
+            verification = "UNKNOWN"
+        learned = False
+        try:
+            experience = Experience(
+                cycle_id=corr, confidence=0.5,
+                provenance={"cycle": corr,
+                            "actions": list(actions)[:5]})
+            evaluation = OutcomeEvaluator.evaluate(
+                prediction_made=bool(self.hypotheses),
+                action_ok=(None if verification == "UNKNOWN"
+                           else verification == "VERIFIED"),
+                verification=verification,
+                evidence_count=len(cycle_results))
+            report = self.learner.learn_from_outcome(
+                experience, evaluation, by="cycle")
+            learned = bool(getattr(report, "learned", False))
+        except Exception:
+            pass
+        return verification, learned
 
     def _act(self, text: str, actions: list[str],
              tools_used: list[str]) -> tuple[list[str], list[str]]:
@@ -646,6 +708,77 @@ class Jarvis:
                 parts.append(report["explanation"][:400])
             return (" ".join(parts), ["error_explained"], ["llm"])
         return None
+
+    def _world_answer(self, text: str,
+                      ) -> tuple[str, list[str], list[str]] | None:
+        """World-routed question answering. Returns None when static
+        knowledge suffices (caller falls through to the model) or when
+        retrieval honestly fails. Bounded, static by default."""
+        try:
+            world_cfg = self.config.world
+        except AttributeError:
+            return None
+        if not getattr(world_cfg, "enabled", True):
+            return None
+        try:
+            from ..worldintel.routing import route as route_currentness
+        except ImportError:
+            return None
+        routed = route_currentness(
+            text, active_project=getattr(world_cfg, "default_project",
+                                         ""),
+            topics=list(getattr(world_cfg, "topics", [])))
+        kind = routed.get("route", "STATIC")
+        if kind in ("STATIC", "CLARIFY"):
+            return None
+        if kind == "LOCAL":
+            try:
+                from ..worldintel.local import computer_snapshot
+                items = computer_snapshot()
+                summary = "; ".join(
+                    i.text for i in items)[:400] or "no local state"
+                return (f"Local state: {summary}",
+                        ["world_local"], [])
+            except Exception:
+                return None
+        try:
+            from ..worldintel.cache import EvidenceCache
+            from ..worldintel.research import Researcher
+            from ..worldintel.sources import SourceRegistry
+            from ..worldintel.worldsync import sync_answer
+        except ImportError:
+            return None
+        try:
+            home = str(self.config.paths.home)
+            researcher = Researcher(
+                SourceRegistry(),
+                EvidenceCache(home, max_entries=int(
+                    getattr(world_cfg, "cache_entries", 200))),
+                max_searches=2,
+                max_evidence=int(
+                    getattr(world_cfg, "max_evidence", 12)),
+                budget_s=30.0)
+            answer = researcher.research(
+                text,
+                active_project=getattr(world_cfg, "default_project",
+                                       ""),
+                topics=list(getattr(world_cfg, "topics", [])))
+            if not answer.provenance:
+                return None
+            try:
+                sync_answer(answer, registry=self.world_registry,
+                            graph=self.graph)
+                self.world_registry.save(self.world_store)
+            except Exception:
+                pass
+            parts = [answer.conclusion or answer.summary]
+            if answer.uncertainty:
+                parts.append("Uncertain: "
+                             + "; ".join(answer.uncertainty[:2]))
+            return (" ".join(p for p in parts if p)[:900],
+                    ["world_research"], [])
+        except Exception:
+            return None
 
     def _ask_model(self, text: str) -> str | None:
         """Ask the routed generative model. Returns None when unavailable."""
