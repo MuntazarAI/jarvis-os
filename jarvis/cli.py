@@ -314,6 +314,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="keep conversing until Ctrl-C")
     listen.add_argument("--no-speak", action="store_true",
                         help="print the reply instead of speaking it")
+    listen.add_argument("--voice", action="store_true",
+                        help="speak via the JARVIS voice stack "
+                             "(persistent TTS + fallback)")
+    listen.add_argument("--max-turns", type=int, default=0,
+                        help="stop after N turns (0 = until Ctrl-C)")
 
     audio = sub.add_parser("audio", help="audio perception: sources, VAD, STT, transcripts")
     audio.add_argument("action", nargs="?", default="status",
@@ -3786,7 +3791,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "listen":
         from .voice.runtime import VoiceLoop
-        loop = VoiceLoop(always_listen=args.always)
+        loop = VoiceLoop(always_listen=args.always,
+                         jarvis_voice=args.voice,
+                         voice_config=jarvis.config.voice.__dict__,
+                         max_turns=args.max_turns)
         ready, missing = loop.check_ready()
         if not ready:
             print("voice not ready, missing: " + ", ".join(missing))
