@@ -107,13 +107,14 @@ def test_secret_scrubbed_from_snapshot(tmp_path):
 
 
 def test_board_page_route_and_auth():
-    api = JarvisAPI(_fake(""), token="tok")
-    code, _ = api.handle("GET", "/board", b"", {})
-    assert code == 401
-    code, payload = api.handle("GET", "/board", b"", {
-        "authorization": "Bearer tok"})
+    api = JarvisAPI(_fake(""), token="SECRET-TOKEN-123")
+    # The page shell is public (it holds no data); the DATA endpoint
+    # stays gated. Otherwise the token prompt locks behind itself.
+    code, payload = api.handle("GET", "/board", b"", {})
     assert code == 200
     assert payload["__html__"].startswith("<!DOCTYPE html>")
+    # the actual secret value appears nowhere in the shell
+    assert "SECRET-TOKEN-123" not in payload["__html__"]
     assert "api/board" in payload["__html__"]  # relative fetch URL
     assert "sessionStorage" in payload["__html__"]  # token hygiene
 

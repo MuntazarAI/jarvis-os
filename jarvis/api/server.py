@@ -37,6 +37,13 @@ class JarvisAPI:
     # -- routing -----------------------------------------------------------
     def handle(self, method: str, path: str, body: bytes,
                headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        # The board page itself is a static shell with NO data in it —
+        # all data comes from /api/board, which stays token-gated
+        # below. Gating the shell too would hide the token prompt
+        # itself (chicken-and-egg: the login box locked behind login).
+        if method == "GET" and path.split("?", 1)[0] == "/board":
+            from .board import BOARD_HTML
+            return 200, {"__html__": BOARD_HTML}
         if self.token and headers.get("authorization", "") != f"Bearer {self.token}":
             return 401, {"error": "unauthorized"}
         try:
@@ -56,9 +63,6 @@ class JarvisAPI:
             if method == "GET" and path == "/events":
                 return 200, {"types": self.jarvis.events.types(),
                              "count": self.jarvis.events.count()}
-            if method == "GET" and path.split("?", 1)[0] == "/board":
-                from .board import BOARD_HTML
-                return 200, {"__html__": BOARD_HTML}
             if method == "GET" and path.split("?", 1)[0] == "/api/board":
                 from .board import build_board
                 return 200, build_board(self.jarvis)
