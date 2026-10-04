@@ -3386,7 +3386,7 @@ def _security_action(jarvis: Any, args: Any) -> int:
             print(json.dumps(_scrub_payload(payload), indent=2,
                              default=str))
         else:
-            print("\n".join(lines))
+            print("\n".join(str(_scrub_payload(line)) for line in lines))
         jarvis.close()
         return code
 
