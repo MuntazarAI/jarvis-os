@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .pipeline import TextToSpeech, VoiceConfig, VoicePipeline, WakeWordDetector
+from .session import VoiceSession
 
 
 # -- PCM helpers (stdlib only) --------------------------------------------------
@@ -367,6 +368,7 @@ class VoiceLoop:
     speaker: Speaker = field(default_factory=Speaker)
     workdir: str = "/tmp/jarvis-voice"
     always_listen: bool = False
+    session: Any = field(default_factory=lambda: VoiceSession())
 
     def status(self) -> dict[str, Any]:
         return {"mic": self.mic.available(), "stt": self.stt.backend,
@@ -407,18 +409,31 @@ class VoiceLoop:
                 "backend": heard.get("backend", "")}
 
     def converse_once(self, jarvis: Any, addressed: bool = True) -> dict[str, Any]:
-        """Full turn: listen → think → speak. Barge-in stops speech on wake."""
+        """Full turn: listen → think → speak. Barge-in stops speech on wake.
+
+        Turns share the loop's VoiceSession: each turn mints fresh
+        audio/transcript/cognition ids while the session id stays
+        constant, so a multi-turn conversation reconstructs from
+        metadata (no raw audio stored)."""
         heard = self.listen_once(addressed=addressed)
         if not heard.get("ok"):
             return heard
-        result = jarvis.cycle_once(heard["text"], source="voice")
+        turn = self.session.next_turn()
+        result = jarvis.cycle_once(heard["text"], source="voice",
+                                   session_id=self.session.session_id)
         spoken = self.speaker.say(result.response)
         return {"ok": True, "heard": heard["text"], "response": result.response,
-                "intent": result.intent, "spoken": spoken}
+                "intent": result.intent, "spoken": spoken,
+                "voice_session_id": self.session.session_id,
+                "turn": turn}
 
     def run(self, jarvis: Any, on_turn: Callable[[dict[str, Any]], None] | None = None,
             stop: threading.Event | None = None) -> dict[str, Any]:
-        """Continuous loop until stop is set. Ctrl-C safe via the event."""
+        """Continuous loop until stop is set. Ctrl-C safe via the event.
+
+        Each run gets a fresh voice session so separate conversations
+        never share turn linkage."""
+        self.session = VoiceSession()
         stop = stop or threading.Event()
         turns = 0
         while not stop.is_set():
