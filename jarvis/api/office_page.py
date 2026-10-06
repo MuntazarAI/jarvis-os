@@ -258,6 +258,12 @@ catch (e) { /* gate shown */ }
 refresh(); }
 document.getElementById("appr-yes").onclick = () => decideAppr(true);
 document.getElementById("appr-no").onclick = () => decideAppr(false);
+function escHtml(s) { return String(s == null ? "" : s).replace(/[&<>"]/g,
+c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function linkify(text) { // escape first, then link — never raw HTML
+return escHtml(text).replace(/https?:\\/\\/[^\\s<>"']+/g,
+url => '<a href="' + url + '" target="_blank" rel="noopener" ' +
+'style="color:#4ECDC4">' + url + "</a>"); }
 async function sendCmd() {
 let box = document.getElementById("box"); let text = box.value.trim();
 if (!text) return; box.value = "";
@@ -266,7 +272,7 @@ let el = document.getElementById("reply"); el.textContent = "one sec…";
 try { let out = await api("cycle", {method: "POST",
 headers: Object.assign({"Content-Type": "application/json"}, authz()),
 body: JSON.stringify({input: text})});
-el.textContent = out.response || out.error || "(no reply)";
+el.innerHTML = linkify(out.response || out.error || "(no reply)");
 speak(out.response); }
 catch (e) { el.textContent = "unreachable or locked."; }
 bar.classList.remove("busy"); }
