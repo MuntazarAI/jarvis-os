@@ -77,6 +77,9 @@ class JarvisAPI:
         if method == "GET" and path.split("?", 1)[0] == "/remote":
             from .remote import REMOTE_HTML
             return 200, {"__html__": REMOTE_HTML}
+        if method == "GET" and path.split("?", 1)[0] == "/command":
+            from .command_page import COMMAND_HTML
+            return 200, {"__html__": COMMAND_HTML}
         if self.token and not _bearer_ok(
                 headers.get("authorization", ""), self.token):
             return 401, {"error": "unauthorized"}
@@ -141,6 +144,10 @@ class JarvisAPI:
                 return 200, info
             if method == "POST" and api_path == "/api/approvals/decision":
                 return self._approval_decision(body, headers)
+            if method == "POST" and api_path == "/api/tasks":
+                return self._task_create(body)
+            if method == "GET" and api_path.startswith("/api/tasks/"):
+                return self._task_read(api_path)
             if method == "POST" and api_path.startswith("/api/tasks/"):
                 return self._task_action(api_path, body)
             if method == "POST" and path == "/mentalist":
@@ -206,6 +213,90 @@ class JarvisAPI:
             return 500, {"error": f"{type(exc).__name__}: {exc}"}
 
     # -- operator endpoints (authenticated; validated; audited) --------
+
+    def _task_create(self, body: bytes
+                     ) -> tuple[int, dict[str, Any]]:
+        """File one durable task (title + optional steps). Same runner
+        the CLI uses; e-stop refuses. Returns 201 with the new id."""
+        try:
+            payload = json.loads(body.decode() or "{}")
+            if not isinstance(payload, dict):
+                payload = {}
+        except Exception:
+            return 400, {"error": "invalid JSON"}
+        title = str(payload.get("title", "")).strip()[:300]
+        if not title:
+            return 400, {"error": "title required"}
+        raw_steps = payload.get("steps", [{"title": title}])
+        if not isinstance(raw_steps, list) or not raw_steps:
+            return 400, {"error": "steps must be a non-empty list"}
+        steps = []
+        for item in raw_steps[:32]:
+            name = str(item.get("title", "") if isinstance(
+                item, dict) else item).strip()[:500]
+            if name:
+                steps.append({"title": name})
+        if not steps:
+            return 400, {"error": "steps must hold titles"}
+        try:
+            from ..durable import DurableRunner, TaskStore
+            policy = getattr(self.jarvis, "policy", None)
+            try:
+                check = getattr(policy, "emergency_stop_engaged",
+                                None)
+                if callable(check) and bool(check()):
+                    return 409, {"error": "emergency stop engaged"}
+            except Exception:
+                pass
+            home = str(self.jarvis.config.paths.home)
+            runner = DurableRunner(
+                TaskStore(home),
+                policy=policy,
+                events=getattr(self.jarvis, "events", None))
+            task = runner.create(title=title, source="api",
+                                 steps=steps)
+            runner.mark_ready(task.task_id, plan_version="api-v1")
+            try:
+                self.jarvis.events.record(
+                    "durable.task.created",
+                    {"task_id": task.task_id, "title": title[:120],
+                     "source": "api"})
+            except Exception:
+                pass
+            return 201, {"task_id": task.task_id, "state": "ready",
+                         "steps": len(task.steps)}
+        except Exception as exc:
+            return 500, {"error": f"{type(exc).__name__}"}
+
+    def _task_read(self, api_path: str) -> tuple[int, dict[str, Any]]:
+        """Read one task with its steps (for checklists). Scrubbed."""
+        import re
+        from .board import _scrub
+        parts = api_path.split("/")
+        if len(parts) != 4 or not parts[3]:
+            return 404, {"error": "no route"}
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}",
+                            parts[3]):
+            return 400, {"error": "malformed task id"}
+        try:
+            from ..durable import TaskStore
+            home = str(self.jarvis.config.paths.home)
+            task = TaskStore(home).get(parts[3])
+            if task is None:
+                return 404, {"error": "unknown task"}
+            data = task.to_dict()
+            steps = [{"step_id": s.get("step_id", ""),
+                      "title": str(s.get("title", ""))[:200],
+                      "state": s.get("state", ""),
+                      "attempts": s.get("attempts", 0),
+                      "verification": s.get("verification", "")}
+                     for s in data.get("steps", [])]
+            return 200, _scrub({"task_id": task.task_id,
+                                "title": task.title,
+                                "state": task.state.value,
+                                "steps": steps})
+        except Exception as exc:
+            return 500, {"error": f"{type(exc).__name__}"}
 
     def _approval_decision(self, body: bytes,
                            headers: dict[str, str]
