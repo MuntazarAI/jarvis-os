@@ -80,6 +80,9 @@ class JarvisAPI:
         if method == "GET" and path.split("?", 1)[0] == "/command":
             from .command_page import COMMAND_HTML
             return 200, {"__html__": COMMAND_HTML}
+        if method == "GET" and path.split("?", 1)[0] == "/office":
+            from .office_page import OFFICE_HTML
+            return 200, {"__html__": OFFICE_HTML}
         if self.token and not _bearer_ok(
                 headers.get("authorization", ""), self.token):
             return 401, {"error": "unauthorized"}
@@ -148,6 +151,10 @@ class JarvisAPI:
                 return self._task_create(body)
             if method == "GET" and api_path.startswith("/api/tasks/"):
                 return self._task_read(api_path)
+            if method == "POST" and api_path == "/api/speak":
+                return self._speak(body)
+            if method == "GET" and api_path == "/api/approvals/pending":
+                return self._approvals_pending()
             if method == "POST" and api_path.startswith("/api/tasks/"):
                 return self._task_action(api_path, body)
             if method == "POST" and path == "/mentalist":
@@ -213,6 +220,99 @@ class JarvisAPI:
             return 500, {"error": f"{type(exc).__name__}: {exc}"}
 
     # -- operator endpoints (authenticated; validated; audited) --------
+
+    def _approvals_pending(self) -> tuple[int, dict[str, Any]]:
+        """List pending approvals WITH full single-use tokens.
+
+        Trust model (documented, deliberate): this endpoint is
+        bearer-gated, and bearer holders are the human operator, never
+        the model — the model only ever sees tool outputs, never this
+        page or its fetches. So showing tokens here is equivalent to
+        `approvals list` in the operator's own terminal: it lets the
+        human click approve in their browser instead. Snapshots,
+        logs, and the EventStore still carry hints only.
+        """
+        try:
+            policy = getattr(self.jarvis, "policy", None)
+            try:
+                loader = getattr(policy, "_load_approvals", None)
+                if callable(loader):
+                    loader()  # file-seeded approvals survive restarts
+            except Exception:
+                pass
+            records = getattr(policy, "approvals", None)
+            out = []
+            if isinstance(records, dict):
+                for token, record in records.items():
+                    if not isinstance(record, dict):
+                        continue
+                    if record.get("status") != "pending":
+                        continue
+                    out.append({
+                        "token": str(token)[:128],
+                        "action": str(record.get("action", ""))[:200],
+                        "actor": str(record.get("actor", ""))[:40],
+                        "risk": record.get("risk", "?"),
+                        "requested_at": record.get(
+                            "requested_at", 0.0)})
+            return 200, {"approvals": out[:10]}
+        except Exception as exc:
+            return 500, {"error": f"{type(exc).__name__}"}
+
+    def _speak(self, body: bytes) -> tuple[int, dict[str, Any]]:
+        """Synthesize reply text to WAV bytes (Chatterbox voice).
+        Bounded input (500 chars); falls back to the local provider;
+        503 with an honest reason when no TTS is available. Audio is
+        generated on demand and never stored."""
+        try:
+            payload = json.loads(body.decode() or "{}")
+            if not isinstance(payload, dict):
+                payload = {}
+        except Exception:
+            return 400, {"error": "invalid JSON"}
+        text = str(payload.get("text", "")).strip()
+        if not text:
+            return 400, {"error": "text required"}
+        if len(text) > 500:
+            return 400, {"error": "text too long (max 500 chars)"}
+        try:
+            from ..voice.tts import TTSRequest, provider_for
+            from ..voice.voice_profile import render_style
+            import tempfile
+            cfg = getattr(getattr(self.jarvis, "config", None),
+                          "voice", None)
+            cfgd = cfg.__dict__ if cfg is not None and hasattr(
+                cfg, "__dict__") else {}
+            primary = provider_for(
+                str(cfgd.get("tts_provider", "") or "chatterbox"),
+                cfgd)
+            if not primary.available():
+                primary = provider_for("local-fallback", cfgd)
+            if not primary.available():
+                return 503, {"error": "no TTS provider available"}
+            request = TTSRequest(
+                text=render_style(text, "normal"),
+                language=str(cfgd.get("language", "en") or "en"),
+                reference_audio=str(cfgd.get("reference_audio",
+                                            "") or ""),
+                sample_rate=int(cfgd.get("sample_rate",
+                                         24000) or 24000))
+            with tempfile.TemporaryDirectory(
+                    prefix="jarvis-say-") as tmp:
+                import os
+                dest = os.path.join(tmp, "reply.wav")
+                result = primary.synthesize(request, dest)
+                if not getattr(result, "ok", False):
+                    return 503, {"error": str(
+                        getattr(result, "error",
+                                "synthesis failed"))[:200]}
+                with open(dest, "rb") as handle:
+                    audio = handle.read()
+            if not audio:
+                return 503, {"error": "empty audio"}
+            return 200, {"__audio__": audio, "ctype": "audio/wav"}
+        except Exception as exc:
+            return 500, {"error": f"{type(exc).__name__}"}
 
     def _task_create(self, body: bytes
                      ) -> tuple[int, dict[str, Any]]:
@@ -503,6 +603,12 @@ class JarvisAPI:
                 body = self.rfile.read(length) if length else b""
                 code, payload = api.handle("POST", self.path, body,
                                            {k.lower(): v for k, v in self.headers.items()})
+                if isinstance(payload, dict) and "__audio__" in payload:
+                    raw = payload["__audio__"]
+                    self._headers(code, str(payload.get("ctype",
+                                                        "audio/wav")))
+                    self.wfile.write(raw)
+                    return
                 raw = json.dumps(payload, default=str).encode()
                 self._headers(code)
                 self.wfile.write(raw)

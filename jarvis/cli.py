@@ -51,6 +51,12 @@ def build_parser() -> argparse.ArgumentParser:
     cmd.add_argument("--port", type=int, default=8765)
     cmd.add_argument("--open", action="store_true",
                      help="open the command centre in the default browser")
+    off = sub.add_parser("office", help="agent office floor URL "
+                                        "(live desks, served by `jarvis serve`)")
+    off.add_argument("--host", default="127.0.0.1")
+    off.add_argument("--port", type=int, default=8765)
+    off.add_argument("--open", action="store_true",
+                     help="open the office in the default browser")
 
     sub.add_parser("status", help="print system status JSON")
     status_parser = sub.add_parser("status-summary",
@@ -3739,6 +3745,10 @@ def main(argv: list[str] | None = None) -> int:
         url = f"http://{args.host}:{args.port}/command"
         print(f"command centre: {url}")
         print("live data from `/api/experience` — same token as `serve`.")
+    elif args.command == "office":
+        url = f"http://{args.host}:{args.port}/office"
+        print(f"office: {url}")
+        print("live desks from `/api/experience` — same token as `serve`.")
         if bool(getattr(args, "open", False)):
             try:
                 import webbrowser
