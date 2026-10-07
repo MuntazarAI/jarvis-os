@@ -105,6 +105,32 @@ def _ok(tool: str, output: Any) -> ToolResult:
     return ToolResult(tool=tool, ok=True, output=output)
 
 
+def open_url(url: str) -> ToolResult:
+    """Hand a URL to the human to open (client-side).
+
+    The server is headless: it cannot open browser windows itself,
+    and must never pretend terminal browser-launchers worked. This
+    tool validates the URL and returns it for the UI to render as a
+    clickable link. Prefer it over terminal_run for "open <site>".
+    Public http(s) only in v1 (same SSRF guard as web_fetch).
+    """
+    from ..security.guards import is_safe_url, scan_injection
+    text = str(url or "").strip()[:2000]
+    if not text:
+        return _fail("open_url", "empty url")
+    if not text.lower().startswith(("http://", "https://")):
+        text = "https://" + text
+    if not scan_injection(text)["clean"]:
+        return _fail("open_url", "target contains injection markers")
+    safe, reason = is_safe_url(text)
+    if not safe:
+        return _fail("open_url", f"blocked: {reason}")
+    return _ok("open_url", {"url": text,
+                            "action": "client-open",
+                            "note": "render as a clickable link; "
+                                    "the user opens it"})
+
+
 def _fail(tool: str, error: str) -> ToolResult:
     return ToolResult(tool=tool, ok=False, error=error)
 
@@ -364,6 +390,10 @@ def default_registry() -> ToolRegistry:
                                 RiskLevel.SAFE, 5.0, []), system_probe))
     reg.register(Tool(ToolSpec("web_fetch", "Fetch a URL over http(s)",
                                 RiskLevel.LOW, 15.0, ["net.fetch"]), web_fetch))
+    reg.register(Tool(ToolSpec("open_url", "Hand a website to the human to open "
+                                "(use INSTEAD of terminal browser commands — "
+                                "the server has no screen)",
+                                RiskLevel.SAFE, 5.0, []), open_url))
     from . import secaudit as _secaudit
     for _name, _desc in (
             ("net_inventory", "Ping-scan an explicitly named host or /24 (no port scan)"),

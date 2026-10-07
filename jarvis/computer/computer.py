@@ -103,7 +103,14 @@ class ClipboardController:
                     return {"ok": True, "text": proc.stdout, "backend": "xclip"}
             except (OSError, subprocess.SubprocessError):
                 pass
-        return {"ok": False, "error": "clipboard unreadable (no gtk/xclip path)"}
+        if shutil.which("wl-paste"):
+            try:
+                proc = _run(["wl-paste"])
+                if proc.returncode == 0:
+                    return {"ok": True, "text": proc.stdout, "backend": "wl-paste"}
+            except (OSError, subprocess.SubprocessError):
+                pass
+        return {"ok": False, "error": "clipboard unreadable (no gtk/xclip/wl-paste path)"}
 
     def write(self, text: str) -> dict[str, Any]:
         if self._gtk_write(text):
@@ -115,6 +122,15 @@ class ClipboardController:
                                       timeout=10)
                 if proc.returncode == 0:
                     return {"ok": True, "backend": "xclip", "chars": len(text)}
+            except (OSError, subprocess.SubprocessError):
+                pass
+        if shutil.which("wl-copy"):
+            try:
+                proc = subprocess.run(["wl-copy"],
+                                      input=text, capture_output=True, text=True,
+                                      timeout=10)
+                if proc.returncode == 0:
+                    return {"ok": True, "backend": "wl-copy", "chars": len(text)}
             except (OSError, subprocess.SubprocessError):
                 pass
         return {"ok": False, "error": "clipboard unwritable"}

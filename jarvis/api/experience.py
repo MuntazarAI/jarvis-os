@@ -70,8 +70,14 @@ def _mesh(jarvis: Any) -> list[dict[str, Any]]:
 
 def _approvals(jarvis: Any) -> list[dict[str, Any]]:
     def _read() -> list[dict[str, Any]]:
-        records = getattr(getattr(jarvis, "policy", None),
-                          "approvals", None)
+        policy = getattr(jarvis, "policy", None)
+        try:
+            loader = getattr(policy, "_load_approvals", None)
+            if callable(loader):
+                loader()  # file-seeded approvals (e.g. after restart)
+        except Exception:
+            pass
+        records = getattr(policy, "approvals", None)
         if not isinstance(records, dict):
             return []
         out = []
