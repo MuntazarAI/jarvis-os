@@ -1,4 +1,4 @@
-"""Computer Agent 2.0 tests. Input is mocked; screenshot/clipboard run live."""
+"""Computer Agent 2.0 tests. Input is mocked; screenshot runs live, clipboard is faked."""
 
 import sys
 import tempfile
@@ -65,7 +65,10 @@ def test_blocked_input_and_failed_verification(tmp_path):
 
 
 def test_run_goal_stops_on_failure(tmp_path):
-    agent, policy = _agent(tmp_path)
+    clipboard = MagicMock()
+    clipboard.read.side_effect = lambda: {"ok": True, "text": "goal-step"}
+    computer = ComputerController(clipboard=clipboard)
+    agent, policy = _agent(tmp_path, computer=computer)
     goal = agent.run_goal("computer", [
         UIAction(tool="clipboard_read", args={}),
         UIAction(tool="nonexistent-tool", args={})])
