@@ -30,7 +30,7 @@ jobs:
       - name: Run benchmark
         run: python benchmarks/neural_benchmark.py --size 1000 --steps 1000 --repeats 3 --output benchmark-results/nightly-neural.json
       - name: Upload nightly benchmark
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: nightly-neural-benchmark
           path: benchmark-results/nightly-neural.json
