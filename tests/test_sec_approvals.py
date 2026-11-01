@@ -71,6 +71,23 @@ def test_redeem_single_use_with_bindings(tmp_path):
                          {}) is False
 
 
+def test_redeem_none_args_is_empty_binding_not_wildcard(tmp_path):
+    """Private report: args=None must not skip the argument binding."""
+    from jarvis.core.types import ActionPlan
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    policy = _policy(home)
+    token = policy.request_approval(
+        "security", ActionPlan(action="net_inventory x", args={"a": 1},
+                               required_permissions=["sec.audit"]),
+        type("D", (), {"risk": 0.9})())
+    policy.approve(token, by="cli")
+    assert policy.redeem(token, "security", "net_inventory x", None) is False
+    # Still spendable with the exact approved bindings.
+    assert policy.redeem(token, "security", "net_inventory x",
+                         {"a": 1}) is True
+
+
 def test_standing_grant_never_covers_sec(tmp_path):
     from jarvis.policy.standing import StandingGrantStore
     home = tmp_path / "home"

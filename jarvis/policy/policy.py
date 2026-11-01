@@ -515,8 +515,9 @@ class PolicyEngine:
                     return False
                 if entry.get("action") != action:
                     return False
-                if (args is not None and dict(args or {})
-                        != dict(entry.get("args") or {})):
+                # Bind arguments always: a None/absent args on redeem is
+                # the empty binding, never a wildcard.
+                if dict(args or {}) != dict(entry.get("args") or {}):
                     return False
                 entry["status"] = "consumed"
                 entry["consumed_at"] = now()

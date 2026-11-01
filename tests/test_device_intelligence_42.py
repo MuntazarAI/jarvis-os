@@ -448,6 +448,96 @@ def test_outbox_duplicate_result_ignored(tmp_path):
     assert box.complete(rec["command_id"], {"ok": True})[0] is False
 
 
+def test_outbox_retrying_is_redelivered_after_backoff(tmp_path, monkeypatch):
+    """Issue #90: a RETRYING record must be deliverable once due."""
+    svc, _adapter, device_id = _lab_service(tmp_path)
+    rec = svc.outbox.enqueue(device_id, "device.battery",
+                             "device.get_battery", {}, actor="op",
+                             max_retries=2)
+    cid = rec["command_id"]
+    calls = {"n": 0}
+
+    def flaky(*_args, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("lane dropped mid-send")
+        return {"ok": True, "result": "battery 88%",
+                "device_id": device_id, "capability": "device.battery"}
+
+    monkeypatch.setattr(svc, "_send", flaky)
+    svc.tick()
+    assert svc.command_status(cid)["state"] == "retrying"
+    svc.outbox.defer(cid, 0)  # backoff elapsed
+    svc.tick()
+    assert calls["n"] == 2
+    assert svc.command_status(cid)["state"] == "completed"
+
+
+def test_outbox_transition_is_compare_and_set(tmp_path):
+    """Issue #91: two drainers cannot both claim one command."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    first = CommandOutbox(home)
+    second = CommandOutbox(home)
+    cid = first.enqueue("dev-1", "c", "cmd", {}, actor="u")["command_id"]
+    first.transition(cid, "dispatching",
+                     expect=("queued", "approved", "retrying"))
+    with pytest.raises(OutboxError):
+        second.transition(cid, "dispatching",
+                          expect=("queued", "approved", "retrying"))
+
+
+def test_outbox_prune_survives_long_running_process(tmp_path):
+    """Issue #92: load() replaces memory; another process cannot resurrect
+    records this process pruned."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    writer = CommandOutbox(home)
+    ids = [writer.enqueue("dev-1", "c", "cmd", {},
+                          actor="u")["command_id"] for _ in range(3)]
+    server = CommandOutbox(home)  # long-running: holds all three
+    for cid in ids:
+        writer.complete(cid, {"ok": True})
+    assert writer.prune_terminal(keep=1) == 2
+    server.enqueue("dev-1", "c", "cmd2", {}, actor="u")
+    fresh = CommandOutbox(home)
+    assert len(fresh._commands) == 2  # 1 terminal + 1 queued
+    assert sum(1 for cid in ids if fresh.get(cid) is not None) <= 1
+
+
+def test_approval_consume_cannot_double_spend_with_stale_view(tmp_path):
+    """Private report: CLI and serve cannot both spend one token."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    writer = ApprovalStore(home)
+    token = writer.request("op", "dev-1", "device.battery",
+                           {"x": 1}, by="op")["token"]
+    assert writer.approve(token, by="op") is True
+    stale = ApprovalStore(home)
+    stale._maybe_reload = lambda: None  # interleaved reader with old state
+    first, _ = writer.consume(token, actor="op", device_id="dev-1",
+                              capability="device.battery", args={"x": 1})
+    assert first is True
+    again, reason = stale.consume(token, actor="op", device_id="dev-1",
+                                  capability="device.battery", args={"x": 1})
+    assert again is False and "consumed" in reason
+
+
+def test_approval_consume_fails_closed_when_store_unwritable(
+        tmp_path, monkeypatch):
+    """A token that could not be persisted is never reported consumed."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    store = ApprovalStore(home)
+    token = store.request("op", "dev-1", "device.battery",
+                          {"x": 1}, by="op")["token"]
+    assert store.approve(token, by="op") is True
+    monkeypatch.setattr(store, "save", lambda: False)
+    ok, reason = store.consume(token, actor="op", device_id="dev-1",
+                               capability="device.battery", args={"x": 1})
+    assert ok is False and "unwritable" in reason
+
+
 def test_tick_delivers_and_counts(tmp_path):
     svc, _, device_id = _lab_service(tmp_path)
     first = svc.request_command("op", device_id, "device.get_battery", {})

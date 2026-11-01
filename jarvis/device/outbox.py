@@ -1,7 +1,7 @@
 """Durable command outbox for device control (4.2).
 
 Every device command is a persisted record in
-``<home>/device-outbox.json`` (atomic write, merge-load) with an
+``<home>/device-outbox.json`` (atomic write, replace-load) with an
 explicit lifecycle:
 
     QUEUED -> APPROVED -> DISPATCHING -> SENT -> ACKNOWLEDGED -> COMPLETED
@@ -14,9 +14,11 @@ explicit lifecycle:
 
 Cross-process safety: all mutations go through ``_mutate()``, which
 holds an ``flock`` lock file across load-modify-save (POSIX; degrades
-to best-effort where ``fcntl`` is unavailable). A second consumer can
-never double-transition a record: terminal states are immutable and
-completion is single-shot (duplicate results are detected, not applied).
+to best-effort where ``fcntl`` is unavailable), and ``load()`` replaces
+memory with disk state. A second consumer can never double-transition a
+record: terminal states are immutable, dispatch claims are
+compare-and-set via ``transition(..., expect=...)``, and completion is
+single-shot (duplicate results are detected, not applied).
 
 Crash recovery is explicit: ``recover()`` moves stale DISPATCHING/SENT
 records (older than their timeout, no ack) back to RETRYING with
@@ -120,23 +122,36 @@ class CommandOutbox:
         return self.home / OUTBOX_LOCKNAME
 
     def load(self) -> int:
+        """Replace memory with disk state.
+
+        Disk is authoritative: records pruned or completed by another
+        process must not survive in this process's memory and get
+        written back by the next ``_mutate()``. Corrupt or unreadable
+        state quarantines to empty (fail closed, never parses into
+        authority).
+        """
         path = self.path
         self._loaded_mtime = 0.0
-        if path is None or not path.exists():
+        if path is None:
+            return 0  # in-memory store: no disk state to replace
+        if not path.exists():
+            self._commands = {}
             return 0
         try:
             self._loaded_mtime = path.stat().st_mtime
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            self._commands = {}
             return 0
         if not isinstance(raw, dict):
+            self._commands = {}
             return 0
-        loaded = 0
+        fresh: dict[str, dict[str, Any]] = {}
         for cid, item in (raw.get("commands") or {}).items():
             if isinstance(item, dict) and item.get("command_id") == cid:
-                self._commands[str(cid)] = item
-                loaded += 1
-        return loaded
+                fresh[str(cid)] = item
+        self._commands = fresh
+        return len(fresh)
 
     def _write_unlocked(self) -> None:
         path = self.path
@@ -258,8 +273,15 @@ class CommandOutbox:
         return dict(record) if record is not None else None
 
     def transition(self, command_id: str, to: str, *,
+                   expect: tuple[str, ...] | list[str] | None = None,
                    detail: str = "") -> dict[str, Any]:
-        """Move a record to a new state. Terminal states are immutable."""
+        """Move a record to a new state. Terminal states are immutable.
+
+        ``expect`` is a compare-and-set guard checked while the
+        cross-process lock is held: if the live state is not in
+        ``expect`` the transition raises instead of letting two
+        drainers dispatch the same command.
+        """
         with self._mutate():
             record = self._commands.get(command_id)
             if record is None:
@@ -268,6 +290,10 @@ class CommandOutbox:
                 raise OutboxError(
                     f"command {command_id} is terminal "
                     f"({record.get('state')})")
+            if expect is not None and record.get("state") not in expect:
+                raise OutboxError(
+                    f"command {command_id} is {record.get('state')}, "
+                    f"expected one of {sorted(expect)}")
             record["state"] = to
             self._stamp(record, to, detail)
             return dict(record)
