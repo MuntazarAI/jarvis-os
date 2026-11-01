@@ -31,7 +31,10 @@ class _FakeJarvis:
 
 def _loop(**kw):
     kw.setdefault("jarvis_voice", True)
-    kw.setdefault("voice_config", {"tts_provider": "fake"})
+    # No hardware: a fake TTS voice must not fall through to the real
+    # system sink, whose backend can block on a desktop's sound server.
+    kw.setdefault("voice_config", {"tts_provider": "fake",
+                                   "playback_backend": "none"})
     kw.setdefault("workdir", "/tmp/jarvis-voice-test-53")
     loop = VoiceLoop(**kw)
     loop.listen_once = lambda addressed=True: {

@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .output import FakeAudioOutput, SystemAudioOutput, output_for
+from .output import FakeAudioOutput, output_for
 from .telemetry import TELEMETRY
 from .tts import (ChatterboxTTSProvider, FakeTTSProvider,
                   LocalFallbackTTSProvider, TTSRequest, provider_for)
@@ -156,7 +156,17 @@ class VoiceSpeaker:
     def __init__(self, config: Any = None,
                  output: Any = None) -> None:
         self.config = config or {}
-        self.output = output or SystemAudioOutput()
+        if output is not None:
+            self.output = output
+        else:
+            # Honor the configured backend here too: a caller that sets
+            # playback_backend="none" (tests) or names one must not get
+            # the auto-resolved system sink installed behind its back.
+            cfg = self.config
+            backend = (cfg.get("playback_backend", "auto")
+                       if isinstance(cfg, dict)
+                       else getattr(cfg, "playback_backend", "auto"))
+            self.output = output_for(str(backend))
         self._speaking = False
 
     @property
