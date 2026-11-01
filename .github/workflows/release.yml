@@ -60,7 +60,7 @@ jobs:
           output-file: "dist/jarvis-os-${{ inputs.version }}.sbom.json"
 
       - name: Attest source archive
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/jarvis-os-${{ inputs.version }}.tar.gz"
 
