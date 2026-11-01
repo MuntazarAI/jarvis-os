@@ -1,0 +1,20 @@
+title: "Question: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Questions are welcome. Please share enough context to make the answer useful to others too.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to understand or accomplish?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: What have you tried?
+      description: Include relevant environment details or a minimal example, without secrets.
+    validations:
+      required: false

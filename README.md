@@ -546,6 +546,28 @@ while remaining transparent about uncertainty and limitations.
 
 ---
 
+
+## Community and contributing
+
+**JARVIS-OS is built in public, and thoughtful outside ideas are welcome.** You do not need to be an expert or have a large feature ready to help. Questions, documentation fixes, reproducible bug reports, architecture feedback, tests, and small improvements are valuable.
+
+- **Share an idea or propose a feature:** [Open a feature request](.github/ISSUE_TEMPLATE/feature_request.md) or [start an issue](https://github.com/MuntazarAI/jarvis-os/issues/new/choose).
+- **Report a bug:** use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md) and include steps to reproduce it.
+- **Discuss the design before coding:** open an issue with the problem, use case, alternatives, and trade-offs. Check existing issues first to avoid duplicates.
+- **Contribute code or docs:** read [CONTRIBUTING.md](CONTRIBUTING.md), then open a pull request using the repository template.
+- **Find a place to start:** browse the [roadmap](docs/ROADMAP.md), [developer portal](docs/DEVELOPER_PORTAL.md), and issues marked for improvement.
+- **Report a security concern:** follow [SECURITY.md](SECURITY.md); do not post exploitable details in a public issue.
+
+### How we work together
+
+1. Start with the problem and the outcome you want—not just a proposed implementation.
+2. Be kind, curious, and specific. Disagreement about ideas is welcome; attacks on people are not.
+3. Keep changes focused and explain trade-offs, tests, and security or privacy implications.
+4. Prefer small, reviewable pull requests. Maintainer review and automated checks help protect the project's reliability.
+5. Treat roadmap items as plans, not promises. Code and tests define what currently works.
+
+New contributors are welcome to ask questions, challenge assumptions, suggest experiments, and help improve the project. See [GOVERNANCE.md](GOVERNANCE.md) for how decisions and reviews work and [SUPPORT.md](SUPPORT.md) for where to ask for help.
+
 ## License
 
 JARVIS-OS is licensed under the [Apache License 2.0](LICENSE).
