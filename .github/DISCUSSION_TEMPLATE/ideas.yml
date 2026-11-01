@@ -1,0 +1,35 @@
+title: "Idea: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping shape JARVIS-OS. Please describe the problem and context before settling on an implementation.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or opportunity
+      description: What are you trying to achieve, or what limitation did you notice?
+      placeholder: Describe the use case and who it helps.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea
+      description: What would you like to explore? Alternatives are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Trade-offs and questions
+      description: Consider reliability, privacy, security, resource use, and simpler alternatives.
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Extra context
+      description: Links, sketches, experiments, or related issues (please remove secrets and personal data).
+    validations:
+      required: false
