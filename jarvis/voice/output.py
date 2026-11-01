@@ -1,8 +1,12 @@
 """Audio playback abstraction (5.1).
 
-One place for Linux playback backends (aplay/paplay/ffplay) plus a
-fake sink for tests. No subprocess calls scattered elsewhere. Bounded
-timeouts; honest UNAVAILABLE when no backend exists.
+One place for Linux playback backends (pw-play/paplay/ffplay/aplay)
+plus a fake sink for tests. No subprocess calls scattered elsewhere.
+Bounded timeouts; honest UNAVAILABLE when no backend exists.
+
+Sound-server clients come first: on a PipeWire/PulseAudio desktop the
+server owns the ALSA device, and raw ``aplay`` blocks in the driver
+until it is free (not killable, so the subprocess timeout never fires).
 """
 
 from __future__ import annotations
@@ -64,7 +68,11 @@ class FakeAudioOutput(AudioOutput):
 
 
 class SystemAudioOutput(AudioOutput):
-    """aplay → paplay → ffplay, first present wins. Bounded, blocking."""
+    """pw-play → paplay → ffplay → aplay, first present wins.
+
+    Bounded, blocking. The order matters: aplay is the raw ALSA client
+    and waits on a card the sound server already holds.
+    """
 
     name = "system"
 
@@ -76,7 +84,7 @@ class SystemAudioOutput(AudioOutput):
     def _resolve(backend: str) -> str:
         if backend != "auto":
             return backend
-        for candidate in ("aplay", "paplay", "ffplay"):
+        for candidate in ("pw-play", "paplay", "ffplay", "aplay"):
             if shutil.which(candidate):
                 return candidate
         return "none"
@@ -126,7 +134,7 @@ class SystemAudioOutput(AudioOutput):
 def output_for(name: str) -> AudioOutput:
     if name == "fake":
         return FakeAudioOutput()
-    if name in ("system", "auto", "aplay", "paplay", "ffplay"):
+    if name in ("system", "auto", "pw-play", "paplay", "ffplay", "aplay"):
         backend = "auto" if name in ("system", "auto") else name
         return SystemAudioOutput(backend)
     return SystemAudioOutput("none")

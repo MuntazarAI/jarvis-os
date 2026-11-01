@@ -237,6 +237,25 @@ def test_voice_speaker_barge_in():
     assert speaker.stop() is True
 
 
+def test_auto_playback_prefers_the_sound_server(monkeypatch):
+    """Raw ALSA aplay blocks on a card PipeWire already owns."""
+    from jarvis.voice import output
+    monkeypatch.setattr(output.shutil, "which",
+                        lambda name: f"/usr/bin/{name}")
+    assert output.SystemAudioOutput("auto").backend == "pw-play"
+    monkeypatch.setattr(output.shutil, "which",
+                        lambda name: None if name == "pw-play" else "x")
+    assert output.SystemAudioOutput("auto").backend == "paplay"
+
+
+def test_voice_speaker_honors_none_backend():
+    """playback_backend=none must never install a system sink."""
+    from jarvis.voice.speak import VoiceSpeaker
+    speaker = VoiceSpeaker(config={"tts_provider": "fake",
+                                   "playback_backend": "none"})
+    assert speaker.output.available() is False
+
+
 # cognitive integration -------------------------------------------------------------------
 
 def test_response_flows_to_tts_after_cognition(tmp_path):
