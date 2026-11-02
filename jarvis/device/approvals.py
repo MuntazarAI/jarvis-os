@@ -23,6 +23,7 @@ import json
 import os
 import secrets
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +133,23 @@ class ApprovalStore:
         if mtime != self._loaded_mtime:
             self.load()
 
+    @contextmanager
+    def _mutate(self):
+        """Lock, reload, yield. Every mutator runs under this.
+
+        Disk is authoritative while the lock is held, so a mutation made
+        from a view loaded before another process consumed a token cannot
+        write the old APPROVED record back (a whole-file save would
+        otherwise resurrect it).
+        """
+        lock = self.lock_path
+        if lock is None:
+            yield
+            return
+        with _lock_file(lock):
+            self.load()
+            yield
+
     def save(self) -> bool:
         """Persist atomically. Returns False when the write failed.
 
@@ -183,24 +201,24 @@ class ApprovalStore:
         """Create a PENDING token bound to actor/device/capability/args."""
         if not actor or not device_id or not capability:
             raise ApprovalError("actor, device_id and capability are required")
-        self._maybe_reload()
-        stamp = now()
-        record = {
-            "token": _new_token(),
-            "state": PENDING,
-            "actor": actor,
-            "device_id": device_id,
-            "capability": capability,
-            "args_hash": _args_hash(args),
-            "requested_by": by[:64],
-            "reason": reason[:200],
-            "created_at": stamp,
-            "expires_at": stamp + ttl_s if ttl_s and ttl_s > 0 else 0.0,
-            "history": [{"at": stamp, "event": "requested",
-                         "by": by[:64], "reason": reason[:200]}],
-        }
-        self._tokens[record["token"]] = record
-        self.save()
+        with self._mutate():
+            stamp = now()
+            record = {
+                "token": _new_token(),
+                "state": PENDING,
+                "actor": actor,
+                "device_id": device_id,
+                "capability": capability,
+                "args_hash": _args_hash(args),
+                "requested_by": by[:64],
+                "reason": reason[:200],
+                "created_at": stamp,
+                "expires_at": stamp + ttl_s if ttl_s and ttl_s > 0 else 0.0,
+                "history": [{"at": stamp, "event": "requested",
+                             "by": by[:64], "reason": reason[:200]}],
+            }
+            self._tokens[record["token"]] = record
+            self.save()
         self.audit.record("device.approval.requested", actor=by or actor,
                           device_id=device_id, ok=True,
                           reasons=[reason[:200]] if reason else [],
@@ -210,25 +228,25 @@ class ApprovalStore:
 
     def _transition(self, token: str, *, expect: str, to: str,
                      by: str = "", event: str) -> bool:
-        self._maybe_reload()
-        full = self.resolve_prefix(token) or token
-        record = self._tokens.get(full)
-        if record is None:
-            return False
-        if self._expired(record, now()):
-            self._mark_expired(record)
-            self.save()
-            return False
-        if record.get("state") != expect:
-            return False
-        previous = record.get("state")
-        record["state"] = to
-        record.setdefault("history", []).append(
-            {"at": now(), "event": event, "by": by[:64]})
-        if not self.save():
-            record["state"] = previous
-            return False
-        return True
+        with self._mutate():
+            full = self.resolve_prefix(token) or token
+            record = self._tokens.get(full)
+            if record is None:
+                return False
+            if self._expired(record, now()):
+                self._mark_expired(record)
+                self.save()
+                return False
+            if record.get("state") != expect:
+                return False
+            previous = record.get("state")
+            record["state"] = to
+            record.setdefault("history", []).append(
+                {"at": now(), "event": event, "by": by[:64]})
+            if not self.save():
+                record["state"] = previous
+                return False
+            return True
 
     def approve(self, token: str, *, by: str = "") -> bool:
         """PENDING -> APPROVED. Accepts a full token or unique prefix."""
@@ -259,21 +277,21 @@ class ApprovalStore:
 
     def revoke(self, token: str, *, by: str = "", reason: str = "") -> bool:
         """PENDING/APPROVED -> REVOKED. Accepts full token or prefix."""
-        self._maybe_reload()
-        full = self.resolve_prefix(token) or token
-        record = self._tokens.get(full)
-        if record is None:
-            return False
-        if record.get("state") not in (PENDING, APPROVED):
-            return False
-        previous = record.get("state")
-        record["state"] = REVOKED
-        record.setdefault("history", []).append(
-            {"at": now(), "event": "revoked", "by": by[:64],
-             "reason": reason[:200]})
-        if not self.save():
-            record["state"] = previous
-            return False
+        with self._mutate():
+            full = self.resolve_prefix(token) or token
+            record = self._tokens.get(full)
+            if record is None:
+                return False
+            if record.get("state") not in (PENDING, APPROVED):
+                return False
+            previous = record.get("state")
+            record["state"] = REVOKED
+            record.setdefault("history", []).append(
+                {"at": now(), "event": "revoked", "by": by[:64],
+                 "reason": reason[:200]})
+            if not self.save():
+                record["state"] = previous
+                return False
         self.audit.record("device.approval.revoked", actor=by,
                           device_id=str(record.get("device_id", "")),
                           ok=True, reasons=[reason[:200]] if reason else [],
@@ -429,20 +447,20 @@ class ApprovalStore:
 
     def prune(self) -> int:
         """Mark expired PENDING records EXPIRED. Returns count changed."""
-        self._maybe_reload()
-        changed = 0
-        stamp = now()
-        for record in self._tokens.values():
-            if record.get("state") == PENDING and self._expired(record, stamp):
-                self._mark_expired(record)
-                changed += 1
-                self.audit.record("device.approval.expired", actor="",
-                                  device_id=str(record.get("device_id", "")),
-                                  ok=False, reasons=["ttl exceeded"],
-                                  extra={"approval_id": str(record.get("token", ""))})
-        if changed:
-            self.save()
-        return changed
+        with self._mutate():
+            changed = 0
+            stamp = now()
+            for record in self._tokens.values():
+                if record.get("state") == PENDING and self._expired(record, stamp):
+                    self._mark_expired(record)
+                    changed += 1
+                    self.audit.record("device.approval.expired", actor="",
+                                      device_id=str(record.get("device_id", "")),
+                                      ok=False, reasons=["ttl exceeded"],
+                                      extra={"approval_id": str(record.get("token", ""))})
+            if changed:
+                self.save()
+            return changed
 
 
 __all__ = [

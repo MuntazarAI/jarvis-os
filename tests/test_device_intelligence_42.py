@@ -523,6 +523,37 @@ def test_approval_consume_cannot_double_spend_with_stale_view(tmp_path):
     assert again is False and "consumed" in reason
 
 
+def test_stale_approval_mutation_cannot_resurrect_consumed_token(tmp_path):
+    """Private report: a whole-file save from a stale view must not put a
+    spent token back into APPROVED."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    writer = ApprovalStore(home)
+    token = writer.request("op", "dev-1", "device.battery", {"x": 1},
+                           by="op")["token"]
+
+    # A long-running process still holds the PENDING record: pin its
+    # view so it cannot observe later writes (a skipped reload).
+    stale = ApprovalStore(home)
+    stale._maybe_reload = lambda: None
+
+    assert writer.approve(token, by="op") is True
+    assert writer.consume(token, actor="op", device_id="dev-1",
+                          capability="device.battery", args={"x": 1})[0] is True
+
+    # Neither lifecycle mutation from the stale view may write the old
+    # PENDING/APPROVED map back over the durable CONSUMED record.
+    assert stale.approve(token, by="op") is False
+    assert stale.revoke(token, by="op") is False
+    stale.request("op", "dev-2", "device.battery", {}, by="op")
+
+    fresh = ApprovalStore(home)
+    assert fresh.status(token)["state"] == "consumed"
+    ok, reason = fresh.consume(token, actor="op", device_id="dev-1",
+                               capability="device.battery", args={"x": 1})
+    assert ok is False and "consumed" in reason
+
+
 def test_approval_consume_fails_closed_when_store_unwritable(
         tmp_path, monkeypatch):
     """A token that could not be persisted is never reported consumed."""
