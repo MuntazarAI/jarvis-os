@@ -2,7 +2,7 @@
 
 In-memory PolicyEngine approvals (``appr-``) die with the process. This
 store persists approval state in ``<home>/device-approvals.json``
-(atomic write, merge-load) so a CLI process and a long-running server
+(atomic write, replace-load) so a CLI process and a long-running server
 observe the same token lifecycle:
 
     PENDING -> APPROVED -> CONSUMED (single use)
@@ -11,7 +11,9 @@ observe the same token lifecycle:
 Tokens are bound to (actor, device_id, capability, args-hash): a token
 cannot be replayed, transferred to another device, or reused for
 different arguments. Consumption is a single atomic state transition
-(reload → check → mark → persist); the second consumer always loses.
+(reload → check → mark → persist) under a cross-process lock file; the
+second consumer always loses, and a token is only reported consumed
+after it is durably persisted.
 """
 
 from __future__ import annotations
@@ -26,8 +28,10 @@ from typing import Any
 
 from ..core.types import now
 from .audit import DeviceAudit
+from .outbox import _lock_file
 
 APPROVALS_FILENAME = "device-approvals.json"
+APPROVALS_LOCKNAME = "device-approvals.lock"
 DEFAULT_APPROVAL_TTL_S = 300.0
 
 PENDING = "pending"
@@ -81,24 +85,41 @@ class ApprovalStore:
             return None
         return self.home / APPROVALS_FILENAME
 
+    @property
+    def lock_path(self) -> Path | None:
+        if self.home is None:
+            return None
+        return self.home / APPROVALS_LOCKNAME
+
     def load(self) -> int:
+        """Replace memory with disk state.
+
+        Disk is authoritative so revokes/consumes from another process
+        propagate; corrupt or unreadable state quarantines to empty
+        (fail closed).
+        """
         path = self.path
         self._loaded_mtime = 0.0
-        if path is None or not path.exists():
+        if path is None:
+            return 0  # in-memory store: no disk state to replace
+        if not path.exists():
+            self._tokens = {}
             return 0
         try:
             self._loaded_mtime = path.stat().st_mtime
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            self._tokens = {}
             return 0
         if not isinstance(raw, dict):
+            self._tokens = {}
             return 0
-        loaded = 0
+        fresh: dict[str, dict[str, Any]] = {}
         for token, item in (raw.get("approvals") or {}).items():
             if isinstance(item, dict) and item.get("token") == token:
-                self._tokens[str(token)] = item
-                loaded += 1
-        return loaded
+                fresh[str(token)] = item
+        self._tokens = fresh
+        return len(fresh)
 
     def _maybe_reload(self) -> None:
         path = self.path
@@ -111,10 +132,16 @@ class ApprovalStore:
         if mtime != self._loaded_mtime:
             self.load()
 
-    def save(self) -> None:
+    def save(self) -> bool:
+        """Persist atomically. Returns False when the write failed.
+
+        Callers that grant or spend authority must check this: a token
+        that could not be persisted must never be reported as consumed
+        (it would come back APPROVED after a restart).
+        """
         path = self.path
         if path is None:
-            return
+            return True  # in-memory store: memory is authoritative
         payload = {"version": 1, "approvals": self._tokens}
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,8 +160,9 @@ class ApprovalStore:
                 self._loaded_mtime = path.stat().st_mtime
             except OSError:
                 pass
+            return True
         except OSError:
-            pass
+            return False
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -193,10 +221,13 @@ class ApprovalStore:
             return False
         if record.get("state") != expect:
             return False
+        previous = record.get("state")
         record["state"] = to
         record.setdefault("history", []).append(
             {"at": now(), "event": event, "by": by[:64]})
-        self.save()
+        if not self.save():
+            record["state"] = previous
+            return False
         return True
 
     def approve(self, token: str, *, by: str = "") -> bool:
@@ -235,11 +266,14 @@ class ApprovalStore:
             return False
         if record.get("state") not in (PENDING, APPROVED):
             return False
+        previous = record.get("state")
         record["state"] = REVOKED
         record.setdefault("history", []).append(
             {"at": now(), "event": "revoked", "by": by[:64],
              "reason": reason[:200]})
-        self.save()
+        if not self.save():
+            record["state"] = previous
+            return False
         self.audit.record("device.approval.revoked", actor=by,
                           device_id=str(record.get("device_id", "")),
                           ok=True, reasons=[reason[:200]] if reason else [],
@@ -285,37 +319,55 @@ class ApprovalStore:
         """Atomically consume an APPROVED token iff every binding matches.
 
         Single use: the first consumer transitions APPROVED -> CONSUMED
-        and wins; every later attempt loses. Bindings are re-verified
-        after the reload so a concurrent mutation cannot slip through.
-        Never raises.
+        and wins; every later attempt loses. The whole reload → check →
+        mark → persist cycle runs under the store lock file, so a CLI
+        and a long-running server cannot both spend one token. A token
+        is only reported consumed after it is durably persisted; an
+        unwritable store fails closed. Never raises.
         """
         try:
-            self._maybe_reload()
-            record = self._tokens.get(token)
-            if record is None:
-                return False, "unknown approval token"
-            if self._expired(record, now()):
-                self._mark_expired(record)
-                self.save()
-                return False, "approval token expired"
-            if record.get("state") != APPROVED:
-                return False, f"approval token is {record.get('state')}"
-            ok, reason = self._bindings_ok(
-                record, actor=actor, device_id=device_id,
-                capability=capability, args=args)
-            if not ok:
-                return False, reason
-            record["state"] = CONSUMED
-            record.setdefault("history", []).append(
-                {"at": now(), "event": "consumed", "by": actor[:64]})
-            self.save()
-            self.audit.record("device.approval.consumed", actor=actor,
-                              device_id=device_id, ok=True,
-                              extra={"approval_id": token,
-                                     "capability": capability})
-            return True, "consumed"
+            lock = self.lock_path
+            if lock is None:
+                return self._consume_locked(
+                    token, actor=actor, device_id=device_id,
+                    capability=capability, args=args)
+            with _lock_file(lock):
+                return self._consume_locked(
+                    token, actor=actor, device_id=device_id,
+                    capability=capability, args=args)
         except Exception as exc:
             return False, f"approval consume failed (fail closed): {exc}"[:160]
+
+    def _consume_locked(self, token: str, *, actor: str, device_id: str,
+                        capability: str,
+                        args: dict[str, Any] | None) -> tuple[bool, str]:
+        self.load()  # disk is authoritative while the lock is held
+        record = self._tokens.get(token)
+        if record is None:
+            return False, "unknown approval token"
+        if self._expired(record, now()):
+            self._mark_expired(record)
+            self.save()
+            return False, "approval token expired"
+        if record.get("state") != APPROVED:
+            return False, f"approval token is {record.get('state')}"
+        ok, reason = self._bindings_ok(
+            record, actor=actor, device_id=device_id,
+            capability=capability, args=args)
+        if not ok:
+            return False, reason
+        previous = record.get("state")
+        record["state"] = CONSUMED
+        record.setdefault("history", []).append(
+            {"at": now(), "event": "consumed", "by": actor[:64]})
+        if not self.save():
+            record["state"] = previous
+            return False, "approval consume failed: store unwritable"
+        self.audit.record("device.approval.consumed", actor=actor,
+                          device_id=device_id, ok=True,
+                          extra={"approval_id": token,
+                                 "capability": capability})
+        return True, "consumed"
 
     def status(self, token: str) -> dict[str, Any] | None:
         self._maybe_reload()

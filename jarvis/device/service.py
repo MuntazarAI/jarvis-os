@@ -27,6 +27,7 @@ from .outbox import (
     COMPLETED,
     DISPATCHING,
     QUEUED,
+    RETRYING,
     SENT,
     TERMINAL,
     CommandOutbox,
@@ -315,7 +316,7 @@ class DeviceCommandService:
             live = self.outbox.get(command_id)
         except OutboxError:
             return {"ok": False, "error": "command vanished"}
-        if live is None or live.get("state") not in (QUEUED, APPROVED):
+        if live is None or live.get("state") not in (QUEUED, APPROVED, RETRYING):
             state = (live or {}).get("state", "missing")
             return {"ok": False, "command_id": command_id,
                     "deferred": state not in ("missing",),
@@ -346,11 +347,16 @@ class DeviceCommandService:
                           extra={"command_id": command_id,
                                  "capability": capability})
         try:
-            self.outbox.transition(command_id, DISPATCHING,
-                                   detail=f"actor={actor}")
+            self.outbox.transition(
+                command_id, DISPATCHING,
+                expect=(QUEUED, APPROVED, RETRYING),
+                detail=f"actor={actor}")
         except OutboxError as exc:
+            # Lost the compare-and-set claim: another drainer owns this
+            # dispatch. Never send a second copy.
             return {"ok": False, "command_id": command_id,
-                    "error": str(exc)[:200]}
+                    "deferred": True,
+                    "error": f"claim lost: {exc}"[:200]}
         try:
             reply = self._send(actor, device_id, command, capability,
                                args, approval_id)

@@ -69,6 +69,19 @@ def test_scope_matching():
     assert scope_matches(dev, "device", "dev-2") is False
 
 
+def test_scope_matching_symlinked_missing_path_fails_closed(tmp_path):
+    """A new file under a symlinked subdir must not escape the grant."""
+    root = tmp_path / "downloads"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "link").symlink_to(outside, target_is_directory=True)
+    grant = _grant(scope=str(root))
+    assert scope_matches(grant, "path", str(root / "new.jpg")) is True
+    assert scope_matches(grant, "path",
+                         str(root / "link" / "new.jpg")) is False
+
+
 def test_evaluate_grant_matrix():
     grant = _grant()
     ok, _ = evaluate_grant(grant, actor="user",

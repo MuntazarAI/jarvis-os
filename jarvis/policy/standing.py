@@ -103,21 +103,18 @@ class StandingGrant:
 
 
 def _contains(root: str, candidate: str) -> bool:
-    """True iff candidate is inside root (symlinks resolved on both
-    sides where they exist; missing paths fail closed)."""
+    """True iff candidate is inside root, with symlinks resolved.
+
+    ``Path.resolve`` resolves the existing prefix even when the tail
+    does not exist yet (and follows broken symlinks to their target),
+    so a new file under a symlinked subdirectory cannot escape the
+    granted root.
+    """
     try:
         root_path = Path(root).expanduser()
         cand_path = Path(candidate).expanduser()
-        if not root_path.exists() or not cand_path.exists():
-            # Missing side: fall back to lexical containment, still
-            # rejecting ".." escapes.
-            if ".." in Path(candidate).parts:
-                return False
-            try:
-                cand_path.relative_to(root_path)
-                return True
-            except ValueError:
-                return False
+        if ".." in cand_path.parts:
+            return False
         return cand_path.resolve().is_relative_to(root_path.resolve())
     except (OSError, ValueError):
         return False
