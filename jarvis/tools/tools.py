@@ -23,6 +23,9 @@ class ToolSpec:
     timeout: float = 30.0
     required_permissions: list[str] = field(default_factory=list)
     schema: dict[str, Any] = field(default_factory=dict)
+    # Output may contain credential material even after minimization.
+    # Callers must not persist or forward it beyond the authorized task.
+    sensitive_output: bool = False
 
 
 @dataclass
@@ -34,12 +37,14 @@ class ToolResult:
     duration: float = 0.0
     risk: RiskLevel = RiskLevel.SAFE
     call_id: str = field(default_factory=lambda: new_id("tool"))
+    sensitive: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "tool": self.tool, "ok": self.ok, "output": self.output,
             "error": self.error, "duration": round(self.duration, 3),
             "risk": self.risk.value, "call_id": self.call_id,
+            "sensitive": self.sensitive,
         }
 
 
@@ -52,13 +57,27 @@ class Tool:
         started = now()
         try:
             result = self.func(**kwargs)
+            if not isinstance(result, ToolResult):
+                # Some wrappers (security-audit tools) return a plain
+                # result dict by design. Normalize it here instead of
+                # losing the call to an AttributeError.
+                if isinstance(result, dict):
+                    result = ToolResult(
+                        tool=self.spec.name, ok=bool(result.get("ok")),
+                        output=result, error=str(result.get("error", "")))
+                else:
+                    result = ToolResult(
+                        tool=self.spec.name, ok=False,
+                        error="tool returned an invalid result")
             result.duration = now() - started
             result.risk = self.spec.risk
+            result.sensitive = self.spec.sensitive_output
             return result
         except Exception as exc:  # tool failures become results, never crashes
             return ToolResult(tool=self.spec.name, ok=False,
-                             error=f"{type(exc).__name__}: {exc}",
-                             duration=now() - started, risk=self.spec.risk)
+                              error=f"{type(exc).__name__}: {exc}",
+                              duration=now() - started, risk=self.spec.risk,
+                              sensitive=self.spec.sensitive_output)
 
 
 class ToolRegistry:
@@ -396,14 +415,16 @@ def default_registry() -> ToolRegistry:
                                 RiskLevel.SAFE, 5.0, []), open_url))
     from . import secaudit as _secaudit
     for _name, _desc in (
-            ("net_inventory", "Ping-scan an explicitly named host or /24 (no port scan)"),
+            ("net_inventory", "Host discovery or bounded port/service scan of an explicitly named host or small network"),
             ("web_audit", "Nikto findings scan of one named URL (nothing exploited)"),
             ("dir_enum", "Gobuster directory enum with your wordlist file"),
-            ("hash_audit", "Strength-audit your hash file (john/hashcat, your wordlist)"),
-            ("sqli_scan", "sqlmap detection-only scan, level 1 (no dump/exploit)"),
+            ("hash_audit", "Local dictionary audit of your own hash file (john/hashcat, your wordlist; recovered plaintext withheld)"),
+            ("sqli_scan", "sqlmap detection-only scan, level 1-2 (no dump/exploit)"),
             ("capture_read", "Read-only analysis of a capture file you provide")):
         reg.register(Tool(ToolSpec(_name, _desc, RiskLevel.HIGH, 300.0,
-                                   ["sec.audit"]), getattr(_secaudit, _name)))
+                                   ["sec.audit"],
+                                   sensitive_output=(_name == "hash_audit")),
+                          getattr(_secaudit, _name)))
     return reg
 
 

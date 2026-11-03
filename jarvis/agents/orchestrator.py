@@ -340,7 +340,9 @@ class Orchestrator:
     def run(self, goal: str, depth: int | None = None,
             team: str | None = None, task_id: str = "",
             budgets: Budgets | None = None,
-            parent_id: str = "") -> dict[str, Any]:
+            parent_id: str = "",
+            roles: list[tuple[str, str]] | None = None
+            ) -> dict[str, Any]:
         """Execute a goal. Returns blackboard summary + trace + result."""
         task_id = task_id or new_id("orch")
         budgets = budgets or self.budgets
@@ -363,7 +365,8 @@ class Orchestrator:
                     run_id=record.run_id, status="running",
                     budgets=budgets.to_dict())
 
-        stages = TEAMS.get(team or "", []) if team else []
+        stages = list(roles) if roles else (
+            TEAMS.get(team or "", []) if team else [])
         if level == 0 and not stages:
             result = self._run_role("communication", goal, board, task_id,
                                     state, budgets, deadline, depth=0)
@@ -392,6 +395,22 @@ class Orchestrator:
                 record.failure = f"{role_id}: " + "; ".join(result.errors)
                 break
         return self._finish(task_id, board, final, state, record)
+
+    def run_role(self, role_id: str, goal: str, *,
+                 purpose: str = "", depth: int | None = None,
+                 task_id: str = "",
+                 budgets: Budgets | None = None) -> dict[str, Any]:
+        """Run exactly one declared role.
+
+        Used by the named-AI roster for focused work. The role card is the
+        allow-list: an unknown role fails closed before any handler runs.
+        """
+        card = self.cards.get(role_id)
+        if card is None:
+            raise ValueError(f"unknown role: {role_id}")
+        return self.run(goal, depth=depth, task_id=task_id,
+                        budgets=budgets,
+                        roles=[(role_id, purpose or card.role)])
 
     def _stages_for(self, goal: str, level: int) -> list[tuple[str, str]]:
         low = goal.lower()

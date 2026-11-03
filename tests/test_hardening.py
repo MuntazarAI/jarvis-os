@@ -265,3 +265,133 @@ def test_default_registry_python_run_permission_gated():
     registry = default_registry()
     entry = next(t for t in registry.list_tools() if t["name"] == "python_run")
     assert "exec.eval" in entry["permissions"]
+
+
+# -- H9: _act direct ToolRegistry call goes through policy -----------------
+
+class _RecordingBus:
+    def __init__(self):
+        self.events = []
+
+    def publish(self, event):
+        self.events.append(event)
+
+
+def _act_harness(tmp_path):
+    from jarvis.core.config import JarvisConfig
+    from jarvis.core.loop import Jarvis
+    config = JarvisConfig()
+    config.paths.home = tmp_path
+    policy = PolicyEngine(config)
+    policy.grant("jarvis", "fs.read")
+    policy.grant("jarvis", "exec.eval")
+    fake = Jarvis.__new__(Jarvis)
+    fake.tools = default_registry()
+    fake.policy = policy
+    fake.bus = _RecordingBus()
+    return fake, Jarvis._act
+
+
+def test_act_blocks_sensitive_path_instead_of_reading_it(tmp_path):
+    """User text reaches _act via CLI/voice/API; it must not bypass policy."""
+    fake, act = _act_harness(tmp_path)
+    for text in ("list files /etc/shadow",
+                 "list files ~/.ssh/id_rsa"):
+        actions, used = act(fake, text, [], [])
+        assert used == []
+        assert any("blocked by policy" in a for a in actions), actions
+    assert fake.tools.history == []
+
+
+def test_act_allows_routine_fixed_tool(tmp_path):
+    fake, act = _act_harness(tmp_path)
+    actions, used = act(fake, f"list files {tmp_path}", [], [])
+    assert used == ["filesystem_read"]
+    assert any(a.startswith("files in ") for a in actions), actions
+    assert len(fake.tools.history) == 1
+
+    actions, used = act(fake, "calculate 2 + 3 * 4", [], [])
+    assert used == ["python_run"]
+    assert any("14" in a for a in actions), actions
+
+
+def test_act_respects_emergency_stop(tmp_path):
+    fake, act = _act_harness(tmp_path)
+    (tmp_path / "EMERGENCY_STOP").write_text("engaged\n")
+    actions, used = act(fake, "calculate 2 + 2", [], [])
+    assert used == []
+    assert any("EMERGENCY STOP" in a for a in actions), actions
+    assert fake.tools.history == []
+
+
+def test_act_does_not_execute_when_approval_is_required(tmp_path):
+    fake, act = _act_harness(tmp_path)
+    fake.policy.config.policy.require_approval_above_risk = 0.0
+    actions, used = act(fake, "calculate 2 + 2", [], [])
+    assert used == []
+    assert any("needs approval" in a for a in actions), actions
+    assert fake.tools.history == []
+    assert len(fake.policy.approvals) == 1
+
+
+# -- H10: Tool.run normalizes malformed results --------------------------
+
+def _probe_tool(func, *, sensitive=False):
+    from jarvis.tools.tools import Tool, ToolSpec
+    return Tool(ToolSpec(name="probe", description="probe",
+                         sensitive_output=sensitive), func)
+
+
+def test_tool_run_normalizes_dict_success_and_marks_sensitive():
+    tool = _probe_tool(
+        lambda **_: {"ok": True, "value": 7, "note": "fine"}, sensitive=True)
+    result = tool.run()
+    assert result.tool == "probe"
+    assert result.ok is True
+    assert result.output == {"ok": True, "value": 7, "note": "fine"}
+    assert result.error == ""
+    assert result.sensitive is True
+
+
+def test_tool_run_normalizes_dict_failure():
+    tool = _probe_tool(lambda **_: {"ok": False, "error": "nope"})
+    result = tool.run()
+    assert result.ok is False
+    assert result.error == "nope"
+    assert result.output == {"ok": False, "error": "nope"}
+    assert result.sensitive is False
+
+
+def test_tool_run_rejects_non_result_scalars():
+    tool = _probe_tool(lambda **_: "raw text", sensitive=True)
+    result = tool.run()
+    assert result.ok is False
+    assert result.error == "tool returned an invalid result"
+    assert result.output is None
+    assert result.sensitive is True
+
+
+def test_tool_run_turns_exceptions_into_results():
+    def boom(**_):
+        raise RuntimeError("kaboom")
+
+    result = _probe_tool(boom, sensitive=True).run()
+    assert result.ok is False
+    assert "RuntimeError: kaboom" in result.error
+    assert result.sensitive is True
+
+
+def test_tool_run_keeps_real_result_and_applies_spec_metadata():
+    from jarvis.core.types import RiskLevel
+    from jarvis.tools.tools import ToolResult
+
+    tool = _probe_tool(
+        lambda **_: ToolResult(tool="custom", ok=True, output=1,
+                               risk=RiskLevel.SAFE, sensitive=False),
+        sensitive=True)
+    result = tool.run()
+    assert result.ok is True
+    assert result.output == 1
+    assert result.risk == RiskLevel.LOW
+    assert result.sensitive is True
+    assert result.duration >= 0.0
