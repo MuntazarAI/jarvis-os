@@ -294,7 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
     ag = sub.add_parser("agents", help="multi-agent organization")
     ag.add_argument("action", nargs="?", default="list",
                     choices=["list", "status", "run", "explain", "teams",
-                             "world"])
+                             "world", "roster", "ask", "reach"])
     ag.add_argument("text", nargs="*", help="goal text for run")
     ag.add_argument("--team", default="",
                     help="team strategy: research/coding/debugging/computer/decision/daily")
@@ -3853,11 +3853,178 @@ def main(argv: list[str] | None = None) -> int:
         from .agents.contract import role_cards
         from .agents.orchestrator import TEAMS
         orch = jarvis.orchestrator
-        if args.action == "list":
+        if args.action == "roster":
+            from .agents.stark import STARK_ROSTER
+            if args.json:
+                print(json.dumps([ai.to_dict() for ai in STARK_ROSTER],
+                                 indent=2))
+            else:
+                print("NAMED AI ROSTER - personas over real roles; "
+                      "every action stays policy-gated")
+                print(f"{'id':8} {'name':8} {'roles':24} "
+                      f"{'acts':5} duty")
+                for ai in STARK_ROSTER:
+                    roles = " -> ".join(ai.role_ids) or "-"
+                    print(f"{ai.ai_id:8} {ai.name:8} {roles:24} "
+                          f"{'yes' if ai.may_act else 'no':5} "
+                          f"{ai.duties[0]}")
+                print("\nuse: jarvis agents ask <id> <goal>")
+                print("e.g. jarvis agents ask friday check system health")
+        elif args.action == "reach":
+            from .agents.reach import build_reach
+            parts = list(args.text)
+            sub = parts[0].lower() if parts else "all"
+            aliases = {"map": "permissions", "permissions": "permissions",
+                       "health": "health", "registry": "registry",
+                       "roster": "registry", "all": "all"}
+            if sub not in aliases:
+                sub, query = "all", " ".join(parts)
+            else:
+                query = " ".join(parts[1:])
+            view = aliases[sub]
+            try:
+                payload = build_reach(jarvis, query=query, view=view)
+            except Exception as exc:
+                print(f"reach unavailable: {type(exc).__name__}")
+                jarvis.close()
+                return 2
+            if args.json:
+                print(json.dumps(payload, indent=2, default=str))
+            else:
+                if view in ("all", "permissions"):
+                    data = payload["permissions"]
+                    print("PERMISSION REACH - declared, then policy-granted; "
+                          "read-only")
+                    print(f"{'role':15} {'acts':5} {'tools':5} {'grants':7} "
+                          f"{'devices':7} role")
+                    for role in data["roles"]:
+                        if not role["may_act"] and not role["tools"]:
+                            continue
+                        ready = sum(1 for tool in role["tools"]
+                                    if tool["reachable"])
+                        grants = role["policy_grants"]
+                        grant_text = "?" if grants is None else str(len(grants))
+                        devices = role["device_grants"]
+                        device_text = "?" if devices is None else str(
+                            sum(1 for item in devices if item["reachable"]))
+                        print(f"{role['role_id']:15} "
+                              f"{'yes' if role['may_act'] else 'no':5} "
+                              f"{ready}/{len(role['tools']):<3} "
+                              f"{grant_text:7} {device_text:7} "
+                              f"{role['role'][:48]}")
+                    summary = data["summary"]
+                    print(f"\nroles {summary['roles']} · acting "
+                          f"{summary['acting_roles']} · reachable tools "
+                          f"{summary['reachable_tools']}/"
+                          f"{summary['declared_tools']} · device grants "
+                          f"{summary['device_grants']} · suspended devices "
+                          f"{summary['suspended_devices']}")
+                if view in ("all", "health"):
+                    data = payload["health"]
+                    print(f"\nREACHABILITY HEALTH: {data['status']}")
+                    print(f"agents: {data['agents']['reachable']}/"
+                          f"{data['agents']['total']} reachable · "
+                          f"devices: {data['devices']['executable']}/"
+                          f"{data['devices']['total']} executable · "
+                          f"ECC: {data['harness'].get('skill_count', 0)} skills, "
+                          f"{data['harness'].get('agent_count', 0)} agents")
+                    for check in data["checks"]:
+                        state = ("ok" if check["ok"] is True else
+                                 "fail" if check["ok"] is False else "unknown")
+                        print(f"  {state:7} {check['name']}: "
+                              f"{check['detail']}"[:200])
+                    if view == "health":
+                        for device in data["devices"]["items"]:
+                            print(f"  device {device['name']} "
+                                  f"({device['device_id']}): "
+                                  f"{device['lifecycle']}/{device['trust']} "
+                                  f"executable={device['executable']}"
+                                  + (f" · {device['block_reason']}"
+                                     if device["block_reason"] else ""))
+                if view in ("all", "registry"):
+                    data = payload["registry"]
+                    print(f"\nAGENT REGISTRY - matches: {data['matches']} "
+                          f"(query: {data['query'] or 'all'})")
+                    limit = 40 if query else 10
+                    if data["named"]:
+                        print("named:")
+                        for row in data["named"][:limit]:
+                            print(f"  {row['id']:10} {row['name']:9} "
+                                  f"{row['title'][:44]:46} "
+                                  f"{row['dispatch']}"[:200])
+                    if data["roles"]:
+                        print("roles:")
+                        for row in data["roles"][:limit]:
+                            print(f"  {row['id']:15} executor="
+                                  f"{row['executor'] or '-':10} "
+                                  f"acts={'yes' if row['may_act'] else 'no':3} "
+                                  f"{row['dispatch']}"[:200])
+                    if data["executors"]:
+                        print("executors:")
+                        for row in data["executors"][:limit]:
+                            print(f"  {row['id']:15} {row['state']:8} "
+                                  f"{row['dispatch']}"[:200])
+                    if data["teams"]:
+                        print("teams: " + ", ".join(
+                            row["id"] for row in data["teams"]))
+                    if data["harness"]:
+                        print("ECC harness:")
+                        for row in data["harness"][:limit]:
+                            print(f"  {row['kind']:10} {row['id']:22} "
+                                  f"{row['dispatch']}"[:200])
+                    if not data["matches"]:
+                        print("  (no matches)")
+            if view == "health":
+                status = payload["health"].get("status")
+                jarvis.close()
+                return 0 if status == "ok" else 1 if status == "degraded" else 2
+        elif args.action == "ask":
+            from .agents.stark import briefing, dispatch, find_ai, names
+            parts = list(args.text)
+            if len(parts) < 2:
+                print("usage: jarvis agents ask <name> <goal>")
+                print("names: " + ", ".join(names()))
+                jarvis.close()
+                return 2
+            profile = find_ai(parts[0])
+            if profile is None:
+                print(f"unknown AI: {parts[0]}")
+                print("names: " + ", ".join(names()))
+                jarvis.close()
+                return 2
+            try:
+                out = dispatch(orch, profile, " ".join(parts[1:]),
+                               depth=args.depth)
+            except ValueError as exc:
+                print(f"error: {exc}")
+                jarvis.close()
+                return 2
+            if args.json:
+                print(json.dumps({
+                    "ai": out["stark"], "task_id": out["task_id"],
+                    "run_id": out.get("run_id", ""), "ok": out["ok"],
+                    "failure": out.get("failure", ""),
+                    "result": out["result"], "state": out["state"],
+                    "blackboard": out["blackboard"]},
+                    indent=2, default=str))
+            else:
+                print(briefing(profile))
+                print(f"signature: {profile.signature}")
+                print("--- work ---")
+                print(json.dumps(out["result"], indent=2, default=str))
+                print("--- trace ---")
+                print(orch.explain(out["task_id"]))
+                if not out["ok"]:
+                    print(f"failure: {out.get('failure', '')}")
+            if not out["ok"]:
+                jarvis.close()
+                return 1
+        elif args.action == "list":
             for card in role_cards():
                 print(f"{card.role_id:15} executor={card.executor or '-':10} "
                       f"model={card.model_requirements:9} "
                       f"{','.join(card.skills) or 'reasoning-only'}")
+            print("\nnamed AI roster: jarvis agents roster")
         elif args.action == "teams":
             for name, stages in TEAMS.items():
                 print(f"{name}: {' → '.join(r for r, _ in stages)}")

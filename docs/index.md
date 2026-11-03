@@ -31,6 +31,7 @@ The language model is not the security boundary. Model output is treated as a pr
 | docs/NEURAL_NERVOUS_SYSTEM.md | Neural subsystem architecture |
 | docs/ANDROID_NODE.md | Android node design |
 | docs/ANDROID_TRANSPORT.md | Android transport and pairing |
+| docs/STARK_AI_ROSTER.md | Named Stark AI roster and safety boundaries |
 | docs/ | Technical architecture and implementation notes |
 
 ## Development

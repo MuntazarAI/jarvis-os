@@ -107,6 +107,15 @@ class JarvisAPI:
             if method == "GET" and path.split("?", 1)[0] == "/api/board":
                 from .board import build_board
                 return 200, build_board(self.jarvis)
+            if method == "GET" and path.split("?", 1)[0].rstrip("/") == \
+                    "/api/agents/reach":
+                from ..agents.reach import build_reach
+                from urllib.parse import parse_qs
+                raw = path.split("?", 1)[1] if "?" in path else ""
+                query = parse_qs(raw)
+                view = (query.get("view", ["all"])[0] or "all").lower()
+                text = (query.get("q", [""])[0] or "")[:120]
+                return 200, build_reach(self.jarvis, query=text, view=view)
             if method == "GET" and path.split("?", 1)[0] == "/api/experience":
                 from .experience import build_experience
                 return 200, build_experience(self.jarvis)

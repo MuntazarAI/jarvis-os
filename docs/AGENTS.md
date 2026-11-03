@@ -76,6 +76,14 @@ opposing verdicts on one subject.
 - decision: research → reasoning → critic → knowledge-gap → communication
 - daily: executive → memory → world → planner → coder → verifier
 
+## Named AI roster
+
+The MCU-named specialist team (JARVIS, FRIDAY, KAREN, EDITH, VERONICA,
+ULTRON, VISION) is a persona layer over these roles. It adds no model
+instances and no permissions: each profile binds to an existing role, and
+every tool call still passes `PolicyEngine`. ULTRON and VISION are
+contained with `may_act=False`. See `docs/STARK_AI_ROSTER.md`.
+
 ## Security
 
 Every tool call passes `PolicyEngine.evaluate`; approval tokens are

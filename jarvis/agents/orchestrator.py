@@ -843,12 +843,24 @@ class Orchestrator:
 
     def _h_critic(self, card, goal, board, task_id, *a) -> AgentResult:
         findings: list[str] = []
-        for entry in board.read("results") + board.read("decisions"):
-            content = str(entry.content)
-            if any(w in content.lower() for w in
+        claims = [str(entry.content)
+                  for entry in board.read("results") + board.read("decisions")]
+        if not claims:
+            # A bare plan is still a claim worth attacking. This is what
+            # lets a contained red-team profile work on a fresh board.
+            claims = [goal]
+        for content in claims:
+            low = content.lower()
+            if any(w in low for w in
                    ("always", "never", "certainly", "definitely", "prove")):
                 findings.append(f"absolute claim without proof: {content[:100]}")
-            if "assume" in content.lower() and "evidence" not in content.lower():
+            if any(w in low for w in
+                   ("delete", "remove", "drop", "wipe", "disable", "bypass",
+                    "force push", "reset --hard")):
+                findings.append(
+                    "destructive or bypass-shaped proposal needs rollback "
+                    f"and explicit approval: {content[:100]}")
+            if "assume" in low and "evidence" not in low:
                 findings.append(f"assumption without cited evidence: {content[:100]}")
         for entry in board.read("evidence"):
             if isinstance(entry.content, dict) and not entry.content.get("recalled"):
@@ -909,17 +921,43 @@ class Orchestrator:
     def _h_verifier(self, card, goal, board, task_id, *a) -> AgentResult:
         checks: list[str] = []
         results = [e for e in board.read("results")]
-        if not results and not board.read("decisions"):
+        evidence = board.read("evidence")
+        if not results:
+            # A decision trace is not a checked result. Evidence without a
+            # result verdict is support, not verification.
+            if not evidence:
+                board.write("verification",
+                            {"subject": goal, "verdict": "uncertain",
+                             "checks": ["no evidence or result entries"]},
+                            author="verifier", provenance="verifier-agent",
+                            confidence=0.75)
+                return AgentResult(
+                    success=False, role="verifier",
+                    output={"checks": ["no evidence or result entries"]},
+                    verification_status=VerificationStatus.UNCERTAIN,
+                    ended_at=now(), confidence=0.75,
+                    errors=["nothing with a verdict to verify"])
+            checks.append("evidence only; no result verdict")
+            board.write("verification",
+                        {"subject": goal, "verdict": "uncertain",
+                         "checks": checks},
+                        author="verifier", provenance="verifier-agent",
+                        confidence=0.75)
             return AgentResult(
-                success=False, role="verifier", errors=["nothing to verify"],
+                success=True, role="verifier", output={"checks": checks},
                 verification_status=VerificationStatus.UNCERTAIN,
-                ended_at=now())
+                ended_at=now(), confidence=0.75)
         ok = True
         for entry in results:
             content = entry.content
-            if isinstance(content, dict) and content.get("verdict") == "failed":
+            if not isinstance(content, dict):
+                continue
+            verdict = content.get("verdict")
+            if verdict in ("failed", "challenged"):
                 ok = False
                 checks.append(f"failed verdict from {entry.author}")
+            elif verdict:
+                checks.append(f"{entry.author} verdict: {verdict}")
         status = VerificationStatus.VERIFIED if ok else VerificationStatus.FAILED
         board.write("verification", {"subject": goal, "verdict": status.value,
                                      "checks": checks},

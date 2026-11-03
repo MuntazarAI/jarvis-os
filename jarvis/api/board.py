@@ -144,6 +144,13 @@ def _approvals(policy: Any) -> list[dict[str, Any]]:
     return _safe(_read, [])
 
 
+def _reach_info(jarvis: Any) -> dict[str, Any]:
+    def _read() -> dict[str, Any]:
+        from ..agents.reach import reach_summary
+        return reach_summary(jarvis)
+    return _safe(_read, {"status": "unknown"})
+
+
 def build_board(jarvis: Any) -> dict[str, Any]:
     """Assemble the snapshot. Never raises; unknowns are explicit."""
     try:
@@ -161,6 +168,7 @@ def build_board(jarvis: Any) -> dict[str, Any]:
             "durable": _durable_info(home),
             "voice": _voice_info(jarvis),
             "approvals": _approvals(policy),
+            "reach": _reach_info(jarvis),
             "events": _safe(lambda: {
                 "count": events.count(),
                 "types": events.types()}, {"status": "unknown"}),
@@ -281,6 +289,12 @@ agentRows = Object.entries(ag || sys).slice(0, 8).map(([k, v]) =>
 }
 g.push(card("agents / mesh", agentRows.length ? agentRows :
 [["agents", "none"]]));
+let reach = b.reach || {};
+g.push(card("agent reach", [["status", reach.status ?? "?"],
+["roles", reach.roles ?? "?"], ["acting", reach.acting_roles ?? "?"],
+["devices", (reach.devices ?? "?") + "/" + (reach.device_total ?? "?")],
+["ecc", (reach.ecc_skills ?? 0) + " skills · " +
+(reach.ecc_agents ?? 0) + " agents"]]));
 let m = b.missions || {};
 g.push(card("missions", [["missions",
 (m.missions || []).length], ["objectives",
