@@ -122,6 +122,9 @@ def test_pending_endpoint_gated_and_shaped():
 
     policy = NS(approvals={
         "appr-full-secret-1": {"actor": "computer", "action": "restart",
+                               "args": {"service": "camera",
+                                        "token": "never-show",
+                                        "command": "restart --password=hunter2"},
                                "risk": 0.8, "requested_at": 1.0,
                                "status": "pending"},
         "appr-old": {"actor": "x", "action": "y",
@@ -139,6 +142,10 @@ def test_pending_endpoint_gated_and_shaped():
     assert len(out["approvals"]) == 1  # only pending
     assert out["approvals"][0]["token"] == "appr-full-secret-1"
     assert out["approvals"][0]["action"] == "restart"
+    args = out["approvals"][0]["args"]
+    assert args["service"] == "camera"
+    assert args["token"] == "[redacted]"
+    assert "hunter2" not in args["command"]
 
 
 def test_office_has_approval_modal():
@@ -146,3 +153,4 @@ def test_office_has_approval_modal():
     assert "appr-modal" in OFFICE_HTML
     assert "api/approvals/pending" in OFFICE_HTML
     assert "api/approvals/decision" in OFFICE_HTML
+    assert "one.args" in OFFICE_HTML  # bound args shown before approval

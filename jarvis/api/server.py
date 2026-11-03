@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from ..core.loop import Jarvis
+from ..policy.policy import sanitize_approval_args
 
 
 def _bearer_ok(provided: str, expected: str) -> bool:
@@ -252,6 +253,8 @@ class JarvisAPI:
                         "token": str(token)[:128],
                         "action": str(record.get("action", ""))[:200],
                         "actor": str(record.get("actor", ""))[:40],
+                        "args": sanitize_approval_args(
+                            record.get("args") or {}),
                         "risk": record.get("risk", "?"),
                         "requested_at": record.get(
                             "requested_at", 0.0)})

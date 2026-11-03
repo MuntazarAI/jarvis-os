@@ -242,10 +242,13 @@ let fresh = list.filter(x => !seenApprovals[x.token]);
 if (!fresh.length) return;
 let one = fresh[0];
 seenApprovals[one.token] = true; currentAppr = one.token;
+let argText = one.args && Object.keys(one.args).length ?
+" · args " + JSON.stringify(one.args).slice(0, 240) : "";
 document.getElementById("appr-what").textContent =
 (one.actor ? one.actor + " wants: " : "") + one.action;
 document.getElementById("appr-meta").textContent =
-"risk " + one.risk + " · single-use · decide here, no terminal needed";
+"risk " + one.risk + argText +
+" · single-use · decide here, no terminal needed";
 document.getElementById("appr-modal").style.display = "flex"; }
 async function decideAppr(ok) {
 if (!currentAppr) return;

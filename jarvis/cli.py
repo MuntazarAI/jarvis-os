@@ -1282,9 +1282,13 @@ def _approvals_action(jarvis: Any, args: Any) -> int:
     if action == "list":
         found = policy.list_approvals(
             getattr(args, "state", "") or None)
-        lines = [f"{a['approval_id']:16} {a['actor']:12} "
-                 f"{a['action'][:40]:42} {a['status']}"
-                 for a in found]
+        lines = []
+        for a in found:
+            lines.append(f"{a['approval_id']:16} {a['actor']:12} "
+                         f"{a['action'][:40]:42} {a['status']}")
+            if a.get("args"):
+                lines.append("  args=" + json.dumps(
+                    a["args"], sort_keys=True, default=str)[:300])
         return _out({"approvals": found},
                     "APPROVALS\n" + "\n".join(lines) or "no approvals")
     full = _resolve_policy_token(policy, getattr(args, "token", ""))
@@ -1293,11 +1297,17 @@ def _approvals_action(jarvis: Any, args: Any) -> int:
                     "unknown or ambiguous token (need 4+ unique chars)", 1)
     if action == "show":
         entry = policy.approvals.get(full, {})
+        from .policy.policy import sanitize_approval_args
         info = {"approval_id": full[:12] + "…",
                 "actor": entry.get("actor", ""),
                 "action": str(entry.get("action", ""))[:120],
+                "args": sanitize_approval_args(entry.get("args") or {}),
                 "status": entry.get("status", "")}
-        return _out(info, "\n".join(f"{k}={v}" for k, v in info.items()))
+        text = "\n".join(
+            f"{k}={json.dumps(v, sort_keys=True, default=str)}"
+            if k == "args" else f"{k}={v}"
+            for k, v in info.items())
+        return _out(info, text)
     if action == "approve":
         ok = policy.approve(full, by="cli")
         return _out({"approved": ok}, "approved" if ok else
