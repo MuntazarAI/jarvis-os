@@ -121,6 +121,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("devices", help="capability snapshot: voice, vision, computer, models")
 
+    exp = sub.add_parser("experience", help="Experience Layer foundation: read-only status")
+    exp.add_argument("action", nargs="?", default="status",
+                     choices=["status"])
+    exp.add_argument("--json", action="store_true", help="emit JSON")
+
     rep = sub.add_parser(
         "report", help="read-only SQL reports over existing JARVIS stores")
     rep.add_argument("name", nargs="?", default="list",
@@ -5135,6 +5140,18 @@ def main(argv: list[str] | None = None) -> int:
                   f"(limit {payload.get('limit', '?')})")
         jarvis.close()
         return 0 if payload.get("ok") else 1
+
+    if args.command == "experience":
+        from .ui.experience import status_snapshot
+        snap = status_snapshot(jarvis)
+        if args.json:
+            print(json.dumps(snap, indent=2, default=str))
+        else:
+            print(f"Experience Layer foundation: {'OK' if snap.get('ok') else 'ERROR'}")
+            if snap.get("note"):
+                print(snap["note"])
+        jarvis.close()
+        return 0 if snap.get("ok") else 1
 
     if args.command == "integration":
         return _integration_action(jarvis, args)
