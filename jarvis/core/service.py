@@ -227,7 +227,8 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
         checks.append(HealthCheck("computer:input", ctrl.input.status()["daemon"],
                                   "ydotoold running"
                                   if ctrl.input.status()["daemon"]
-                                  else "ydotoold not running"))
+                                  else "ydotoold not running (optional; see "
+                                       "docs/OPTIONAL_HOST_CAPABILITIES.md)"))
     except Exception as exc:
         checks.append(HealthCheck("computer", False, str(exc)[:100]))
     try:
