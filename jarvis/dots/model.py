@@ -124,13 +124,18 @@ class Checkpoint:
 
 @dataclass
 class Dot:
-    """Persistent responsibility owner. All state JSON-serializable."""
+    """Persistent responsibility owner. All state JSON-serializable.
+
+    OpenDots-inspired: each Dot is a specialist with a name, role,
+    instructions, permitted tools, and an optional assigned computer.
+    """
 
     dot_id: str = field(default_factory=lambda: new_id("dot"))
     name: str = ""
     description: str = ""
     role: str = "general"
     goal: str = ""
+    instructions: str = ""  # System instructions for this Dot (OpenDots-style)
     status: DotStatus = DotStatus.CREATED
     priority: int = 5
     created_at: float = field(default_factory=now)
@@ -138,6 +143,7 @@ class Dot:
     workspace: dict[str, Any] = field(default_factory=dict)
     memory_refs: list[str] = field(default_factory=list)
     tools: list[str] = field(default_factory=list)
+    permitted_tools: list[str] = field(default_factory=list)  # Explicit tool allowlist
     skills: list[str] = field(default_factory=list)
     permissions: list[str] = field(default_factory=list)
     trigger_subscriptions: list[str] = field(default_factory=list)
@@ -149,6 +155,17 @@ class Dot:
     failures: list[str] = field(default_factory=list)
     schema_version: int = DOT_SCHEMA_VERSION
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    # OpenDots: Dot computer assignment
+    computer_id: str = ""  # Assigned Dot computer (OpenBot-style)
+    computer_config: dict[str, Any] = field(default_factory=dict)
+
+    # OpenDots: Space membership (workspace)
+    space_id: str = ""
+
+    # OpenDots: Ask → Browse → Approve → Save workflow
+    ask_before_act: bool = False  # Require human approval before actions
+    require_approval_for: list[str] = field(default_factory=list)  # Specific actions needing approval
 
     def transition(self, to_status: DotStatus) -> None:
         validate_transition(self.status, to_status)
@@ -173,6 +190,7 @@ class Dot:
             description=data.get("description", ""),
             role=data.get("role", "general"),
             goal=data.get("goal", ""),
+            instructions=data.get("instructions", ""),
             status=parsed,
             priority=int(data.get("priority", 5)),
             created_at=data.get("created_at", now()),
@@ -180,6 +198,7 @@ class Dot:
             workspace=dict(data.get("workspace", {})),
             memory_refs=list(data.get("memory_refs", [])),
             tools=list(data.get("tools", [])),
+            permitted_tools=list(data.get("permitted_tools", [])),
             skills=list(data.get("skills", [])),
             permissions=list(data.get("permissions", [])),
             trigger_subscriptions=list(
@@ -191,4 +210,10 @@ class Dot:
             trace_refs=list(data.get("trace_refs", [])),
             failures=list(data.get("failures", [])),
             schema_version=int(data.get("schema_version", 1)),
-            metadata=dict(data.get("metadata", {})))
+            metadata=dict(data.get("metadata", {})),
+            computer_id=data.get("computer_id", ""),
+            computer_config=dict(data.get("computer_config", {})),
+            space_id=data.get("space_id", ""),
+            ask_before_act=bool(data.get("ask_before_act", False)),
+            require_approval_for=list(data.get("require_approval_for", [])),
+        )

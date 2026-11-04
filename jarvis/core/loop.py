@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..agents.agents import Supervisor
+from ..agents.stark import init_internet_access, init_skill_registry
 from ..cognition.cognition import AttentionController, ExecutiveFunction, Perception, Reflector, Understander
 from ..cognition.dialogue import NON_ACTING, DialogueAct, DialogueContext, DialogueRouter
 from ..cognition.mentalist import MentalistMode
@@ -143,6 +144,9 @@ class Jarvis:
             grant_store_path=str(
                 self.config.paths.resolve("home")
                 / POLICY_GRANTS_FILENAME))
+        # Controlled internet access + skill evolution (both PolicyEngine-gated)
+        self.internet = init_internet_access(self.policy)
+        self.skills = init_skill_registry(self.policy)
         self.tools: ToolRegistry = default_tools()
         try:
             from ..computer.computer import ComputerController, computer_tools
@@ -169,7 +173,8 @@ class Jarvis:
         self.dots = DotManager(DotDependencies(
             tasks=self.tasks, palace=self.palace,
             world_registry=self.world_registry, triggers=self.triggers,
-            store=self.dot_store, policy=self.policy))
+            store=self.dot_store, policy=self.policy,
+            internet=self.internet, skills=self.skills))
         from ..missions.manager import MissionDependencies, MissionManager
         from ..world.registry import JsonFileWorldStore as MissionStore
         self.mission_store = MissionStore(
@@ -178,7 +183,7 @@ class Jarvis:
             tasks=self.tasks, dots=self.dots, palace=self.palace,
             world_registry=self.world_registry, triggers=self.triggers,
             store=self.mission_store, policy=self.policy,
-            bus=self.bus))
+            bus=self.bus, internet=self.internet, skills=self.skills))
         from ..device.fabric import DeviceFabric
         self.device_fabric = DeviceFabric(
             self.config.paths.home, config=self.config.device_fabric,
@@ -935,6 +940,16 @@ class Jarvis:
             "gods_eye_app": self.gods_eye_app.status(),
             "gods_eye_live": self.live_eye.status(),
             "device_fabric": self.device_fabric.status(),
+            "internet": {
+                "grants": {
+                    agent_id: self.internet.list_grants(agent_id)
+                    for agent_id in (self.internet.grants if self.internet else {})
+                }
+            } if self.internet else {},
+            "skills": {
+                agent_id: self.skills.list_skills(agent_id)
+                for agent_id in (self.skills.skills if self.skills else {})
+            } if self.skills else {},
         }
 
     def poll_proactive(self) -> list[str]:

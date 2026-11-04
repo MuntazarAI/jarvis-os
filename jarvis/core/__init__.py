@@ -1,6 +1,7 @@
-"""JARVIS Core - Configuration, Loop, Service, Types, Logging."""
+"""JARVIS Core - Configuration, Loop, Service, Types, Logging, Internet, Skills."""
 
 from .config import JarvisConfig
+from .internet import InternetAccess, InternetGrant
 from .service import ServiceManager, HealthCheck, check_dependencies
 from .types import (
     now, new_id, content_hash,
@@ -30,6 +31,8 @@ def _get_loop():
 
 __all__ = [
     "JarvisConfig",
+    "InternetAccess",
+    "InternetGrant",
     "ServiceManager",
     "HealthCheck",
     "check_dependencies",
