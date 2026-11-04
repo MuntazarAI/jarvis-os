@@ -57,9 +57,10 @@ class WorldModel:
         existing = self._entities.get(entity_id)
         if existing:
             existing.attributes.update(attrs)
-            existing.last_updated = now()
+            existing.last_updated = self.now()
             return existing
-        entity = WorldEntity(entity_id=entity_id, kind=kind, name=name, attributes=attrs)
+        entity = WorldEntity(entity_id=entity_id, kind=kind, name=name,
+                             attributes=attrs, last_updated=self.now())
         self._entities[entity_id] = entity
         return entity
 
@@ -347,7 +348,7 @@ class WorldModel:
         entry = {
             "objects": objects,
             "sensor": sensor,
-            "observed_at": now(),
+            "observed_at": self.now(),
             "history": self._rooms.get(room, {}).get("history", [])[-9:],
         }
         entry["history"] = [*entry["history"], {"at": entry["observed_at"], "objects": objects}]
@@ -400,7 +401,7 @@ class WorldModel:
             "rooms": self._rooms,
             "system": self.system_state(),
             "network": self.network_topology(),
-            "captured_at": now(),
+            "captured_at": self.now(),
         }
 
     def restore(self, data: dict[str, Any]) -> None:

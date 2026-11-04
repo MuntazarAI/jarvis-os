@@ -199,6 +199,20 @@ def test_graph_integration():
         (dst, rel, conf) for dst, rel, conf in graph.neighbors("application:firefox")]
 
 
+def test_world_clock_skew_applies_consistently():
+    """Adjusted clock must cover creation, updates, rooms, and snapshots."""
+    model = WorldModel()
+    model.sync_clock(3600.0)
+    before = time.time()
+    created = model.upsert("device", "lamp", state="on")
+    updated = model.upsert("device", "lamp", state="off")
+    room = model.record_room("office", {"mug": "desk"})
+    snapshot = model.snapshot()
+    for stamp in (created.last_updated, updated.last_updated,
+                  room["observed_at"], snapshot["captured_at"]):
+        assert stamp >= before + 3599.0
+
+
 def test_live_capture_and_loop_integration(tmp_path):
     from jarvis.core.loop import Jarvis
     model = WorldModel()
