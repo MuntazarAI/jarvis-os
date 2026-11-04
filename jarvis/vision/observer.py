@@ -64,9 +64,10 @@ class VisionObserver:
 
     def _vision_ready(self) -> bool:
         try:
-            from ..models.ollama import OllamaClient
-            client = OllamaClient()
-            return client.alive() and client.has("minicpm-v:latest")
+            from ..models.ollama import OllamaClient, OllamaConfig
+            config = OllamaConfig()
+            client = OllamaClient(config)
+            return client.alive() and client.has(config.vision_model)
         except Exception:
             return False
 

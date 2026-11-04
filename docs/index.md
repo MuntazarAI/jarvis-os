@@ -34,6 +34,8 @@ The language model is not the security boundary. Model output is treated as a pr
 | docs/STARK_AI_ROSTER.md | Named Stark AI roster and safety boundaries |
 | docs/ECC_INTEGRATION.md | Curated ECC skills and subagents for OpenCode |
 | docs/SECURITY_INTEL.md | Durable findings, remediation, and security benchmark |
+| docs/SCREEN_UNDERSTANDING.md | Model-free AT-SPI/OCR screen reading and safety bounds |
+| docs/REPORTS.md | Bounded read-only SQL reports and the polyglot boundary |
 | docs/ | Technical architecture and implementation notes |
 
 ## Development

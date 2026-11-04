@@ -17,6 +17,7 @@ from typing import Any
 
 from ..core.types import RiskLevel
 from ..tools.tools import Tool, ToolResult, ToolSpec
+from .screen_reader import ScreenReader
 
 
 def _run(cmd: list[str], timeout: float = 15.0) -> subprocess.CompletedProcess:
@@ -227,12 +228,14 @@ class ComputerController:
     windows: WindowController = field(default_factory=WindowController)
     clipboard: ClipboardController = field(default_factory=ClipboardController)
     input: InputController = field(default_factory=InputController)
+    reader: ScreenReader = field(default_factory=ScreenReader)
 
     def status(self) -> dict[str, Any]:
         return {"screenshot": self.screen.available(),
                 "windows": self.windows.available(),
                 "clipboard_gtk": ClipboardController._gtk_read is not None,
                 "input": self.input.status(),
+                "accessibility": self.reader.status(),
                 "session": "wayland/gnome",
                 "limits": ["full-desktop screenshot needs portal consent",
                            "input automation is HIGH risk: approval-gated"]}
@@ -264,6 +267,15 @@ def computer_tools(controller: ComputerController | None = None) -> list[Tool]:
         Tool(ToolSpec("window_list", "List visible application windows",
                        RiskLevel.SAFE, 10.0, ["desktop.windows"]),
              lambda: _wrap("window_list", ctrl.windows.list_windows)),
+        Tool(ToolSpec("screen_understand",
+                       "Read the accessible screen tree without a model "
+                       "(roles, labels, visible text, focus)",
+                       RiskLevel.SAFE, 15.0, ["desktop.accessibility"]),
+             lambda include_ocr=False: _wrap(
+                 "screen_understand",
+                 lambda: ctrl.reader.read(
+                     include_ocr=(include_ocr is True or
+                                  str(include_ocr).lower() in ("1", "true", "yes"))))),
         Tool(ToolSpec("window_focus", "Focus a window by id",
                        RiskLevel.MEDIUM, 10.0, ["desktop.windows"]),
              lambda window_id="": _wrap(

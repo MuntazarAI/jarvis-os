@@ -21,7 +21,7 @@ class OllamaConfig:
     timeout: float = 120.0
     default_model: str = "qwen2.5:3b"
     coding_model: str = "qwen2.5-coder:3b"
-    vision_model: str = "minicpm-v:latest"
+    vision_model: str = "qwen3-vl:2b"
     embedding_model: str = "nomic-embed-text:latest"
 
 

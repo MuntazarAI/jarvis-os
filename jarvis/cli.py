@@ -110,7 +110,25 @@ def build_parser() -> argparse.ArgumentParser:
                      help="OCR-only, skip the slow scene model")
     see.add_argument("--ask", default="Briefly describe what you see.")
 
+    screen = sub.add_parser(
+        "screen", help="read the screen without a model (AT-SPI + optional OCR)")
+    screen.add_argument("--json", action="store_true",
+                        help="emit the full structured snapshot")
+    screen.add_argument("--ocr", action="store_true",
+                        help="also OCR a screenshot (slow, XWayland scope)")
+    screen.add_argument("--system-ui", action="store_true",
+                        help="include shell/portal accessibility trees")
+
     sub.add_parser("devices", help="capability snapshot: voice, vision, computer, models")
+
+    rep = sub.add_parser(
+        "report", help="read-only SQL reports over existing JARVIS stores")
+    rep.add_argument("name", nargs="?", default="list",
+                     help="report name, or 'list'")
+    rep.add_argument("--limit", type=int, default=20,
+                     help="maximum rows (1-200, default 20)")
+    rep.add_argument("--json", action="store_true",
+                     help="emit structured JSON")
 
     fab = sub.add_parser("device-fabric", help="distributed device mesh: enroll, trust, route")
     fab.add_argument("action", nargs="?", default="status",
@@ -5009,6 +5027,18 @@ def main(argv: list[str] | None = None) -> int:
         jarvis.close()
         return 0
 
+    if args.command == "screen":
+        from .computer.screen_reader import ScreenReader
+        reader = ScreenReader()
+        result = reader.read(include_ocr=args.ocr,
+                             include_system_ui=args.system_ui)
+        if args.json:
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            print(reader.summary(result))
+        jarvis.close()
+        return 0 if result.get("ok") else 1
+
     if args.command == "see":
         from .vision.observer import VisionObserver
         observer = VisionObserver()
@@ -5076,6 +5106,35 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(snapshot, indent=2, default=str))
         jarvis.close()
         return 0
+
+    if args.command == "report":
+        from .reports.runner import list_reports, run_report
+        if args.name == "list":
+            payload: dict[str, Any] = {"ok": True, "reports": list_reports()}
+            print(json.dumps(payload, indent=2, default=str))
+            jarvis.close()
+            return 0
+        try:
+            payload = run_report(args.name, str(jarvis.config.paths.home),
+                                 limit=args.limit)
+        except ValueError as exc:
+            print(f"report: {exc}")
+            jarvis.close()
+            return 2
+        if args.json:
+            print(json.dumps(payload, indent=2, default=str))
+        elif not payload.get("ok"):
+            print("report failed: " + str(payload.get("error", "unknown")))
+        else:
+            columns = payload.get("columns") or []
+            print("\t".join(columns))
+            for row in payload.get("rows", []):
+                print("\t".join(str(row.get(column, "")) for column in columns))
+            print(f"\n{payload.get('row_count', 0)} row(s) from "
+                  f"{payload.get('database', '?')} "
+                  f"(limit {payload.get('limit', '?')})")
+        jarvis.close()
+        return 0 if payload.get("ok") else 1
 
     if args.command == "integration":
         return _integration_action(jarvis, args)

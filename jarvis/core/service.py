@@ -16,6 +16,12 @@ from typing import Any
 
 from .config import JarvisConfig
 
+EXPECTED_OLLAMA_MODELS = (
+    "qwen2.5:3b",
+    "qwen3-vl:2b",
+    "nomic-embed-text:latest",
+)
+
 
 @dataclass
 class HealthCheck:
@@ -96,7 +102,7 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
             names = [m.get("name", "") for m in
                      json.loads(resp.read()).get("models", [])]
         checks.append(HealthCheck("ollama", True, f"{len(names)} models", True))
-        for want in ("qwen2.5:3b", "minicpm-v:latest", "nomic-embed-text:latest"):
+        for want in EXPECTED_OLLAMA_MODELS:
             checks.append(HealthCheck(f"model:{want}", want in names,
                                       "pulled" if want in names else "missing"))
     except Exception as exc:
@@ -108,6 +114,14 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
     checks.append(HealthCheck("microphone", shutil.which("arecord") is not None,
                               "arecord present"
                               if shutil.which("arecord") else "no capture tool"))
+    try:
+        import pyatspi  # type: ignore  # noqa: F401
+        atspi_ok = pyatspi.Registry.getDesktop(0) is not None
+        atspi_detail = "AT-SPI tree available" if atspi_ok else "AT-SPI bus empty"
+    except Exception as exc:
+        atspi_ok = False
+        atspi_detail = f"pyatspi unavailable: {type(exc).__name__}"
+    checks.append(HealthCheck("screen-reader:atspi", atspi_ok, atspi_detail))
     try:
         from ..geospatial.live import LiveIntelligenceService
         home = str(config.paths.home) if config else ""
