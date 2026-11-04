@@ -3752,6 +3752,13 @@ def _feedback_action(jarvis: Any, args: Any) -> int:
     return 0
 
 
+def _doctor_mark(check: Any) -> str:
+    """Required failures are FAIL; optional gaps are WARN, not red."""
+    if getattr(check, "ok", False):
+        return "ok "
+    return "FAIL" if getattr(check, "required", False) else "WARN"
+
+
 def _setup_action(jarvis: Any, args: Any) -> int:
     """Guided first-run checklist. Read-only; exit 1 when any required
     check fails so scripts can gate on it."""
@@ -5043,7 +5050,7 @@ def main(argv: list[str] | None = None) -> int:
         checks = check_dependencies(jarvis.config)
         bad = [c.name for c in checks if not c.ok]
         for check in checks:
-            mark = "ok " if check.ok else "FAIL"
+            mark = _doctor_mark(check)
             req = " (required)" if check.required else ""
             print(f"[{mark}] {check.name}: {check.detail}{req}")
         return 0 if not [c for c in checks if c.required and not c.ok] else 1
