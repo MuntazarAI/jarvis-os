@@ -336,7 +336,7 @@ uv pip install --python .venv/bin/python faster-whisper sounddevice pytest
 source .venv/bin/activate
 ```
 
-System backends are detected automatically when available, including Ollama, espeak-ng, Tesseract, FFmpeg, and ydotool.
+System backends are detected automatically when available, including Ollama, espeak-ng, Tesseract, FFmpeg, and ydotool. Optional setups that need root access or large downloads are documented in [docs/OPTIONAL_HOST_CAPABILITIES.md](docs/OPTIONAL_HOST_CAPABILITIES.md).
 
 ---
 

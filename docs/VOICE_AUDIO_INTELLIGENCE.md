@@ -177,7 +177,14 @@ correlation, telemetry hygiene, speak wiring, cognitive handoff,
 replay/simulation, CLI/doctor, E2E fake loop; real Chatterbox test
 skips honestly when unavailable (`NOT AVAILABLE`, never fake-passed).
 
-## Status / limitations (this host, 2026-10-03)
+## Status / limitations (reference host snapshot, 2026-10-03)
+
+> Current check (2026-11-04): the runtime described below is **not
+> installed** on the present host, so `jarvis doctor` reports
+> `voice:chatterbox` as a non-fatal `WARN`. The snapshot is kept as
+> benchmark evidence, not as a claim of current availability. See
+> [OPTIONAL_HOST_CAPABILITIES.md](OPTIONAL_HOST_CAPABILITIES.md) for
+> install and removal steps.
 
 Chatterbox runtime: AVAILABLE via bridge
 (`~/.config/jarvis/chatterbox-venv`, Python 3.12.13, torch 2.6.0+cpu,

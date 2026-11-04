@@ -36,6 +36,7 @@ The language model is not the security boundary. Model output is treated as a pr
 | docs/SECURITY_INTEL.md | Durable findings, remediation, and security benchmark |
 | docs/SCREEN_UNDERSTANDING.md | Model-free AT-SPI/OCR screen reading and safety bounds |
 | docs/REPORTS.md | Bounded read-only SQL reports and the polyglot boundary |
+| docs/OPTIONAL_HOST_CAPABILITIES.md | Optional ydotoold/uinput and Chatterbox setup, limits, and revoke steps |
 | docs/ | Technical architecture and implementation notes |
 
 ## Development
