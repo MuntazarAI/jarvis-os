@@ -151,6 +151,13 @@ def _reach_info(jarvis: Any) -> dict[str, Any]:
     return _safe(_read, {"status": "unknown"})
 
 
+def _security_info(home: str) -> dict[str, Any]:
+    def _read() -> dict[str, Any]:
+        from ..security.intel import board_security_info
+        return board_security_info(home)
+    return _safe(_read, {"posture": "unknown"})
+
+
 def build_board(jarvis: Any) -> dict[str, Any]:
     """Assemble the snapshot. Never raises; unknowns are explicit."""
     try:
@@ -169,6 +176,7 @@ def build_board(jarvis: Any) -> dict[str, Any]:
             "voice": _voice_info(jarvis),
             "approvals": _approvals(policy),
             "reach": _reach_info(jarvis),
+            "security": _security_info(home),
             "events": _safe(lambda: {
                 "count": events.count(),
                 "types": events.types()}, {"status": "unknown"}),
@@ -295,6 +303,20 @@ g.push(card("agent reach", [["status", reach.status ?? "?"],
 ["devices", (reach.devices ?? "?") + "/" + (reach.device_total ?? "?")],
 ["ecc", (reach.ecc_skills ?? 0) + " skills · " +
 (reach.ecc_agents ?? 0) + " agents"]]));
+let sec = b.security || {};
+let sev = (sec.counts && sec.counts.by_severity) || {};
+let secRows = [["posture", sec.posture ?? "?"],
+["open", (sec.counts && sec.counts.open) ?? "?"],
+["critical/high", (sev.critical ?? 0) + "/" + (sev.high ?? 0)],
+["validated", (sec.counts && sec.counts.validated) ?? "?"],
+["reverified", (sec.counts && sec.counts.reverified) ?? "?"],
+["store", sec.store ?? "?"]];
+g.push(card("security", secRows));
+if (Array.isArray(sec.findings) && sec.findings.length) {
+g.push(card("security findings", sec.findings.slice(0, 6).map(f =>
+[(f.severity || "?") + " · " + (f.state || "?"),
+(f.finding_id || "") + " " + (f.title || "").slice(0, 60)])));
+}
 let m = b.missions || {};
 g.push(card("missions", [["missions",
 (m.missions || []).length], ["objectives",

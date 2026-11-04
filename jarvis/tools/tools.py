@@ -391,6 +391,39 @@ def filesystem_move(src: str, dest_dir: str, new_name: str = "") -> ToolResult:
         return _fail("filesystem_move", f"{type(exc).__name__}: {exc}")
 
 
+def code_security_scan(target: str = ".") -> ToolResult:
+    """Read-only static security scan of an explicitly supplied path.
+
+    Heuristic leads with file:line evidence only. A clean result means
+    "no rule matched", never "secure"; nothing is executed or fetched.
+    """
+    from ..security.findings import scrub_text
+    from ..security.review import review_path
+    report = review_path(target)
+    if report.get("status") == "error":
+        return _fail("code_security_scan",
+                     str(report.get("verdict", "scan failed")))
+    findings = []
+    for item in report.get("findings", [])[:50]:
+        findings.append({
+            "file": scrub_text(item.get("file", ""), limit=200),
+            "line": int(item.get("line", 0) or 0),
+            "severity": str(item.get("severity", "medium")),
+            "kind": str(item.get("kind", ""))[:80],
+            "owasp": str(item.get("owasp", ""))[:10],
+            "evidence": scrub_text(item.get("evidence", ""), limit=200),
+            "detail": scrub_text(item.get("detail", ""), limit=240)})
+    return _ok("code_security_scan", {
+        "target": str(report.get("target", ""))[:300],
+        "status": report.get("status", "unknown"),
+        "verdict": scrub_text(report.get("verdict", ""), limit=300),
+        "scanned": int(report.get("scanned", 0) or 0),
+        "skipped": int(report.get("skipped", 0) or 0),
+        "by_severity": report.get("by_severity", {}),
+        "findings": findings,
+        "verification": "heuristic-only — leads, not proof"})
+
+
 def default_registry() -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(Tool(ToolSpec("filesystem_read", "Read a file or list a directory",
@@ -413,6 +446,11 @@ def default_registry() -> ToolRegistry:
                                 "(use INSTEAD of terminal browser commands — "
                                 "the server has no screen)",
                                 RiskLevel.SAFE, 5.0, []), open_url))
+    reg.register(Tool(ToolSpec(
+        "code_security_scan",
+        "Read-only static security scan of an explicitly supplied local "
+        "repository/file (deterministic heuristic leads, no execution)",
+        RiskLevel.SAFE, 60.0, ["fs.read"]), code_security_scan))
     from . import secaudit as _secaudit
     for _name, _desc in (
             ("net_inventory", "Host discovery or bounded port/service scan of an explicitly named host or small network"),
@@ -446,5 +484,5 @@ __all__ = [
     "RiskLevel", "Tool", "ToolRegistry", "ToolResult", "ToolSpec",
     "audit_log_entry", "default_registry", "describe_json_schema",
     "filesystem_read", "filesystem_write", "git_status", "python_run",
-    "system_probe", "terminal_run", "web_fetch",
+    "system_probe", "terminal_run", "web_fetch", "code_security_scan",
 ]

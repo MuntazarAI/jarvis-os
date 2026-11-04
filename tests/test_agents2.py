@@ -39,7 +39,7 @@ def _ctx(**kw):
 # -- contracts -------------------------------------------------------------
 def test_role_cards_complete_and_bound():
     cards = role_cards()
-    assert len(cards) == 31  # 30 original roles + tester agent
+    assert len(cards) == 38  # 31 prior roles + 7 security specialists
     by_id = {c.role_id: c for c in cards}
     assert by_id["tester"].skills == ["code.test"]
     assert by_id["tester"].version == "1.0"
@@ -151,7 +151,7 @@ def test_level0_and_level1_run():
 
 def test_teams_registered():
     assert set(TEAMS) == {"research", "coding", "debugging", "computer",
-                          "decision", "daily"}
+                          "decision", "daily", "security"}
     assert [r for r, _ in TEAMS["coding"]][:3] == ["planner", "coder", "verifier"]
 
 

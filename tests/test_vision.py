@@ -31,6 +31,8 @@ def test_see_file_missing():
 
 def test_see_file_fast_path():
     pytest.importorskip("PIL")
+    if not OCREngine().available():
+        pytest.skip("tesseract OCR backend not installed")
     from PIL import Image, ImageDraw
     img = Image.new("RGB", (800, 200), "white")
     ImageDraw.Draw(img).text((50, 70), "JARVIS deploy at 10:05", fill="black")

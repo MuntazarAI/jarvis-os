@@ -20,7 +20,7 @@ Welcome to the documentation hub.
 | Agents | `jarvis/agents/` + master map |
 | Tasks/workflows | `jarvis/tasks/` + master map |
 | Models | `jarvis/models/` + master map |
-| Security/policy | `jarvis/security/` + `jarvis/policy/` |
+| Security/policy | `jarvis/security/` + `jarvis/policy/`; see [SECURITY_INTEL.md](SECURITY_INTEL.md) |
 | Voice/vision | `jarvis/voice/` + `jarvis/vision/` |
 | API | `jarvis/api/` |
 

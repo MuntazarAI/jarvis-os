@@ -544,6 +544,13 @@ class PolicyEngine:
         home = self.config.paths.home
         return (Path(home) / self.config.policy.emergency_stop_file).exists()
 
+    def emergency_stop_engaged(self) -> bool:
+        """Public, read-only e-stop predicate for durable/security layers."""
+        try:
+            return self._emergency_stop()
+        except Exception:
+            return True  # fail closed when state cannot be read
+
     def engage_stop(self) -> Path:
         target = Path(self.config.paths.home) / self.config.policy.emergency_stop_file
         target.parent.mkdir(parents=True, exist_ok=True)

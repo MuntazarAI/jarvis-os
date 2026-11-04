@@ -1,6 +1,6 @@
 """Agent Intelligence 2.0 — contracts, skills, role cards.
 
-Roles are logical capabilities, not processes: 30 role cards bind to the 8
+Roles are logical capabilities, not processes: 38 role cards bind to the 8
 existing executor agents (supervisor/planner/researcher/coder/analyst/
 computer/guardian/librarian) plus subsystem callables. No new model
 instances are created here; the ModelRouter decides invocation depth.
@@ -100,6 +100,20 @@ _DEFAULT_SKILLS = [
     Skill("security.audit", "defensive audit tools (inventory, web/dir/hash/sqli-scan, capture read)",
           ["net_inventory", "web_audit", "dir_enum", "hash_audit",
            "sqli_scan", "capture_read"], ["sec.audit"], "high"),
+    Skill("security.intel", "durable security intel: discover, validate, report",
+          ["code_security_scan"], ["fs.read"], "low"),
+    Skill("security.code", "static code security analysis (leads only)",
+          ["code_security_scan", "filesystem_read"], ["fs.read"], "low"),
+    Skill("security.dependencies", "dependency/supply-chain hygiene review",
+          ["code_security_scan", "filesystem_read"], ["fs.read"], "low"),
+    Skill("security.config", "configuration/environment audit",
+          ["code_security_scan", "filesystem_read"], ["fs.read"], "low"),
+    Skill("security.secrets", "secret-exposure detection (values redacted)",
+          ["code_security_scan", "filesystem_read"], ["fs.read"], "low"),
+    Skill("security.remediation", "reviewed remediation + re-verification",
+          ["code_security_scan", "filesystem_read"], ["fs.read"], "low"),
+    Skill("security.report", "bounded security posture reporting",
+          ["code_security_scan"], ["fs.read"], "low"),
     Skill("model.route", "capability-based model selection", [], [], "low"),
 ]
 
@@ -187,7 +201,7 @@ def _card(role_id: str, role: str, executor: str, model: str,
 
 
 def role_cards() -> list[AgentCard]:
-    """The 30-role organization bound to existing executors + subsystems."""
+    """The 38-role organization bound to existing executors + subsystems."""
     R = _card
     return [
         R("orchestrator", "Orchestrator", "supervisor", "reasoning",
@@ -254,10 +268,49 @@ def role_cards() -> list[AgentCard]:
           ["advisory only — never blocks by itself"],
           ["code.search"], ["fs.read"], may_act=False),
         R("security", "Security Agent", "guardian", "fast",
-          ["tool-request review", "injection/SSRF/secret detection",
-           "defensive audit scans of operator-named targets"],
-          ["integrate with PolicyEngine, never bypass it"],
+          ["security orchestration", "tool-request review",
+           "injection/SSRF/secret detection",
+           "defensive audit scans of operator-named targets",
+           "durable discover → validate → report"],
+          ["integrate with PolicyEngine, never bypass it",
+           "remediation needs approval and independent re-check"],
+          ["security.scan", "security.audit", "security.intel"], ["fs.read"]),
+        R("code-security", "Code Security Analyst", "analyst", "reasoning",
+          ["static code review", "injection/deserialization/traversal leads",
+           "file:line evidence", "false-positive triage"],
+          ["leads are not proof", "never modify code directly"],
+          ["security.code", "code.search"], ["fs.read"]),
+        R("dependency-security", "Dependency Security Analyst", "analyst", "fast",
+          ["dependency manifests", "pinning/wildcard review",
+           "cleartext index and VCS sources", "supply-chain hygiene"],
+          ["no CVE claims without a ground-truth source"],
+          ["security.dependencies"], ["fs.read"]),
+        R("config-security", "Configuration Auditor", "analyst", "fast",
+          ["debug exposure", "TLS verification", "CORS and bind posture",
+           "cookie/security settings"],
+          ["report environment-specific risk without guessing"],
+          ["security.config", "security.code"], ["fs.read"]),
+        R("web-security", "Web/API Security Auditor", "guardian", "fast",
+          ["authorized web/API checks", "TLS/header posture",
+           "detection-only injection scan", "evidence capture"],
+          ["only operator-named targets", "no exploitation or dumping"],
           ["security.scan", "security.audit"], []),
+        R("secrets-exposure", "Secrets Exposure Analyst", "guardian", "fast",
+          ["credential-shaped span detection", "location reporting",
+           "redaction verification"],
+          ["never echo secret values", "recommend vault/env rotation"],
+          ["security.secrets", "security.code"], ["fs.read"]),
+        R("remediation-verifier", "Remediation Verifier", "analyst", "fast",
+          ["post-change re-check", "before/after evidence",
+           "verification verdicts"],
+          ["only a clean re-check marks reverified",
+           "proposed patches are never 'fixed'"],
+          ["security.remediation", "security.code"], ["fs.read"]),
+        R("security-report", "Security Report Analyst", "analyst", "fast",
+          ["posture summaries", "severity/state aggregation",
+           "asset and provenance reporting"],
+          ["bounded, scrubbed reports only", "unknown stays unknown"],
+          ["security.report"], [], may_act=False),
         R("privacy", "Privacy Agent", "guardian", "fast",
           ["PII/secret classification", "outbound + log review", "minimization"],
           ["block unnecessary exposure"],

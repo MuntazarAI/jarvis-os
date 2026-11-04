@@ -1,7 +1,7 @@
 # Agent Intelligence 2.0 — architecture
 
 One controlled cognitive system with specialized reasoning capabilities.
-Roles are logical, not processes: 30 role cards execute through the 8
+Roles are logical, not processes: 38 role cards execute through the 8
 existing executor agents plus bound subsystems. No new model instances.
 
 ## Topology
@@ -75,6 +75,9 @@ opposing verdicts on one subject.
 - computer: vision → planner → security → computer → verifier
 - decision: research → reasoning → critic → knowledge-gap → communication
 - daily: executive → memory → world → planner → coder → verifier
+- security: security(scope) → code-security → config-security →
+  dependency-security → secrets-exposure → remediation-verifier →
+  security-report
 
 ## Named AI roster
 
@@ -91,6 +94,12 @@ surfaced, never auto-approved. Emergency stop terminates execution
 (bus CANCEL + supervisor path unchanged). External content is scanned
 with `security.guards.scan_injection`; SSRF-checked fetches only.
 Memory writes keep Memory 3.0 origin semantics.
+
+Security Intelligence 1.0 adds a durable finding layer over these
+controls: deterministic discovery, source re-checks, single-use
+approval-bound remediation through `filesystem_write`, and post-change
+re-verification. A proposal is never a fix; only `reverified` closes a
+finding. See `docs/SECURITY_INTEL.md`.
 
 ## Resource management
 
