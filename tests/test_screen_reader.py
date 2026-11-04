@@ -94,7 +94,7 @@ def test_read_collects_roles_text_and_windows():
     assert by_role["terminal"][0]["text"] == "hello\nworld"
     assert by_role["button"][0]["name"] == "Save"
     assert by_role["entry"][0]["text"] == "visible query"
-    assert out["stats"]["passwords_skipped"] == 1
+    assert out["stats"]["redacted_fields"] == 1
 
 
 def test_password_content_never_leaves_reader():

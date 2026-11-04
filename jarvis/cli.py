@@ -5033,14 +5033,8 @@ def main(argv: list[str] | None = None) -> int:
         result = reader.read(include_ocr=args.ocr,
                              include_system_ui=args.system_ui)
         if args.json:
-            # The reader returns only a redacted marker for password fields;
-            # tests assert their content never reaches this payload. CodeQL
-            # cannot see through the role guard, so this is a scoped false
-            # positive rather than a real clear-text credential path.
-            # codeql[py/clear-text-logging-sensitive-data]
             print(json.dumps(result, indent=2, default=str))
         else:
-            # codeql[py/clear-text-logging-sensitive-data]
             print(reader.summary(result))
         jarvis.close()
         return 0 if result.get("ok") else 1

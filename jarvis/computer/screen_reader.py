@@ -111,7 +111,7 @@ class _ScanStats:
     total_nodes: int = 0
     total_elements: int = 0
     text_chars: int = 0
-    passwords_skipped: int = 0
+    redacted_fields: int = 0
     truncated: bool = False
     timed_out: bool = False
 
@@ -231,7 +231,7 @@ class ScreenReader:
                 "nodes": stats.total_nodes,
                 "elements": stats.total_elements,
                 "text_chars": stats.text_chars,
-                "passwords_skipped": stats.passwords_skipped,
+                "redacted_fields": stats.redacted_fields,
                 "truncated": stats.truncated,
                 "timed_out": stats.timed_out,
                 "elapsed_ms": int((self._monotonic() - started) * 1000),
@@ -352,7 +352,7 @@ class ScreenReader:
             return
 
         if role in _PASSWORD_ROLES or self._is_password(node, role):
-            stats.passwords_skipped += 1
+            stats.redacted_fields += 1
             key = ("password text", "[password field]", "")
             if key not in scan.seen:
                 scan.seen.add(key)
