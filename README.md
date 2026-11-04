@@ -266,6 +266,10 @@ jarvis mentalist "chair moved"
 
 jarvis see screen --fast
 jarvis see camera --fast
+jarvis screen
+jarvis screen --json
+jarvis report list
+jarvis report events-summary
 
 jarvis say "Voice online"
 jarvis listen --always --no-speak

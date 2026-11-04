@@ -191,13 +191,15 @@ class Jarvis:
             pass
         self.self_model = SelfModel(permissions=["fs.read", "exec.eval"])
         for perm in ("fs.read", "exec.eval", "desktop.screenshot",
-                     "desktop.windows", "clipboard.read"):
+                     "desktop.windows", "clipboard.read",
+                     "desktop.accessibility"):
             self.policy.grant("jarvis", perm)
         for perm in ("fs.read", "fs.write", "exec", "exec.eval", "vcs.read",
                      "net.fetch", "plan"):
             self.policy.grant("coder", perm)
             self.policy.grant("computer", perm)
-        for perm in ("desktop.screenshot", "desktop.windows", "clipboard.read"):
+        for perm in ("desktop.screenshot", "desktop.windows", "clipboard.read",
+                     "desktop.accessibility"):
             self.policy.grant("computer", perm)
         # clipboard write + input stay approval-gated: no standing grants.
         # bookkeeping

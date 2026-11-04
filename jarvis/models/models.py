@@ -203,7 +203,7 @@ def default_registry(config: JarvisConfig | None = None) -> ModelRegistry:
             ("ollama-fast", "fast", "qwen2.5:3b", 900.0),
             ("ollama-reasoning", "reasoning", "qwen2.5:3b", 1200.0),
             ("ollama-coding", "coding", "qwen2.5-coder:3b", 1300.0),
-            ("ollama-vision", "vision", "minicpm-v:latest", 2500.0),
+            ("ollama-vision", "vision", "qwen3-vl:2b", 2500.0),
             ("ollama-embed", "embedding", "nomic-embed-text:latest", 300.0),
         ]
         for entry_name, kind, backend_model, latency in specs:

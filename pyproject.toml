@@ -20,6 +20,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["jarvis*"]
 
+[tool.setuptools.package-data]
+"jarvis.reports" = ["sql/*.sql"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
