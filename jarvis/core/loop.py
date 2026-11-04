@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,6 +11,7 @@ from ..cognition.cognition import AttentionController, ExecutiveFunction, Percep
 from ..cognition.dialogue import NON_ACTING, DialogueAct, DialogueContext, DialogueRouter
 from ..cognition.mentalist import MentalistMode
 from ..core.config import JarvisConfig
+from ..core.logging import get_module_logger, trace_operation
 from ..core.types import ActionPlan, CognitiveReport, Confidence, Observation, RiskLevel, TaskState, now
 from ..events.store import Event, EventBus, EventStore
 from ..inference.analysis import Claim
@@ -25,6 +27,8 @@ from ..tasks.engine import TaskEngine, TriggerEngine
 from ..tools.tools import ToolRegistry, default_registry as default_tools
 from ..world.model import WorldModel
 from ..world.state import StateTracker
+
+log = get_module_logger(__name__)
 
 
 @dataclass
@@ -67,6 +71,17 @@ class Jarvis:
             from pathlib import Path
             self.config.paths.home = Path(home)
         self.config.ensure_dirs()
+        # Configure structured logging
+        from ..core.logging import configure_logging
+        from pathlib import Path
+        log_file = Path(self.config.paths.home) / self.config.logging.log_dir / "jarvis.log"
+        configure_logging(
+            level=getattr(logging, self.config.logging.level.upper(), logging.INFO),
+            json_format=self.config.logging.json_format,
+            log_file=log_file if self.config.logging.file_enabled else None,
+            console=self.config.logging.console_enabled,
+        )
+        log.info("Jarvis initialized", home=str(self.config.paths.home))
         # persistence
         db_path = str(self.config.paths.resolve("home") / self.config.paths.db)
         self.events = EventStore(
@@ -266,6 +281,7 @@ class Jarvis:
         stored_input, _ = redact_secret_spans(text[:200])
         self.bus.publish(Event(type="cycle.started", payload={"input": stored_input},
                                correlation_id=corr))
+        log.info("Cycle started", cycle=self.cycle, correlation_id=corr, source=source)
 
         # 1. perception
         obs = self.perception.perceive_text(text, source=source)
@@ -410,6 +426,10 @@ class Jarvis:
         # Full history is preserved in engine.history.
         for hyp in list(self.hypotheses.active.values()):
             self.hypotheses.resolve(hyp.hypothesis_id, status="closed-cycle")
+        duration = now() - started
+        log.info("Cycle completed", cycle=self.cycle, correlation_id=corr,
+                 intent=understanding.intent, duration_ms=round(duration * 1000, 2),
+                 actions=actions, tools=tools_used, risk_max=risk_max, blocked=blocked)
         result = CycleResult(
             cycle=self.cycle, input_text=text, response=response,
             intent=understanding.intent,
@@ -417,7 +437,7 @@ class Jarvis:
             actions_taken=actions, tools_used=tools_used,
             hypotheses=cycle_hypotheses,
             unknowns=unknowns, risk_max=risk_max, blocked=blocked,
-            duration=now() - started,
+            duration=duration,
             verification=verification, learned=learned,
             report=self.mentalist.report(unknowns=unknowns,
                                          next_test="none pending"),
@@ -857,10 +877,13 @@ class Jarvis:
 
     def _finish(self, text: str, response: str, intent: str,
                 started: float, corr: str) -> CycleResult:
+        duration = now() - started
         self.bus.publish(Event(type="cycle.completed",
                                payload={"intent": intent}, correlation_id=corr))
+        log.info("Cycle completed", cycle=self.cycle, correlation_id=corr,
+                 intent=intent, duration_ms=round(duration * 1000, 2))
         return CycleResult(cycle=self.cycle, input_text=text, response=response,
-                           intent=intent, duration=now() - started)
+                           intent=intent, duration=duration)
 
     # -- proactive ---------------------------------------------------------------
     def poll_triggers(self, signals: dict[str, Any] | None = None) -> list[str]:
