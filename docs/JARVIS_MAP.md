@@ -27,7 +27,7 @@ INPUT (text/voice/device/world)
               ▼                        ▼                        ▼
    ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
    │ COGNITIVE LOOP   │    │ AGENT MESH 1.0   │    │ DIRECT COMMANDS  │
-   │ talk/repl/voice  │    │ 31 roles, teams  │    │ say/device/world │
+   │ talk/repl/voice  │    │ 38 roles, teams  │    │ say/device/world │
    │ memory/world/KG  │    │ least-privilege  │    │ grants/doctor…   │
    │ policy → verify  │    │ tester, budgets  │    │ (31 cmds, kept)  │
    └────────┬─────────┘    └────────┬─────────┘    └──────────────────┘

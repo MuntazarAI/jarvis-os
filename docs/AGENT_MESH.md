@@ -6,7 +6,7 @@ No second planner/policy/memory/tools/event/trace system was created.
 
 ## Audit findings (what already existed)
 
-- `AgentCard`/`AgentResult`/`Skill`/`SkillRegistry` contracts (30 roles)
+- `AgentCard`/`AgentResult`/`Skill`/`SkillRegistry` contracts (38 roles)
 - `AgentRegistry` (spawn/shutdown/capability lookup), `Planner`
   (plan/validate/DAG/independent groups), `Supervisor`
   (submit/run_task/verify), `Orchestrator` (budgets, depth, teams,
@@ -29,6 +29,11 @@ No second planner/policy/memory/tools/event/trace system was created.
 - `_h_devops` actor corrected to `devops`
 - Delegation chain in run state; 3rd revisit of a role fails
   (verifier×2-style legitimate reuse still allowed)
+- Seven Security Intelligence specialist cards (`code-security`,
+  `config-security`, `dependency-security`, `web-security`,
+  `secrets-exposure`, `remediation-verifier`, `security-report`) plus
+  the existing `security` manager; all read-only except the manager's
+  policy/approval-bound remediation path
 
 ## Least privilege map (enforced)
 

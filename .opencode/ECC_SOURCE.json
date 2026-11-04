@@ -1,0 +1,77 @@
+{
+  "upstream": {
+    "name": "ECC",
+    "description": "Agent harness performance optimization system: skills, instincts, memory, security, and research-first development.",
+    "repository": "https://github.com/affaan-m/ECC",
+    "package": "ecc-universal",
+    "version": "2.2.3",
+    "revision": "npm:ecc-universal@2.2.3",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 Affaan Mustafa"
+  },
+  "integration": {
+    "mode": "curated-assets",
+    "tested_with": "opencode v2.2.5",
+    "reason": "ecc-universal@2.2.3 ships an OpenCode V1 plugin built against @opencode-ai/plugin. OpenCode V2 requires @opencode/plugin with Plugin.define and setup(ctx), and V1 plugin implementations do not run in V2. The skills and agent prompt content are portable, so they are vendored as curated Markdown assets instead of loading the plugin.",
+    "plugin_loaded": false,
+    "runtime_authority": false
+  },
+  "assets": [
+    {
+      "path": ".opencode/skills/security-review/SKILL.md",
+      "upstream": "skills/security-review/SKILL.md",
+      "kind": "skill",
+      "adapted": true,
+      "notes": "Rewritten around the JARVIS-OS policy, approval, device, and secret-handling boundaries."
+    },
+    {
+      "path": ".opencode/skills/python-patterns/SKILL.md",
+      "upstream": "skills/python-patterns/SKILL.md",
+      "kind": "skill",
+      "adapted": true,
+      "notes": "Condensed to stdlib-first, fail-closed conventions used by this repository."
+    },
+    {
+      "path": ".opencode/skills/python-testing/SKILL.md",
+      "upstream": "skills/python-testing/SKILL.md",
+      "kind": "skill",
+      "adapted": true,
+      "notes": "Rewritten for deterministic pytest, fakes, tmp_path, and secret-absence assertions."
+    },
+    {
+      "path": ".opencode/skills/verification-loop/SKILL.md",
+      "upstream": "skills/verification-loop/SKILL.md",
+      "kind": "skill",
+      "adapted": true,
+      "notes": "Phases retargeted to compileall, pytest, CLI exit codes, and repo security probes."
+    },
+    {
+      "path": ".opencode/skills/agent-harness-construction/SKILL.md",
+      "upstream": "skills/agent-harness-construction/SKILL.md",
+      "kind": "skill",
+      "adapted": true,
+      "notes": "Bound to ToolSpec, ToolResult, PolicyEngine, budgets, and device grants."
+    },
+    {
+      "path": ".opencode/agents/python-reviewer.md",
+      "upstream": "agents/python-reviewer.md",
+      "kind": "agent",
+      "adapted": true,
+      "notes": "Converted from V1 frontmatter to a V2 read-only subagent."
+    },
+    {
+      "path": ".opencode/agents/security-reviewer.md",
+      "upstream": "agents/security-reviewer.md",
+      "kind": "agent",
+      "adapted": true,
+      "notes": "Converted to V2 and focused on the JARVIS-OS threat model."
+    },
+    {
+      "path": ".opencode/agents/tdd-guide.md",
+      "upstream": "agents/tdd-guide.md",
+      "kind": "agent",
+      "adapted": true,
+      "notes": "Converted to V2 with edit and shell permissions limited to tests, jarvis, pytest, and read-only git."
+    }
+  ]
+}

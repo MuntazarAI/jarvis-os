@@ -15,6 +15,74 @@ from ..core.types import ActionPlan, RiskLevel, now
 
 POLICY_GRANTS_FILENAME = "policy-grants.json"
 
+# Approval arguments are operator-facing. Keep them readable but bounded,
+# and redact secret-shaped keys/values before they leave the policy layer.
+_SECRET_ARG_KEY_HINTS = (
+    "password", "passwd", "secret", "token", "credential", "api_key",
+    "apikey", "private_key", "privatekey", "auth", "passphrase",
+    "seed_phrase", "session", "cookie", "ssn",
+)
+_SECRET_ASSIGN_RE = re.compile(
+    r"(?i)\b(password|passwd|secret|token|api[_-]?key|apikey|"
+    r"authorization|passphrase)\b(\s*[:=]\s*)([^\s,;]+)")
+_BEARER_RE = re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]+")
+_URL_USERINFO_RE = re.compile(r"(?i)\b(https?://)[^/@\s]+@")
+
+
+def sanitize_approval_args(args: Any, *, max_depth: int = 3,
+                           max_items: int = 20,
+                           max_text: int = 200) -> Any:
+    """Return a bounded, secret-scrubbed view of approval-bound arguments.
+
+    The operator must see what they are approving, but raw arguments can
+    contain passwords, tokens, keys, or very large payloads. This keeps
+    structure and useful values while redacting secret-shaped keys,
+    ``key=value`` credentials, bearer tokens, and URL userinfo.
+    """
+    from ..perception.contract import redact_secret_spans
+
+    def _text(value: str) -> str:
+        clean = _SECRET_ASSIGN_RE.sub(
+            lambda m: f"{m.group(1)}{m.group(2)}[redacted]", value)
+        clean = _BEARER_RE.sub(
+            lambda m: f"{m.group(1)}[redacted]", clean)
+        clean = _URL_USERINFO_RE.sub(
+            lambda m: f"{m.group(1)}[redacted]@", clean)
+        clean, _ = redact_secret_spans(clean)
+        if len(clean) > max_text:
+            clean = clean[:max_text] + "…[truncated]"
+        return clean
+
+    def _walk(value: Any, depth: int) -> Any:
+        if depth > max_depth:
+            return "[redacted: nesting]"
+        if isinstance(value, dict):
+            out: dict[str, Any] = {}
+            for index, (key, item) in enumerate(value.items()):
+                if index >= max_items:
+                    out["…"] = f"[{len(value) - max_items} more keys]"
+                    break
+                name = str(key)[:64]
+                if any(hint in name.lower()
+                       for hint in _SECRET_ARG_KEY_HINTS):
+                    out[name] = "[redacted]"
+                else:
+                    out[name] = _walk(item, depth + 1)
+            return out
+        if isinstance(value, (list, tuple, set)):
+            items = list(value)
+            out = [_walk(item, depth + 1) for item in items[:max_items]]
+            if len(items) > max_items:
+                out.append(f"…[{len(items) - max_items} more items]")
+            return out
+        if isinstance(value, str):
+            return _text(value)
+        if isinstance(value, (int, float, bool)) or value is None:
+            return value
+        return _text(str(value))
+
+    return _walk(args if args is not None else {}, 0)
+
 
 @dataclass
 class PolicyDecision:
@@ -172,21 +240,41 @@ class PolicyEngine:
         except Exception:
             return None
 
+    def _approval_lock_path(self) -> Path | None:
+        """Lock file for the approval store itself.
+
+        Approvals persist under ``config.paths.home`` whether or not the
+        caller configured a grant store, so the lock must follow the
+        approval path. Sharing the grant lock (or using no lock) would let
+        two processes with different grant stores redeem the same token
+        concurrently.
+        """
+        path = self._approvals_path()
+        if path is None:
+            return None
+        return path.with_name(path.name + ".lock")
+
     def _approval_mutation(self):
-        """Lock, reload, mutate (caller), persist. Cross-process atomic."""
+        """Lock, reload, mutate (caller), persist. Cross-process atomic.
+
+        Yields a small outcome dict. ``outcome["persisted"]`` is true only
+        if the post-mutation write succeeded; callers that grant or spend
+        authority must check it before reporting success.
+        """
         import contextlib
 
         @contextlib.contextmanager
         def mutate():
-            lock = self._grant_lock_path()
+            outcome = {"persisted": False}
+            lock = self._approval_lock_path()
             if lock is None:
-                yield
-                self._save_approvals()
+                yield outcome
+                outcome["persisted"] = self._save_approvals()
                 return
             with self._flock_best_effort(lock):
                 self._load_approvals()
-                yield
-                self._save_approvals()
+                yield outcome
+                outcome["persisted"] = self._save_approvals()
         return mutate()
 
     def _load_approvals(self) -> int:
@@ -208,10 +296,11 @@ class PolicyEngine:
         self.approvals = fresh
         return len(fresh)
 
-    def _save_approvals(self) -> None:
+    def _save_approvals(self) -> bool:
+        """Persist approvals atomically. True only on a durable write."""
         path = self._approvals_path()
         if path is None:
-            return
+            return True  # in-memory engine: memory is authoritative
         payload = {"version": 1, "approvals": self.approvals}
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,8 +316,9 @@ class PolicyEngine:
             finally:
                 if os.path.exists(tmp):
                     os.unlink(tmp)
+            return True
         except OSError:
-            pass
+            return False
 
     def authorize_standing(self, actor: str, capability: str,
                            scope_kind: str, resource: str,
@@ -454,6 +544,13 @@ class PolicyEngine:
         home = self.config.paths.home
         return (Path(home) / self.config.policy.emergency_stop_file).exists()
 
+    def emergency_stop_engaged(self) -> bool:
+        """Public, read-only e-stop predicate for durable/security layers."""
+        try:
+            return self._emergency_stop()
+        except Exception:
+            return True  # fail closed when state cannot be read
+
     def engage_stop(self) -> Path:
         target = Path(self.config.paths.home) / self.config.policy.emergency_stop_file
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -489,25 +586,58 @@ class PolicyEngine:
 
     def _decide_approval(self, token: str, state: str,
                          by: str) -> bool:
-        with self._approval_mutation():
+        decided = False
+        with self._approval_mutation() as outcome:
             entry = self.approvals.get(token)
             if not entry or entry["status"] != "pending":
                 return False
             entry["status"] = state
             entry["by"] = by
             entry["decided_at"] = now()
-            return True
+            decided = True
+        if decided and not outcome["persisted"]:
+            self._load_approvals()  # disk remains authoritative
+            return False
+        return decided
 
     def approved(self, token: str) -> bool:
         self._load_approvals()
         return self.approvals.get(token, {}).get("status") == "approved"
 
+    def peek_approval(self, token: str, actor: str, action: str,
+                      args: dict[str, Any] | None = None) -> bool:
+        """Check an approval's full binding without spending it.
+
+        Used by preview/authorize paths that must not consume. Delivery
+        still calls :meth:`redeem` atomically; a peek is never authority
+        by itself. Fail closed on unknown, denied, spent, or misbound.
+        """
+        try:
+            self._load_approvals()
+            entry = self.approvals.get(token)
+            if entry is None or entry.get("status") != "approved":
+                return False
+            if entry.get("actor") != actor:
+                return False
+            if entry.get("action") != action:
+                return False
+            return dict(args or {}) == dict(entry.get("args") or {})
+        except Exception:
+            return False
+
     def redeem(self, token: str, actor: str, action: str,
                args: dict[str, Any] | None = None) -> bool:
         """Spend one approved token iff bindings match. Single-use:
-        approved → consumed. Never raises; fail closed."""
+        approved → consumed. Never raises; fail closed.
+
+        A redemption is reported only after the consumed state is
+        durably written. If the store is unwritable, the in-memory view
+        is reloaded from disk and the caller sees False, so a restart
+        cannot resurrect a token this call claimed to spend.
+        """
         try:
-            with self._approval_mutation():
+            redeemed = False
+            with self._approval_mutation() as outcome:
                 entry = self.approvals.get(token)
                 if entry is None or entry.get("status") != "approved":
                     return False
@@ -521,13 +651,21 @@ class PolicyEngine:
                     return False
                 entry["status"] = "consumed"
                 entry["consumed_at"] = now()
-                return True
+                redeemed = True
+            if redeemed and not outcome["persisted"]:
+                self._load_approvals()  # restore the last durable state
+                return False
+            return redeemed
         except Exception:
             return False
 
     def list_approvals(self, state: str | None = None,
                        limit: int = 100) -> list[dict[str, Any]]:
-        """Operator-safe listing: full tokens never included."""
+        """Operator-safe listing: full tokens never included.
+
+        Bound arguments are included in sanitized form so the human can
+        see exactly what they are approving without leaking credentials.
+        """
         self._load_approvals()
         out = []
         for token, entry in self.approvals.items():
@@ -536,6 +674,8 @@ class PolicyEngine:
             out.append({"approval_id": token[:12] + "…",
                         "actor": entry.get("actor", ""),
                         "action": str(entry.get("action", ""))[:80],
+                        "args": sanitize_approval_args(
+                            entry.get("args") or {}),
                         "risk": entry.get("risk", 0.0),
                         "status": entry.get("status", ""),
                         "requested_at": entry.get("requested_at", 0.0)})

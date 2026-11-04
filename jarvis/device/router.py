@@ -66,12 +66,13 @@ class DeviceRouter:
                               decision=authorized.get("decision"),
                               approval_token=authorized.get("approval_token"))
         device = authorized["device"]
-        # 5. Single-use durable approvals are consumed exactly once, here
-        # at delivery (authorize() only peeks). A lost race fails closed.
-        if (approval_token and self.approval_store is not None
-                and not self.policy.approved(approval_token)
-                and not self._consume_durable(
-                    actor, device_id, capability, args, approval_token)):
+        # 5. Single-use approvals are consumed exactly once, here at
+        # delivery (authorize() only peeks). This covers both durable
+        # ``apd-`` tokens and in-memory PolicyEngine ``appr-`` tokens:
+        # a lost race, replay, or wrong binding fails closed.
+        if (approval_token and authorized.get("approval_required")
+                and not self.consume_approval(
+                    actor, device, capability, args, approval_token)):
             return self._deny(actor, device_id, capability, args,
                               [self._durable_deny_reason])
         # 6. Dispatch over the transport to the node's handler.
@@ -143,7 +144,7 @@ class DeviceRouter:
         risk = self._capability_risk(device, capability)
         plan = ActionPlan(
             action=f"device.{capability} {device.name}".strip(),
-            args={"device_id": device_id, "capability": capability,
+            args={"device_id": device.device_id, "capability": capability,
                   "args": scrub(args)},
             required_permissions=[f"device.{capability}"],
             risk=RiskLevel.from_score(risk),
@@ -160,13 +161,13 @@ class DeviceRouter:
                     f"blocked by policy: {'; '.join(decision.reasons)}"]
                 return denied
         if decision.requires_approval:
-            if approval_token and self.policy.approved(approval_token):
-                approval_token = ""  # in-memory approval (compat path)
-            elif approval_token and self.approval_store is not None and self._peek_durable(
-                    actor, device_id, capability, args, approval_token):
-                pass  # durable approval verified; consumed at delivery
-            elif approval_token and self.approval_store is not None:
-                denied["reasons"] = [self._durable_deny_reason]
+            if approval_token and self.check_approval(
+                    approval_token, actor, device, capability, args):
+                pass  # verified binding; consumed exactly once at delivery
+            elif approval_token:
+                denied["reasons"] = [
+                    getattr(self, "_durable_deny_reason",
+                            "approval token rejected")]
                 return denied
             else:
                 token = self.policy.request_approval(actor, plan, decision)
@@ -174,7 +175,83 @@ class DeviceRouter:
                 denied["approval_token"] = token
                 return denied
         return {"authorized": True, "reasons": [], "device": device,
-                "decision": decision, "approval_token": approval_token}
+                "decision": decision, "approval_token": approval_token,
+                "approval_required": bool(decision.requires_approval)}
+
+    def _policy_plan(self, actor: str, device: Device, capability: str,
+                     args: dict[str, Any]) -> ActionPlan:
+        """Build the exact policy plan used for approval binding.
+
+        ``authorize()`` and delivery must agree byte-for-byte: a token is
+        valid only for this actor, action string, and scrubbed arguments.
+        """
+        return ActionPlan(
+            action=f"device.{capability} {device.name}".strip(),
+            args={"device_id": device.device_id, "capability": capability,
+                  "args": scrub(args)},
+            required_permissions=[f"device.{capability}"],
+            risk=RiskLevel.from_score(self._capability_risk(
+                device, capability)),
+        )
+
+    def check_approval(self, approval_token: str, actor: str,
+                       device: Device, capability: str,
+                       args: dict[str, Any]) -> bool:
+        """Peek (never consume) an approval and verify its binding.
+
+        Durable ``apd-`` tokens bind actor/device/capability/args in the
+        ApprovalStore. In-memory ``appr-`` tokens bind actor/action/args
+        in PolicyEngine. A bare "approved" status is never sufficient.
+        """
+        if not approval_token:
+            return False
+        if approval_token.startswith("apd-"):
+            return self._peek_durable(
+                actor, device.device_id, capability, args, approval_token)
+        peek = getattr(self.policy, "peek_approval", None)
+        if not callable(peek):
+            self._durable_deny_reason = "policy approval store unavailable"
+            return False
+        plan = self._policy_plan(actor, device, capability, args)
+        try:
+            ok = bool(peek(approval_token, actor, plan.action, plan.args))
+        except Exception as exc:
+            self._durable_deny_reason = (
+                f"approval check failed (fail closed): {exc}"[:160])
+            return False
+        if not ok:
+            self._durable_deny_reason = (
+                "policy approval rejected (denied, spent, or not bound)")
+        return ok
+
+    def consume_approval(self, actor: str, device: Device, capability: str,
+                         args: dict[str, Any], approval_token: str) -> bool:
+        """Consume an approval exactly once at delivery. Fail closed.
+
+        Never reports success based on status alone: ``PolicyEngine.redeem``
+        atomically checks the full binding and transitions approved →
+        consumed, and the durable store does the same for ``apd-`` tokens.
+        """
+        if not approval_token:
+            return True
+        if approval_token.startswith("apd-"):
+            return self._consume_durable(
+                actor, device.device_id, capability, args, approval_token)
+        redeem = getattr(self.policy, "redeem", None)
+        if not callable(redeem):
+            self._durable_deny_reason = "policy approval store unavailable"
+            return False
+        plan = self._policy_plan(actor, device, capability, args)
+        try:
+            ok = bool(redeem(approval_token, actor, plan.action, plan.args))
+        except Exception as exc:
+            self._durable_deny_reason = (
+                f"approval redeem failed (fail closed): {exc}"[:160])
+            return False
+        if not ok:
+            self._durable_deny_reason = (
+                "policy approval rejected (denied, spent, or not bound)")
+        return ok
 
     def _grant_substitutes_permission(self, actor: str, device_id: str,
                                         capability: str) -> bool:

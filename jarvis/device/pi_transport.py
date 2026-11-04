@@ -434,9 +434,9 @@ class PiSocketHost:
             return router._deny(actor, device_id, command,
                                  checked["args"],
                                  ["device has no live socket lane"])
-        if (approval_token and not router.policy.approved(approval_token)
-                and not router._consume_durable(
-                    actor, device_id, capability, checked["args"],
+        if (approval_token and gate.get("approval_required")
+                and not router.consume_approval(
+                    actor, device, capability, checked["args"],
                     approval_token)):
             return router._deny(actor, device_id, command,
                                  checked["args"],

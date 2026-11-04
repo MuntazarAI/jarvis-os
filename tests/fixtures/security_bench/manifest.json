@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "description": "Safe, intentionally vulnerable toy fixtures for the JARVIS security-intel benchmark. Ground truth only; no real targets.",
+  "cases": [
+    {
+      "name": "clean_app",
+      "path": "cases/clean_app",
+      "findings": []
+    },
+    {
+      "name": "secrets_app",
+      "path": "cases/secrets_app",
+      "findings": [
+        {"kind": "secret:aws-access-key", "file": "config.py", "line": 1, "severity": "high"},
+        {"kind": "secret:password-assign", "file": "config.py", "line": 2, "severity": "high"}
+      ]
+    },
+    {
+      "name": "injection_app",
+      "path": "cases/injection_app",
+      "findings": [
+        {"kind": "pattern:eval-exec", "file": "db.py", "line": 8, "severity": "medium"},
+        {"kind": "pattern:shell-true", "file": "db.py", "line": 9, "severity": "medium"},
+        {"kind": "pattern:pickle-loads", "file": "db.py", "line": 10, "severity": "medium"},
+        {"kind": "pattern:yaml-load", "file": "db.py", "line": 11, "severity": "medium"},
+        {"kind": "pattern:sql-concat", "file": "db.py", "line": 12, "severity": "high"}
+      ]
+    },
+    {
+      "name": "config_app",
+      "path": "cases/config_app",
+      "findings": [
+        {"kind": "pattern:ssrf-fetch", "file": "settings.py", "line": 9, "severity": "medium"},
+        {"kind": "pattern:tls-verify-off", "file": "settings.py", "line": 9, "severity": "high"},
+        {"kind": "pattern:debug-enabled", "file": "settings.py", "line": 12, "severity": "low"},
+        {"kind": "pattern:bind-all", "file": "settings.py", "line": 13, "severity": "low"},
+        {"kind": "pattern:cors-wildcard", "file": "settings.py", "line": 14, "severity": "medium"}
+      ]
+    },
+    {
+      "name": "deps_app",
+      "path": "cases/deps_app",
+      "findings": [
+        {"kind": "dependency:unpinned", "file": "requirements.txt", "line": 1, "severity": "low"},
+        {"kind": "dependency:wildcard", "file": "requirements.txt", "line": 4, "severity": "medium"},
+        {"kind": "dependency:insecure-index", "file": "requirements.txt", "line": 5, "severity": "high"},
+        {"kind": "dependency:vcs-http", "file": "requirements.txt", "line": 6, "severity": "high"}
+      ]
+    },
+    {
+      "name": "remediation_app",
+      "path": "cases/remediation_app",
+      "findings": [
+        {"kind": "pattern:yaml-load", "file": "settings.py", "line": 7, "severity": "medium"},
+        {"kind": "pattern:ssrf-fetch", "file": "settings.py", "line": 11, "severity": "medium"},
+        {"kind": "pattern:tls-verify-off", "file": "settings.py", "line": 11, "severity": "high"},
+        {"kind": "pattern:debug-enabled", "file": "settings.py", "line": 14, "severity": "low"}
+      ],
+      "remediations": [
+        {"kind": "pattern:yaml-load", "file": "settings.py", "replacement": "    return yaml.safe_load(stream)"},
+        {"kind": "pattern:tls-verify-off", "file": "settings.py", "replacement": "    return requests.get(\"https://example.com\", verify=True)"},
+        {"kind": "pattern:debug-enabled", "file": "settings.py", "replacement": "DEBUG = False"}
+      ]
+    }
+  ]
+}

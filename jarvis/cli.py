@@ -294,7 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
     ag = sub.add_parser("agents", help="multi-agent organization")
     ag.add_argument("action", nargs="?", default="list",
                     choices=["list", "status", "run", "explain", "teams",
-                             "world"])
+                             "world", "roster", "ask", "reach"])
     ag.add_argument("text", nargs="*", help="goal text for run")
     ag.add_argument("--team", default="",
                     help="team strategy: research/coding/debugging/computer/decision/daily")
@@ -473,13 +473,14 @@ def build_parser() -> argparse.ArgumentParser:
     grants.add_argument("--json", action="store_true",
                         help="machine-readable output")
 
-    sec = sub.add_parser("security", help="security: static self-review "
-                                         "(review) and policy-gated dynamic "
-                                         "scan (scan via Strix)")
+    sec = sub.add_parser("security", help="security: static review, policy-gated "
+                                         "scan, durable intel, findings, "
+                                         "remediation, benchmarks")
     sec.add_argument("action", nargs="?", default="review",
-                     choices=["review", "scan"])
+                     choices=["review", "scan", "intel", "findings",
+                              "validate", "remediate", "verify", "bench"])
     sec.add_argument("--target", default=".",
-                     help="directory/file (review) or path/URL (scan)")
+                     help="local repository/file (review/intel) or path/URL (scan)")
     sec.add_argument("--mode", default="quick",
                      choices=["quick", "standard", "deep"],
                      help="scan depth for `scan`")
@@ -493,6 +494,19 @@ def build_parser() -> argparse.ArgumentParser:
     sec.add_argument("--allow-nonlocal", action="store_true",
                      help="REQUIRED for scan: target is not local "
                           "(with --yes)")
+    sec.add_argument("--finding", default="",
+                     help="finding id for validate/remediate/verify")
+    sec.add_argument("--replacement", default="",
+                     help="reviewed single-line replacement for remediate")
+    sec.add_argument("--approval", default="",
+                     help="approved single-use token (or unique prefix) "
+                          "for remediate")
+    sec.add_argument("--actor", default="security-manager",
+                     help="policy actor used for remediation authorization")
+    sec.add_argument("--state", default="",
+                     help="filter findings by lifecycle state")
+    sec.add_argument("--severity", default="",
+                     help="filter findings by severity")
     sec.add_argument("--json", action="store_true",
                      help="machine-readable output")
 
@@ -1282,9 +1296,13 @@ def _approvals_action(jarvis: Any, args: Any) -> int:
     if action == "list":
         found = policy.list_approvals(
             getattr(args, "state", "") or None)
-        lines = [f"{a['approval_id']:16} {a['actor']:12} "
-                 f"{a['action'][:40]:42} {a['status']}"
-                 for a in found]
+        lines = []
+        for a in found:
+            lines.append(f"{a['approval_id']:16} {a['actor']:12} "
+                         f"{a['action'][:40]:42} {a['status']}")
+            if a.get("args"):
+                lines.append("  args=" + json.dumps(
+                    a["args"], sort_keys=True, default=str)[:300])
         return _out({"approvals": found},
                     "APPROVALS\n" + "\n".join(lines) or "no approvals")
     full = _resolve_policy_token(policy, getattr(args, "token", ""))
@@ -1293,11 +1311,17 @@ def _approvals_action(jarvis: Any, args: Any) -> int:
                     "unknown or ambiguous token (need 4+ unique chars)", 1)
     if action == "show":
         entry = policy.approvals.get(full, {})
+        from .policy.policy import sanitize_approval_args
         info = {"approval_id": full[:12] + "…",
                 "actor": entry.get("actor", ""),
                 "action": str(entry.get("action", ""))[:120],
+                "args": sanitize_approval_args(entry.get("args") or {}),
                 "status": entry.get("status", "")}
-        return _out(info, "\n".join(f"{k}={v}" for k, v in info.items()))
+        text = "\n".join(
+            f"{k}={json.dumps(v, sort_keys=True, default=str)}"
+            if k == "args" else f"{k}={v}"
+            for k, v in info.items())
+        return _out(info, text)
     if action == "approve":
         ok = policy.approve(full, by="cli")
         return _out({"approved": ok}, "approved" if ok else
@@ -3385,14 +3409,18 @@ def _scrub_payload(value: Any) -> Any:
 
 
 def _security_action(jarvis: Any, args: Any) -> int:
-    """Static self-review and policy-gated dynamic scanning.
+    """Static review, policy-gated scan, durable intel, remediation.
 
-    Exit codes are API: 0 clean/refused-nothing-to-do, 1 findings,
-    2 refused/misuse (incl. missing authorization), 3 unavailable/error.
+    Exit codes are API: 0 clean/success, 1 findings or unverified change,
+    2 refused/misuse/approval required, 3 unavailable/error/interrupted.
+    Existing `review` (0/1/3) and `scan` (0/1/2/3) semantics are kept.
     """
     as_json = bool(getattr(args, "json", False))
     action = getattr(args, "action", "review")
     target = str(getattr(args, "target", ".") or ".")
+    home = str(getattr(
+        getattr(getattr(jarvis, "config", None), "paths", None),
+        "home", "") or "")
 
     def _out(payload: Any, lines: list[str], code: int) -> int:
         if as_json:
@@ -3402,6 +3430,13 @@ def _security_action(jarvis: Any, args: Any) -> int:
             print("\n".join(str(_scrub_payload(line)) for line in lines))
         jarvis.close()
         return code
+
+    def _manager():
+        from .security.intel import SecurityManager
+        from .tools.tools import default_registry
+        return SecurityManager(
+            home, policy=getattr(jarvis, "policy", None),
+            tools=default_registry(), events=getattr(jarvis, "events", None))
 
     if action == "review":
         from .security.review import review_path
@@ -3417,7 +3452,175 @@ def _security_action(jarvis: Any, args: Any) -> int:
                          f"{finding['line']}")
         if report["status"] == "error":
             return _out(report, lines, 3)
+        if report.get("truncated"):
+            lines.append("scan limit reached: result is incomplete, "
+                         "not a clean pass")
+            return _out(report, lines, 3)
         return _out(report, lines, 1 if highs else 0)
+    if action == "intel":
+        from .security.intel import SecurityError
+        try:
+            result = _manager().intel(target, source="cli")
+        except SecurityError as exc:
+            return _out({"error": str(exc), "target": target[:200]},
+                        [f"INTEL refused: {exc}"], 2)
+        except Exception as exc:
+            return _out({"error": type(exc).__name__},
+                        [f"INTEL failed: {type(exc).__name__}"], 3)
+        counts = result.get("counts", {})
+        lines = [f"INTEL {result.get('task_id', '')} "
+                 f"state={result.get('state')} "
+                 f"posture={result.get('posture')} "
+                 f"open={counts.get('open', 0)} "
+                 f"total={counts.get('total', 0)}",
+                 f"target={result.get('target', '')}",
+                 f"verification={result.get('verification')}"]
+        for finding in result.get("findings", [])[:10]:
+            lines.append(f"  [{finding.get('severity')}] "
+                         f"{finding.get('state')} "
+                         f"{finding.get('finding_id')} "
+                         f"{finding.get('location')}")
+        if not result.get("complete"):
+            lines.append("interrupted: task is not success; resume with "
+                         f"`jarvis task resume {result.get('task_id', '')}`")
+            return _out(result, lines, 3)
+        if result.get("truncated"):
+            lines.append("scan limit reached: result is incomplete, "
+                         "not a clean pass")
+            return _out(result, lines, 3)
+        if result.get("state") in ("failed", "cancelled", "expired"):
+            return _out(result, lines, 3)
+        return _out(result, lines, 1 if counts.get("open", 0) else 0)
+    if action == "findings":
+        try:
+            manager = _manager()
+        except Exception as exc:
+            return _out({"error": type(exc).__name__},
+                        [f"FINDINGS failed: {type(exc).__name__}"], 3)
+        if manager.findings.corrupt:
+            return _out({"store": "quarantined",
+                         "detail": manager.findings.corrupt},
+                        ["FINDINGS store quarantined: "
+                         f"{manager.findings.corrupt}"], 3)
+        items = manager.findings.list(
+            state=str(getattr(args, "state", "") or ""),
+            severity=str(getattr(args, "severity", "") or ""))
+        payload = {"findings": [f.to_dict() for f in items],
+                   "counts": manager.findings.counts(),
+                   "posture": manager.findings.posture()}
+        lines = [f"FINDINGS posture={payload['posture']} "
+                 f"total={payload['counts']['total']} "
+                 f"open={payload['counts']['open']}"]
+        for finding in items[:20]:
+            lines.append(f"  [{finding.severity.value}] "
+                         f"{finding.state.value} {finding.finding_id} "
+                         f"{finding.location} {finding.title[:60]}")
+        return _out(payload, lines, 0)
+    if action == "validate":
+        manager = _manager()
+        ids = [str(getattr(args, "finding", "") or "")] if getattr(
+            args, "finding", "") else []
+        if ids and manager.findings.get(ids[0]) is None:
+            return _out({"error": "unknown finding"},
+                        [f"unknown finding: {ids[0]}"], 2)
+        try:
+            counts = manager.validate_findings(ids=ids or None)
+        except Exception as exc:
+            return _out({"error": type(exc).__name__},
+                        [f"VALIDATE failed: {type(exc).__name__}"], 3)
+        payload = {"counts": counts, "posture": manager.findings.posture()}
+        lines = [f"VALIDATE validated={counts['validated']} "
+                 f"resolved={counts['resolved']} "
+                 f"unknown={counts['unknown']}"]
+        return _out(payload, lines,
+                    0 if counts["unknown"] == 0 and
+                    counts["resolved"] == 0 else 3)
+    if action == "remediate":
+        from .security.intel import SecurityError
+        finding_id = str(getattr(args, "finding", "") or "")
+        if not finding_id:
+            return _out({"error": "need --finding"},
+                        ["usage: jarvis security remediate "
+                         "--finding <sec-id> [--replacement L]"], 2)
+        try:
+            result = _manager().apply_remediation(
+                finding_id,
+                replacement=str(getattr(args, "replacement", "") or ""),
+                approval=str(getattr(args, "approval", "") or ""),
+                actor=str(getattr(args, "actor", "") or "security-manager"))
+        except SecurityError as exc:
+            return _out({"error": str(exc)}, [f"REMEDIATE refused: {exc}"], 2)
+        except Exception as exc:
+            return _out({"error": type(exc).__name__},
+                        [f"REMEDIATE failed: {type(exc).__name__}"], 3)
+        status = result.get("status", "")
+        if status == "needs_approval":
+            token = str(result.pop("approval_token", ""))
+            result["approval_hint"] = token[:12] + "…"
+            lines = [
+                f"REMEDIATE {finding_id}: approval required",
+                f"action={result.get('approval_action', '')}",
+                f"token={token[:12]}…  "
+                f"(approve: jarvis approvals approve --token {token[:12]})",
+                "then rerun with --approval <token>",
+            ]
+            return _out(result, lines, 2)
+        lines = [f"REMEDIATE {finding_id}: {status}"]
+        if status == "remediated":
+            lines.append("change applied — NOT fixed until `security verify` "
+                         "re-checks the source")
+            return _out(result, lines, 0)
+        if status == "not_present":
+            lines.append(str(result.get("detail", "")))
+            return _out(result, lines, 1)
+        if status in ("write_failed", "write_mismatch", "unavailable"):
+            lines.append(str(result.get("detail", "")))
+            return _out(result, lines, 3)
+        lines.append(str(result.get("detail", "") or
+                         "; ".join(result.get("reasons", []))))
+        return _out(result, lines, 2)
+    if action == "verify":
+        from .security.intel import SecurityError
+        finding_id = str(getattr(args, "finding", "") or "")
+        if not finding_id:
+            return _out({"error": "need --finding"},
+                        ["usage: jarvis security verify --finding <sec-id>"],
+                        2)
+        try:
+            result = _manager().verify_remediation(finding_id)
+        except SecurityError as exc:
+            return _out({"error": str(exc)}, [f"VERIFY refused: {exc}"], 2)
+        except Exception as exc:
+            return _out({"error": type(exc).__name__},
+                        [f"VERIFY failed: {type(exc).__name__}"], 3)
+        status = result.get("status", "")
+        lines = [f"VERIFY {finding_id}: {status} "
+                 f"state={result.get('state', '')}"]
+        if status == "reverified":
+            return _out(result, lines, 0)
+        if status == "still_present":
+            lines.append("rule still matches — finding is not fixed")
+            return _out(result, lines, 1)
+        if status == "unknown":
+            return _out(result, lines, 3)
+        return _out(result, lines, 2)
+    if action == "bench":
+        from .security.bench import run_benchmark
+        try:
+            result = run_benchmark(target, home=home or "")
+        except Exception as exc:
+            return _out({"error": type(exc).__name__},
+                        [f"BENCH failed: {type(exc).__name__}"], 3)
+        metrics = result.get("metrics", {})
+        lines = [f"SECURITY BENCH cases={metrics.get('cases', 0)} "
+                 f"precision={metrics.get('precision', 0):.3f} "
+                 f"recall={metrics.get('recall', 0):.3f} "
+                 f"false_positives={metrics.get('false_positives', 0)}",
+                 f"validated={metrics.get('validated', 0)} "
+                 f"remediated_verified={metrics.get('remediated_verified', 0)} "
+                 f"latency_ms={metrics.get('latency_ms', 0):.1f} "
+                 f"deterministic={metrics.get('deterministic', False)}"]
+        return _out(result, lines, 0 if result.get("passed") else 1)
     if action == "scan":
         from .security.strix import run_scan, to_evidence
         result = run_scan(
@@ -3843,11 +4046,178 @@ def main(argv: list[str] | None = None) -> int:
         from .agents.contract import role_cards
         from .agents.orchestrator import TEAMS
         orch = jarvis.orchestrator
-        if args.action == "list":
+        if args.action == "roster":
+            from .agents.stark import STARK_ROSTER
+            if args.json:
+                print(json.dumps([ai.to_dict() for ai in STARK_ROSTER],
+                                 indent=2))
+            else:
+                print("NAMED AI ROSTER - personas over real roles; "
+                      "every action stays policy-gated")
+                print(f"{'id':8} {'name':8} {'roles':24} "
+                      f"{'acts':5} duty")
+                for ai in STARK_ROSTER:
+                    roles = " -> ".join(ai.role_ids) or "-"
+                    print(f"{ai.ai_id:8} {ai.name:8} {roles:24} "
+                          f"{'yes' if ai.may_act else 'no':5} "
+                          f"{ai.duties[0]}")
+                print("\nuse: jarvis agents ask <id> <goal>")
+                print("e.g. jarvis agents ask friday check system health")
+        elif args.action == "reach":
+            from .agents.reach import build_reach
+            parts = list(args.text)
+            sub = parts[0].lower() if parts else "all"
+            aliases = {"map": "permissions", "permissions": "permissions",
+                       "health": "health", "registry": "registry",
+                       "roster": "registry", "all": "all"}
+            if sub not in aliases:
+                sub, query = "all", " ".join(parts)
+            else:
+                query = " ".join(parts[1:])
+            view = aliases[sub]
+            try:
+                payload = build_reach(jarvis, query=query, view=view)
+            except Exception as exc:
+                print(f"reach unavailable: {type(exc).__name__}")
+                jarvis.close()
+                return 2
+            if args.json:
+                print(json.dumps(payload, indent=2, default=str))
+            else:
+                if view in ("all", "permissions"):
+                    data = payload["permissions"]
+                    print("PERMISSION REACH - declared, then policy-granted; "
+                          "read-only")
+                    print(f"{'role':15} {'acts':5} {'tools':5} {'grants':7} "
+                          f"{'devices':7} role")
+                    for role in data["roles"]:
+                        if not role["may_act"] and not role["tools"]:
+                            continue
+                        ready = sum(1 for tool in role["tools"]
+                                    if tool["reachable"])
+                        grants = role["policy_grants"]
+                        grant_text = "?" if grants is None else str(len(grants))
+                        devices = role["device_grants"]
+                        device_text = "?" if devices is None else str(
+                            sum(1 for item in devices if item["reachable"]))
+                        print(f"{role['role_id']:15} "
+                              f"{'yes' if role['may_act'] else 'no':5} "
+                              f"{ready}/{len(role['tools']):<3} "
+                              f"{grant_text:7} {device_text:7} "
+                              f"{role['role'][:48]}")
+                    summary = data["summary"]
+                    print(f"\nroles {summary['roles']} · acting "
+                          f"{summary['acting_roles']} · reachable tools "
+                          f"{summary['reachable_tools']}/"
+                          f"{summary['declared_tools']} · device grants "
+                          f"{summary['device_grants']} · suspended devices "
+                          f"{summary['suspended_devices']}")
+                if view in ("all", "health"):
+                    data = payload["health"]
+                    print(f"\nREACHABILITY HEALTH: {data['status']}")
+                    print(f"agents: {data['agents']['reachable']}/"
+                          f"{data['agents']['total']} reachable · "
+                          f"devices: {data['devices']['executable']}/"
+                          f"{data['devices']['total']} executable · "
+                          f"ECC: {data['harness'].get('skill_count', 0)} skills, "
+                          f"{data['harness'].get('agent_count', 0)} agents")
+                    for check in data["checks"]:
+                        state = ("ok" if check["ok"] is True else
+                                 "fail" if check["ok"] is False else "unknown")
+                        print(f"  {state:7} {check['name']}: "
+                              f"{check['detail']}"[:200])
+                    if view == "health":
+                        for device in data["devices"]["items"]:
+                            print(f"  device {device['name']} "
+                                  f"({device['device_id']}): "
+                                  f"{device['lifecycle']}/{device['trust']} "
+                                  f"executable={device['executable']}"
+                                  + (f" · {device['block_reason']}"
+                                     if device["block_reason"] else ""))
+                if view in ("all", "registry"):
+                    data = payload["registry"]
+                    print(f"\nAGENT REGISTRY - matches: {data['matches']} "
+                          f"(query: {data['query'] or 'all'})")
+                    limit = 40 if query else 10
+                    if data["named"]:
+                        print("named:")
+                        for row in data["named"][:limit]:
+                            print(f"  {row['id']:10} {row['name']:9} "
+                                  f"{row['title'][:44]:46} "
+                                  f"{row['dispatch']}"[:200])
+                    if data["roles"]:
+                        print("roles:")
+                        for row in data["roles"][:limit]:
+                            print(f"  {row['id']:15} executor="
+                                  f"{row['executor'] or '-':10} "
+                                  f"acts={'yes' if row['may_act'] else 'no':3} "
+                                  f"{row['dispatch']}"[:200])
+                    if data["executors"]:
+                        print("executors:")
+                        for row in data["executors"][:limit]:
+                            print(f"  {row['id']:15} {row['state']:8} "
+                                  f"{row['dispatch']}"[:200])
+                    if data["teams"]:
+                        print("teams: " + ", ".join(
+                            row["id"] for row in data["teams"]))
+                    if data["harness"]:
+                        print("ECC harness:")
+                        for row in data["harness"][:limit]:
+                            print(f"  {row['kind']:10} {row['id']:22} "
+                                  f"{row['dispatch']}"[:200])
+                    if not data["matches"]:
+                        print("  (no matches)")
+            if view == "health":
+                status = payload["health"].get("status")
+                jarvis.close()
+                return 0 if status == "ok" else 1 if status == "degraded" else 2
+        elif args.action == "ask":
+            from .agents.stark import briefing, dispatch, find_ai, names
+            parts = list(args.text)
+            if len(parts) < 2:
+                print("usage: jarvis agents ask <name> <goal>")
+                print("names: " + ", ".join(names()))
+                jarvis.close()
+                return 2
+            profile = find_ai(parts[0])
+            if profile is None:
+                print(f"unknown AI: {parts[0]}")
+                print("names: " + ", ".join(names()))
+                jarvis.close()
+                return 2
+            try:
+                out = dispatch(orch, profile, " ".join(parts[1:]),
+                               depth=args.depth)
+            except ValueError as exc:
+                print(f"error: {exc}")
+                jarvis.close()
+                return 2
+            if args.json:
+                print(json.dumps({
+                    "ai": out["stark"], "task_id": out["task_id"],
+                    "run_id": out.get("run_id", ""), "ok": out["ok"],
+                    "failure": out.get("failure", ""),
+                    "result": out["result"], "state": out["state"],
+                    "blackboard": out["blackboard"]},
+                    indent=2, default=str))
+            else:
+                print(briefing(profile))
+                print(f"signature: {profile.signature}")
+                print("--- work ---")
+                print(json.dumps(out["result"], indent=2, default=str))
+                print("--- trace ---")
+                print(orch.explain(out["task_id"]))
+                if not out["ok"]:
+                    print(f"failure: {out.get('failure', '')}")
+            if not out["ok"]:
+                jarvis.close()
+                return 1
+        elif args.action == "list":
             for card in role_cards():
                 print(f"{card.role_id:15} executor={card.executor or '-':10} "
                       f"model={card.model_requirements:9} "
                       f"{','.join(card.skills) or 'reasoning-only'}")
+            print("\nnamed AI roster: jarvis agents roster")
         elif args.action == "teams":
             for name, stages in TEAMS.items():
                 print(f"{name}: {' → '.join(r for r, _ in stages)}")

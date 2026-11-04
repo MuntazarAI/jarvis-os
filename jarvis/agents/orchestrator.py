@@ -165,6 +165,12 @@ TEAMS: dict[str, list[tuple[str, str]]] = {
     "daily": [("executive", "triage"), ("memory", "recall"),
               ("world", "situate"), ("planner", "plan"),
               ("coder", "execute"), ("verifier", "confirm")],
+    "security": [("security", "scope"), ("code-security", "code"),
+                 ("config-security", "config"),
+                 ("dependency-security", "dependencies"),
+                 ("secrets-exposure", "secrets"),
+                 ("remediation-verifier", "validate"),
+                 ("security-report", "report")],
 }
 
 
@@ -340,7 +346,9 @@ class Orchestrator:
     def run(self, goal: str, depth: int | None = None,
             team: str | None = None, task_id: str = "",
             budgets: Budgets | None = None,
-            parent_id: str = "") -> dict[str, Any]:
+            parent_id: str = "",
+            roles: list[tuple[str, str]] | None = None
+            ) -> dict[str, Any]:
         """Execute a goal. Returns blackboard summary + trace + result."""
         task_id = task_id or new_id("orch")
         budgets = budgets or self.budgets
@@ -363,7 +371,8 @@ class Orchestrator:
                     run_id=record.run_id, status="running",
                     budgets=budgets.to_dict())
 
-        stages = TEAMS.get(team or "", []) if team else []
+        stages = list(roles) if roles else (
+            TEAMS.get(team or "", []) if team else [])
         if level == 0 and not stages:
             result = self._run_role("communication", goal, board, task_id,
                                     state, budgets, deadline, depth=0)
@@ -392,6 +401,22 @@ class Orchestrator:
                 record.failure = f"{role_id}: " + "; ".join(result.errors)
                 break
         return self._finish(task_id, board, final, state, record)
+
+    def run_role(self, role_id: str, goal: str, *,
+                 purpose: str = "", depth: int | None = None,
+                 task_id: str = "",
+                 budgets: Budgets | None = None) -> dict[str, Any]:
+        """Run exactly one declared role.
+
+        Used by the named-AI roster for focused work. The role card is the
+        allow-list: an unknown role fails closed before any handler runs.
+        """
+        card = self.cards.get(role_id)
+        if card is None:
+            raise ValueError(f"unknown role: {role_id}")
+        return self.run(goal, depth=depth, task_id=task_id,
+                        budgets=budgets,
+                        roles=[(role_id, purpose or card.role)])
 
     def _stages_for(self, goal: str, level: int) -> list[tuple[str, str]]:
         low = goal.lower()
@@ -569,6 +594,13 @@ class Orchestrator:
             "debugger": self._h_debugger,
             "reviewer": self._h_reviewer,
             "security": self._h_security,
+            "code-security": self._h_security_specialist,
+            "dependency-security": self._h_security_specialist,
+            "config-security": self._h_security_specialist,
+            "web-security": self._h_security_specialist,
+            "secrets-exposure": self._h_security_specialist,
+            "remediation-verifier": self._h_security_specialist,
+            "security-report": self._h_security_specialist,
             "computer": self._h_computer,
             "browser": self._h_browser,
             "devops": self._h_devops,
@@ -824,12 +856,24 @@ class Orchestrator:
 
     def _h_critic(self, card, goal, board, task_id, *a) -> AgentResult:
         findings: list[str] = []
-        for entry in board.read("results") + board.read("decisions"):
-            content = str(entry.content)
-            if any(w in content.lower() for w in
+        claims = [str(entry.content)
+                  for entry in board.read("results") + board.read("decisions")]
+        if not claims:
+            # A bare plan is still a claim worth attacking. This is what
+            # lets a contained red-team profile work on a fresh board.
+            claims = [goal]
+        for content in claims:
+            low = content.lower()
+            if any(w in low for w in
                    ("always", "never", "certainly", "definitely", "prove")):
                 findings.append(f"absolute claim without proof: {content[:100]}")
-            if "assume" in content.lower() and "evidence" not in content.lower():
+            if any(w in low for w in
+                   ("delete", "remove", "drop", "wipe", "disable", "bypass",
+                    "force push", "reset --hard")):
+                findings.append(
+                    "destructive or bypass-shaped proposal needs rollback "
+                    f"and explicit approval: {content[:100]}")
+            if "assume" in low and "evidence" not in low:
                 findings.append(f"assumption without cited evidence: {content[:100]}")
         for entry in board.read("evidence"):
             if isinstance(entry.content, dict) and not entry.content.get("recalled"):
@@ -890,17 +934,43 @@ class Orchestrator:
     def _h_verifier(self, card, goal, board, task_id, *a) -> AgentResult:
         checks: list[str] = []
         results = [e for e in board.read("results")]
-        if not results and not board.read("decisions"):
+        evidence = board.read("evidence")
+        if not results:
+            # A decision trace is not a checked result. Evidence without a
+            # result verdict is support, not verification.
+            if not evidence:
+                board.write("verification",
+                            {"subject": goal, "verdict": "uncertain",
+                             "checks": ["no evidence or result entries"]},
+                            author="verifier", provenance="verifier-agent",
+                            confidence=0.75)
+                return AgentResult(
+                    success=False, role="verifier",
+                    output={"checks": ["no evidence or result entries"]},
+                    verification_status=VerificationStatus.UNCERTAIN,
+                    ended_at=now(), confidence=0.75,
+                    errors=["nothing with a verdict to verify"])
+            checks.append("evidence only; no result verdict")
+            board.write("verification",
+                        {"subject": goal, "verdict": "uncertain",
+                         "checks": checks},
+                        author="verifier", provenance="verifier-agent",
+                        confidence=0.75)
             return AgentResult(
-                success=False, role="verifier", errors=["nothing to verify"],
+                success=True, role="verifier", output={"checks": checks},
                 verification_status=VerificationStatus.UNCERTAIN,
-                ended_at=now())
+                ended_at=now(), confidence=0.75)
         ok = True
         for entry in results:
             content = entry.content
-            if isinstance(content, dict) and content.get("verdict") == "failed":
+            if not isinstance(content, dict):
+                continue
+            verdict = content.get("verdict")
+            if verdict in ("failed", "challenged"):
                 ok = False
                 checks.append(f"failed verdict from {entry.author}")
+            elif verdict:
+                checks.append(f"{entry.author} verdict: {verdict}")
         status = VerificationStatus.VERIFIED if ok else VerificationStatus.FAILED
         board.write("verification", {"subject": goal, "verdict": status.value,
                                      "checks": checks},
@@ -970,6 +1040,31 @@ class Orchestrator:
                         uncertainties=["static review, no execution"])
 
     def _h_security(self, card, goal, board, task_id, *a) -> AgentResult:
+        target = self._local_target(goal)
+        if target:
+            try:
+                manager = self._security_manager()
+                findings = manager.discover(target, authorized=True)
+            except Exception as exc:
+                return AgentResult.failure(
+                    "security", f"{type(exc).__name__}: {exc}")
+            high = sum(1 for f in findings
+                       if f.severity.value in ("high", "critical"))
+            board.write("verification",
+                        {"subject": goal,
+                         "verdict": "failed" if high else "passed",
+                         "findings": len(findings),
+                         "source": "code_security_scan"},
+                        author="security", provenance="security-agent",
+                        confidence=0.7)
+            return self._ok(
+                "security", task_id,
+                {"target": target, "stored": len(findings),
+                 "by_severity": self._security_counts(findings),
+                 "findings": [self._security_row(f) for f in findings[:20]]},
+                evidence=[f.location for f in findings[:20]],
+                uncertainties=["discovery only — durability/validation "
+                               "requires `jarvis security intel`"])
         try:
             from ..security.guards import scan_injection
         except Exception:
@@ -987,6 +1082,107 @@ class Orchestrator:
                     confidence=0.8)
         return self._ok("security", task_id, {"hits": hits},
                         evidence=[str(h) for h in hits])
+
+    _SECURITY_CATEGORIES = {
+        "code-security": {"code", "web"},
+        "dependency-security": {"dependencies"},
+        "config-security": {"config"},
+        "web-security": {"web", "code"},
+        "secrets-exposure": {"secrets"},
+    }
+
+    def _security_manager(self):
+        from ..security.intel import SecurityManager
+        return SecurityManager(self.ctx.home, policy=self.ctx.policy,
+                               tools=self.ctx.tools)
+
+    @staticmethod
+    def _local_target(goal: str) -> str:
+        from pathlib import Path
+        try:
+            home = Path.home().resolve(strict=True)
+        except (OSError, RuntimeError):
+            home = None
+        cwd = Path.cwd().resolve()
+        for raw in str(goal or "").split():
+            token = raw.strip("'\"`()[]{}:,")
+            if not token or len(token) > 500:
+                continue
+            if not (token.startswith(("/", ".", "~")) or "/" in token or
+                    token.endswith((".py", ".js", ".ts", ".json", ".toml",
+                                    ".txt", ".yml", ".yaml"))):
+                continue
+            try:
+                path = Path(token).expanduser()
+                if not path.exists():
+                    continue
+                resolved = path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                continue
+            allowed = False
+            for base in (home, cwd):
+                if base is None:
+                    continue
+                try:
+                    resolved.relative_to(base)
+                    allowed = True
+                    break
+                except ValueError:
+                    continue
+            if allowed:
+                return str(resolved)
+        return ""
+
+    @staticmethod
+    def _security_counts(findings: list) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for finding in findings:
+            key = finding.severity.value
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    @staticmethod
+    def _security_row(finding) -> dict[str, Any]:
+        return {"finding_id": finding.finding_id,
+                "kind": finding.kind,
+                "severity": finding.severity.value,
+                "state": finding.state.value,
+                "location": finding.location,
+                "confidence": finding.confidence}
+
+    def _h_security_specialist(self, card, goal, board, task_id,
+                               *a) -> AgentResult:
+        role = card.role_id
+        try:
+            manager = self._security_manager()
+        except Exception as exc:
+            return AgentResult.failure(role, f"{type(exc).__name__}: {exc}")
+        if role in ("security-report", "remediation-verifier"):
+            summary = manager.summary()
+            return self._ok(
+                role, task_id, summary,
+                evidence=[f["finding_id"] for f in summary.get("findings", [])],
+                uncertainties=(["no post-change verification performed"]
+                               if role == "remediation-verifier"
+                               else ["report reflects stored state only"]))
+        target = self._local_target(goal)
+        if not target:
+            return self._ok(
+                role, task_id, {"status": "no_target"},
+                uncertainties=["no explicit local path in the goal"])
+        try:
+            findings = manager.discover(target, authorized=True)
+        except Exception as exc:
+            return AgentResult.failure(role, f"{type(exc).__name__}: {exc}")
+        wanted = self._SECURITY_CATEGORIES.get(role, {"code"})
+        selected = [f for f in findings if f.category in wanted]
+        return self._ok(
+            role, task_id,
+            {"target": target, "matched": len(selected),
+             "by_severity": self._security_counts(selected),
+             "findings": [self._security_row(f) for f in selected[:20]]},
+            evidence=[f.location for f in selected[:20]],
+            uncertainties=["heuristic leads — not validated exploitability"])
 
     def _h_computer(self, card, goal, board, task_id, state, budgets, *a) -> AgentResult:
         return self._gated_tool("computer", "screen_capture", {}, state,

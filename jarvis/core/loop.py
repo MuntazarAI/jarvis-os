@@ -592,22 +592,64 @@ class Jarvis:
             pass
         return verification, learned
 
+    def _call_fixed_tool(self, tool_name: str, args: dict[str, Any],
+                         actions: list[str], tools_used: list[str]):
+        """Run one fixed ``_act`` tool through the same policy boundary.
+
+        ``_act`` is reachable from user text (CLI, voice, conductor, API),
+        so it must not call ``ToolRegistry.call`` directly. The tool's
+        declared permissions/risk are checked against the ``jarvis`` actor
+        before execution; sensitive paths and emergency stop fail closed.
+        Returns ``None`` when policy denies or requires approval.
+        """
+        tool = self.tools.get(tool_name)
+        if tool is None:
+            actions.append(f"{tool_name} unavailable")
+            return None
+        plan = ActionPlan(
+            action=tool_name,
+            args=dict(args),
+            required_permissions=list(tool.spec.required_permissions),
+            risk=tool.spec.risk,
+            expected_duration=float(tool.spec.timeout),
+            verification_conditions=[])
+        try:
+            decision = self.policy.evaluate("jarvis", plan)
+        except Exception as exc:
+            actions.append(f"blocked by policy: {type(exc).__name__}")
+            return None
+        self.bus.publish(Event(type="tool.gated",
+                               payload={"tool": tool_name,
+                                        "risk": decision.risk,
+                                        "allow": decision.allow}))
+        if not decision.allow:
+            actions.append("blocked by policy: "
+                           + "; ".join(decision.reasons))
+            return None
+        if decision.requires_approval:
+            token = self.policy.request_approval("jarvis", plan, decision)
+            actions.append(f"needs approval (token {token})")
+            return None
+        tools_used.append(tool_name)
+        return self.tools.call(tool_name, **args)
+
     def _act(self, text: str, actions: list[str],
              tools_used: list[str]) -> tuple[list[str], list[str]]:
         low = text.lower()
         if low.startswith("calculate ") or low.startswith("compute "):
             expr = text.split(" ", 1)[1]
-            result = self.tools.call("python_run", code=expr)
-            tools_used.append("python_run")
-            actions.append(f"calculated: {result.output or result.error}")
+            result = self._call_fixed_tool(
+                "python_run", {"code": expr}, actions, tools_used)
+            if result is not None:
+                actions.append(f"calculated: {result.output or result.error}")
         elif "system" in low and ("status" in low or "health" in low or "check" in low):
-            result = self.tools.call("system_probe")
-            tools_used.append("system_probe")
-            if result.ok:
+            result = self._call_fixed_tool(
+                "system_probe", {}, actions, tools_used)
+            if result is not None and result.ok:
                 out = result.output
                 actions.append(f"system: cpu={out.get('cpu_count')} "
                                f"platform={out.get('platform', '')[:40]}")
-            else:
+            elif result is not None:
                 actions.append(f"probe failed: {result.error}")
         elif low.startswith("remember "):
             fact = text[len("remember "):].strip()
@@ -620,12 +662,13 @@ class Jarvis:
         elif low.startswith("list files") or low.startswith("list directory"):
             parts = text.split(" ", 2)
             path = parts[2] if len(parts) > 2 else "."
-            result = self.tools.call("filesystem_read", path=path)
-            tools_used.append("filesystem_read")
-            if result.ok and isinstance(result.output, dict):
+            result = self._call_fixed_tool(
+                "filesystem_read", {"path": path}, actions, tools_used)
+            if result is not None and result.ok and \
+                    isinstance(result.output, dict):
                 names = [e["name"] for e in result.output.get("entries", [])[:10]]
                 actions.append(f"files in {path}: {', '.join(names)}")
-            else:
+            elif result is not None:
                 actions.append(f"list failed: {result.error}")
         else:
             task = self.supervisor.submit(text)

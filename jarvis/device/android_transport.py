@@ -510,12 +510,12 @@ class AndroidSocketHost:
             return router._deny(actor, device_id, command,
                                  checked["args"],
                                  ["device has no live socket lane"])
-        # Single-use durable approvals are consumed exactly once, here at
-        # delivery (authorize() only peeked). Lane first so a dead lane
-        # never burns the token.
-        if (approval_token and not router.policy.approved(approval_token)
-                and not router._consume_durable(
-                    actor, device_id, capability, checked["args"],
+        # Single-use approvals (durable apd- and in-memory appr-) are
+        # consumed exactly once, here at delivery (authorize() only
+        # peeked). Lane first so a dead lane never burns the token.
+        if (approval_token and gate.get("approval_required")
+                and not router.consume_approval(
+                    actor, device, capability, checked["args"],
                     approval_token)):
             return router._deny(actor, device_id, command,
                                  checked["args"],

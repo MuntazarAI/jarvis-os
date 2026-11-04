@@ -8,6 +8,7 @@ recorded as non-reversible instead of faked.
 
 from __future__ import annotations
 
+import copy
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -68,10 +69,18 @@ class ComputerAgent:
     # -- single action -------------------------------------------------------
     def act(self, actor: str, action: UIAction,
             approval: str = "") -> UIResult:
-        """Execute one gated action. Pass an approved token to satisfy the
-        approval gate for multi-step runs; otherwise a fresh token is
-        minted and returned in the error (default-deny)."""
+        """Execute one gated action.
+
+        An approval token authorizes exactly one action, once. It is
+        redeemed atomically and bound to the exact tool/args before the
+        tool runs; a token that was denied, already spent, or bound to a
+        different action never executes anything. Without a token a fresh
+        one is minted and returned in the error (default-deny).
+        """
         result = UIResult(action=action, ok=False)
+        # Freeze the arguments used for the approval binding and the call.
+        # Mutating action.args after redemption must not change what runs.
+        args = copy.deepcopy(action.args)
         from pathlib import Path
         Path(self.shot_dir).mkdir(parents=True, exist_ok=True)
         stamp = int(now())
@@ -79,16 +88,35 @@ class ComputerAgent:
         self.computer.screen.capture(result.before_shot)
 
         undo = self._prepare_undo(action)
-        decision = self.policy.evaluate(actor, self._plan_for(action)) \
-            if hasattr(self.policy, "evaluate") else None
-        if decision is not None and not decision.allow:
+        evaluate = getattr(self.policy, "evaluate", None)
+        if not callable(evaluate):
+            result.error = "blocked by policy: engine unavailable"
+            self.history.append(result)
+            return result
+        plan = self._plan_for(action, args)
+        try:
+            decision = evaluate(actor, plan)
+        except Exception as exc:
+            result.error = f"blocked by policy: {type(exc).__name__}"
+            self.history.append(result)
+            return result
+        if not decision.allow:
             result.error = "blocked by policy: " + "; ".join(decision.reasons)
             self.history.append(result)
             return result
-        if decision is not None and decision.requires_approval:
-            if not (approval and self.policy.approved(approval)):
-                token = self.policy.request_approval(actor, self._plan_for(action),
-                                                     decision)
+        if decision.requires_approval:
+            redeem = getattr(self.policy, "redeem", None)
+            if not approval or not callable(redeem) or not redeem(
+                    approval, actor, plan.action, plan.args):
+                # Pending, denied, expired, replayed, or wrongly bound:
+                # none of these authorize execution. Offer a fresh token
+                # so the operator can make a new decision.
+                request = getattr(self.policy, "request_approval", None)
+                if not callable(request):
+                    result.error = "blocked by policy: approval engine unavailable"
+                    self.history.append(result)
+                    return result
+                token = request(actor, plan, decision)
                 result.error = f"needs approval (token {token})"
                 self.history.append(result)
                 return result
@@ -96,7 +124,7 @@ class ComputerAgent:
         last_error = ""
         for attempt in range(1, action.retries + 1):
             result.attempts = attempt
-            call = self.tools.call(action.tool, **action.args)
+            call = self.tools.call(action.tool, **args)
             if not call.ok:
                 last_error = call.error
                 time.sleep(min(2.0, 0.3 * attempt))
@@ -119,12 +147,12 @@ class ComputerAgent:
         self.history.append(result)
         return result
 
-    def _plan_for(self, action: UIAction) -> Any:
+    def _plan_for(self, action: UIAction, args: dict[str, Any] | None = None) -> Any:
         from ..core.types import ActionPlan, RiskLevel
         spec = self.tools.get(action.tool)
         return ActionPlan(
             action=f"{action.tool} {action.description}".strip(),
-            args=action.args,
+            args=copy.deepcopy(action.args) if args is None else args,
             required_permissions=list(spec.spec.required_permissions) if spec else [],
             risk=spec.spec.risk if spec else RiskLevel.LOW,
             verification_conditions=[str(action.verify)])
@@ -194,6 +222,9 @@ class ComputerAgent:
 
     def run_goal(self, actor: str, actions: list[UIAction],
                  stop_on_fail: bool = True, approval: str = "") -> dict[str, Any]:
+        """Run steps in order. ``approval`` is single-use: it can authorize
+        at most the first matching action; later gated actions request
+        their own tokens and fail closed."""
         results: list[UIResult] = []
         for action in actions:
             result = self.act(actor, action, approval=approval)

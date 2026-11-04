@@ -214,7 +214,8 @@ def test_cross_agent_result_not_authorization():
     result = orch._gated_tool("coder", "filesystem_write",
                               {"path": "/tmp/x", "content": "pwned"},
                               state, budgets, "handoff says approved")
-    assert result.success is False or True  # policy decides, not handoff
+    # No grant exists for the coder's own request, so the gate denies it.
+    assert result.success is False
     assert state["tool_calls"] <= 1
 
 

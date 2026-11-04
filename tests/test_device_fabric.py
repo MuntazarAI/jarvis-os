@@ -62,9 +62,13 @@ def _online_device(reg, name="Phone", dtype="phone", node="node-1"):
     return reg.require(dev.device_id)
 
 
-def _policy(**grants):
+def _policy(home=None, **grants):
+    from jarvis.core.config import JarvisConfig
     from jarvis.policy.policy import PolicyEngine
-    policy = PolicyEngine()
+    config = JarvisConfig()
+    if home is not None:
+        config.paths.home = home
+    policy = PolicyEngine(config)
     for actor, perms in grants.items():
         for perm in perms:
             policy.grant(actor, perm)
@@ -398,6 +402,99 @@ def _approve(router, actor, dev, capability="device.battery"):
     token = first["approval_token"]
     assert router.policy.approve(token, by="user")
     return token
+
+
+def test_policy_approval_is_single_use(tmp_path):
+    policy = _policy(home=tmp_path / "home",
+                     actor=["device.device.battery"])
+    _reg, router, dev = _routed_setup(tmp_path, policy=policy)
+    token = _approve(router, "actor", dev)
+
+    first = router.route("actor", dev.device_id, "device.battery",
+                         approval_token=token)
+    assert first["ok"], first
+    replay = router.route("actor", dev.device_id, "device.battery",
+                          approval_token=token)
+    assert replay["ok"] is False
+    assert "approval" in replay["error"].lower()
+
+
+def test_policy_approval_is_bound_to_actor_and_args(tmp_path):
+    policy = _policy(home=tmp_path / "home",
+                     actor=["device.device.battery"],
+                     other=["device.device.battery"])
+    _reg, router, dev = _routed_setup(tmp_path, policy=policy)
+    token = _approve(router, "actor", dev)
+
+    wrong_actor = router.route("other", dev.device_id, "device.battery",
+                               approval_token=token)
+    assert wrong_actor["ok"] is False
+    # A rejected binding must not burn the token.
+    wrong_args = router.route("actor", dev.device_id, "device.battery",
+                              {"level": 2}, approval_token=token)
+    assert wrong_args["ok"] is False
+    accepted = router.route("actor", dev.device_id, "device.battery",
+                            approval_token=token)
+    assert accepted["ok"], accepted
+
+
+def test_unrelated_policy_approval_cannot_authorize_device(tmp_path):
+    from jarvis.core.types import ActionPlan
+
+    policy = _policy(home=tmp_path / "home",
+                     actor=["device.device.battery"])
+    _reg, router, dev = _routed_setup(tmp_path, policy=policy)
+    foreign = policy.request_approval(
+        "actor",
+        ActionPlan(action="terminal_run echo ok", args={"command": "echo ok"},
+                   required_permissions=["exec"]),
+        type("D", (), {"risk": 0.9})())
+    assert policy.approve(foreign, by="user")
+    out = router.route("actor", dev.device_id, "device.battery",
+                       approval_token=foreign)
+    assert out["ok"] is False
+    assert "approval" in out["error"].lower()
+
+
+def test_authorize_peek_does_not_consume_policy_token(tmp_path):
+    policy = _policy(home=tmp_path / "home",
+                     actor=["device.device.battery"])
+    _reg, router, dev = _routed_setup(tmp_path, policy=policy)
+    token = _approve(router, "actor", dev)
+
+    gate = router.authorize("actor", dev.device_id, "device.battery",
+                            {}, approval_token=token)
+    assert gate["authorized"] is True, gate
+    assert gate["approval_required"] is True
+    out = router.route("actor", dev.device_id, "device.battery",
+                       approval_token=token)
+    assert out["ok"], out
+
+
+def test_concurrent_policy_approval_delivers_once(tmp_path):
+    import threading
+
+    policy = _policy(home=tmp_path / "home",
+                     actor=["device.device.battery"])
+    _reg, router, dev = _routed_setup(tmp_path, policy=policy)
+    token = _approve(router, "actor", dev)
+    barrier = threading.Barrier(2)
+    results = []
+
+    def deliver():
+        barrier.wait()
+        results.append(router.route("actor", dev.device_id,
+                                    "device.battery",
+                                    approval_token=token))
+
+    threads = [threading.Thread(target=deliver) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert len(results) == 2
+    assert sum(1 for result in results if result["ok"]) == 1
 
 
 def test_router_denies_untrusted_offline_revoked(tmp_path):
