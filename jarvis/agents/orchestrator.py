@@ -13,10 +13,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from ..core.logging import get_module_logger, trace_operation
 from ..core.types import new_id, now
 from .blackboard import Blackboard
 from .bus import AgentMessage, Classification, MessageBus, MessageType
 from .contract import AgentCard, AgentResult, SkillRegistry, VerificationStatus, role_cards
+
+log = get_module_logger(__name__)
 
 
 @dataclass
@@ -370,6 +373,8 @@ class Orchestrator:
                     + (f" team={team}" if team else ""),
                     run_id=record.run_id, status="running",
                     budgets=budgets.to_dict())
+        log.info("Orchestrator run started", task_id=task_id, run_id=record.run_id,
+                 goal=goal[:100], depth=level, team=team, max_agents=budgets.max_agents)
 
         stages = list(roles) if roles else (
             TEAMS.get(team or "", []) if team else [])
@@ -495,6 +500,11 @@ class Orchestrator:
                     failure=failure, tool_calls=state.get("tool_calls", 0),
                     budgets=record.budgets if record else {},
                     detail=f"ok={ok}")
+        log.info("Orchestrator run completed", task_id=task_id,
+                 run_id=record.run_id if record else "", status=status,
+                 ok=ok, tool_calls=state.get("tool_calls", 0),
+                 agents_used=state.get("agents_used", 0),
+                 failure=failure[:200] if failure else None)
         return {"task_id": task_id, "ok": ok,
                 "run_id": record.run_id if record else "",
                 "result": final.to_dict() if final else None,

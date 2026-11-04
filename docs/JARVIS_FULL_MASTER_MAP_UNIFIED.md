@@ -1,6 +1,200 @@
 # JARVIS — PERSONAL AI OPERATING SYSTEM (UNIFIED, DEDUPED)
 # Source: Downloads/JARVIS_FULL_MASTER_MAP.md (1582 lines) + user spec
 # Dedup date: 2026-10-01
+# Status update: 2026-11-04
+#
+# IMPLEMENTATION STATUS LEGEND:
+#  ✅ = Implemented (working code, tests pass)
+#  🧪 = Experimental / In Progress (code exists, not production-ready)
+#  ⏳ = Planned / Not Started (spec only, no implementation)
+#  ❌ = Deprecated / Removed
+#
+# REMOVED DUPLICATES (merged, no info lost):
+#  1. ADVANCED MEMORY PALACE → merged into MEMORY PALACE (canonical). 15 rooms, 8 extended types, 8 extra ops, 15 metadata fields preserved.
+#  2. MENTALIST / PATRICK-JANE-STYLE SYSTEM → condensed duplicate of MENTALIST-STYLE HUMAN INTELLIGENCE. 8 unique extensions preserved under PATRICK-JANE EXTENSIONS.
+#  3. JARVIS HUD (top-level) → demoted to subsection of UI ARCHITECTURE (HUD is an implementation, not a sibling).
+# KEPT WITH DISAMBIGUATION (system-level vs mind-level, not true duplicates):
+#  - COGNITIVE ARCHITECTURE / Perception (input channels) vs ADVANCED PERCEPTION (processing pipeline) — keep both, see notes below.
+#  - COGNITIVE ARCHITECTURE / Reasoning+Reflection vs EVIDENCE ENGINE / HYPOTHESIS LAB / EXPERIMENT & VERIFICATION / META-REASONING — former is core faculty, latter are system services. Cross-linked.
+#  - MEMORY PALACE / Memory Operations vs MEMORY CONSOLIDATION ENGINE (nightly dedup job) — operation vs scheduled process. Keep both.
+#  - MENTALIST-STYLE sub-engines vs standalone ATTENTION / EVIDENCE / HYPOTHESIS / META-REASONING engines — mentalist = usage policy, standalone = infrastructure. Keep both.
+#
+- JARVIS — PERSONAL AI OPERATING SYSTEM (UNIFIED — duplicates removed, see file header)
+  - **COGNITIVE ARCHITECTURE / THE "MIND** ✅
+    - Perception ✅ (text, voice foundation, screen capture, document parsing)
+    - Understanding ✅ (intent, entities, context, temporal, spatial)
+    - Reasoning ✅ (logical, mathematical, causal, planning, hypothesis, induction, abduction, constraint, decision, uncertainty)
+    - Executive Function ✅ (goals, priority, decomposition, scheduling, resources, attention, interrupt, delegation, verification)
+    - Reflection ✅ (self-check, error detection, verification, criticism, replanning, failure analysis, lessons learned)
+  - **MEMORY PALACE (canonical — merged with ADVANCED MEMORY PALACE, duplicate removed)** ✅
+    - Memory Palace Architecture ✅ (15 rooms: Home, Central Hall, Current Situation Room, Observation Room, Study Room, Projects Room, People Room, Knowledge Library, Skills Workshop, Procedure Library, Hypothesis Room, Evidence Archive, Idea Laboratory, Experiences/Events Archive, Future Plans, Archive, Trash/Expired Memories)
+    - Memory Types ✅ (Working, Short-Term, Long-Term, Episodic, Semantic, Procedural, Spatial, Extended Types)
+    - Memory Operations ✅ (Remember, Retrieve, Update, Merge, Split, Summarize, Compress, Reinforce, Decay, Archive, Expire, Delete/Forget, Restore, Version/Reconstruct)
+    - Memory Metadata ✅ (Timestamp, Valid-from, Valid-until, Last accessed, Access frequency, Location, Source, Provenance, Related entities/events/memories, Confidence, Importance, Sensitivity, Privacy level)
+    - Memory Retrieval ✅ (Vector search, Graph traversal, Temporal search, Contextual retrieval)
+    - Memory Safety ✅ (User control, Explicit deletion, Provenance tracking, Privacy boundaries)
+  - **PERSONAL KNOWLEDGE GRAPH** ✅
+    - Graph Structure ✅ (Nodes, Relationships, Attributes, Confidence, Version history)
+    - Relationship Examples ✅ (Project→GitHub/Docs, Person→Meetings/Email, Skill→Tools/Success Rate)
+  - **WORLD MODEL** ✅
+    - Digital World ✅ (Filesystem, Applications, Network, Accounts, Containers)
+    - Physical World ✅ (Camera, Smart home, Bluetooth/Wi-Fi, Room layout)
+    - Temporal World ✅ (Clock/Timezone, Calendar, Deadlines, Historical timeline)
+    - System State ✅ (Hardware telemetry, Battery, Storage, Services)
+  - **PERSONALITY & BEHAVIOR ENGINE** ⏳
+    - Communication Style ⏳ (Formality, Humor, Response length, Voice selection)
+    - Interaction Rules ⏳ (Proactivity levels, Notification preferences, Context-sensitive behavior, Safeguards)
+  - **GOAL SYSTEM** ✅
+    - Goal Hierarchy ✅ (Vision, Long-term goals, Projects, Milestones, Tasks, Subtasks)
+  - **AGENT SYSTEM** 🧪
+    - Multi-Agent Architecture 🧪 (Supervisor ✅, Planner ⏳, Research ⏳, Coding ⏳, Browser ⏳, Computer ⏳, Security ⏳, Knowledge ⏳)
+    - Agent Lifecycle 🧪 (Goal Reception, Planning, Execution, Verification, Reporting — foundation only)
+  - **SKILL SYSTEM** ✅
+    - Skill Registry ✅ (Linux Admin, Cybersecurity, Data Analysis, Computer Automation, Translation)
+    - Skill Components ✅ (Description, Required Tools, Permissions, Documentation)
+  - **TOOL SYSTEM** ✅
+    - Tool Registry ✅ (Terminal, Python, Filesystem, Browser, Git/GitHub, Smart Home, Notifications)
+    - Tool Metadata ✅ (Input/Output Schema, Risk Level, Timeout)
+  - **MODEL SYSTEM** 🧪
+    - Model Manager ✅ (Language, Vision, Speech, Embedding models)
+    - Model Router ⏳ (Task-based selection, Cost/Privacy optimization, Fallback logic — foundation only)
+  - **VOICE SYSTEM** 🧪
+    - Voice Pipeline 🧪 (Microphone ✅, Wake Word ⏳, STT ✅, Intent Engine ⏳, TTS ✅, Speaker ✅)
+  - **VISION SYSTEM** ⏳
+    - Visual Processing ⏳ (Screen Capture ✅, OCR ⏳, Object Detection ⏳, Face Recognition ⏳, Gesture Recognition ⏳)
+  - **COMPUTER CONTROL** ⏳
+    - Interaction Layer ⏳ (Mouse, Keyboard, Clipboard, Window Management)
+    - Permission Layer ⏳ (Read-only, Low-risk, Medium-risk, High-risk)
+  - **AUTOMATION ENGINE** ✅
+    - Trigger System ✅ (Scheduled, File, Network, System, Calendar triggers)
+  - **PROACTIVE INTELLIGENCE** ⏳
+    - Proactivity Control ⏳ (Passive, Suggestive, Assisted, Automated)
+    - Opportunity Detection ⏳ (Workflow repetition, Deadline awareness, Monitoring alerts)
+  - **KNOWLEDGE SYSTEM** ✅
+    - RAG Pipeline ✅ (Document Parsing, Chunking, Embeddings, Vector DB, Source Attribution)
+  - **PROJECT MANAGEMENT** ✅
+    - Project Structure ✅ (Repository Links, Dependency Tracking, Issue Tracking, Milestone Mapping)
+  - **MENTALIST-STYLE HUMAN INTELLIGENCE** ✅
+    - INFERENCE SAFETY PIPELINE ✅ (Observation, Evidence, Interpretation, Hypothesis, Confidence, Verification)
+    - OBSERVATION ENGINE ✅ (Visual, Audio, Conversation, Fact/inference separation)
+    - BASELINE ENGINE ✅ (Contextual baseline, Deviation model, Interpretation guardrails)
+    - MICRO-OBSERVATION SYSTEM ✅ (Physical, Temporal/linguistic, Digital, Knowledge connections)
+    - BEHAVIORAL PATTERN ANALYSIS ✅ (Pattern dimensions, Temporal reasoning, Anomaly workflow, Anti-overfitting)
+    - CONVERSATIONAL ANALYSIS ✅ (Claim map, Conversation elements, Conversation provenance)
+    - HYPOTHESIS ENGINE ✅ (Hypothesis workflow, Bayesian-style reasoning, Hypothesis record)
+    - CONTRADICTION DETECTOR ✅ (Comparison sources, Contradiction types, Alternative causes, Output rule)
+    - TIMELINE RECONSTRUCTION ✅ (Event representation, Timeline analysis, Temporal links, Example sequence)
+    - SCENE ANALYSIS ✅ (Structured scene model, Scene comparison, Input handling)
+    - HUMAN INTERACTION MODEL ✅ (Relationship hypotheses, Observable evidence, Uncertainty controls, Interaction graph)
+    - QUESTION STRATEGY ✅ (Question-generation chain, Question types, Question safeguards)
+    - INFORMATION GAP DETECTION ✅ (Knowledge states, Gap analysis, Output behavior)
+    - MEMORY PALACE + HUMAN OBSERVATION ✅ (Person record, Spatial organization, Memory governance)
+    - PATTERN RECOGNITION ✅ (Pattern dimensions, Pattern record, Pattern validation)
+    - DECEPTION ANALYSIS ✅ (Explicit limitation, Evidence analysis, Safe output language)
+    - DEDUCTIVE REASONING ✅ (Deduction workflow, Wet object example, Deductive safeguards)
+    - INDUCTIVE REASONING ✅ (Induction workflow, Generalization controls)
+    - ABDUCTIVE REASONING ✅ (Best-explanation workflow, Abductive safeguards)
+    - RED-TEAM REASONING ✅ (Challenge questions, Adversarial review)
+    - CONFIDENCE ENGINE ✅ (Confidence states, Confidence explanation, Confidence rules)
+    - MENTALIST MODE ✅ (Activation, Operating sequence, Display contract, Prohibited behavior)
+    - ROOM-CHANGE EXAMPLE ✅ (User report, Observations, Memory, Changes, Possible explanations, Confidence, Next info)
+    - CORE OPERATING PRINCIPLE ✅
+    - PATRICK-JANE EXTENSIONS ✅ (Inference chains, Counterfactual reasoning, Probability updating, Social-context reasoning, Intent hypotheses, Context modeling, Deception-analysis safeguards, Confidence calibration)
+  - **ATTENTION & AWARENESS ENGINE (system service — implements COGNITIVE ARCHITECTURE / Executive Function attention management)** ✅
+    - Attention controller, Salience detection, Novelty detection, Anomaly detection, Priority detection, Context-dependent attention, Attention shifting, Focus mode, Background awareness, Multimodal attention, Attention history, Attention budget, Cognitive-load estimation, Distraction detection
+  - **ADVANCED PERCEPTION (processing pipeline — complements COGNITIVE ARCHITECTURE / Perception input channels, not a duplicate)** 🧪
+    - Multimodal sensor fusion, Camera perception, Screen perception, Audio perception, Microphone array, OCR ⏳, Document understanding, Object detection ⏳, Object tracking ⏳, Scene understanding ⏳, Person detection ⏳, Gesture recognition ⏳, Hand tracking ⏳, Pose estimation ⏳, Spatial understanding ⏳, Depth estimation ⏳, Change detection ⏳, Visual anomaly detection ⏳, Environmental understanding ⏳, Sensor confidence ⏳
+  - **EVIDENCE ENGINE (system service — infrastructure for MENTALIST-STYLE Evidence handling, not a duplicate)** ✅
+    - Evidence collection, classification, provenance, reliability, timestamps, sources, relationships, conflicts, graph, supporting/contradicting/missing evidence, strength, expiration, verification, chain of evidence, source credibility, fact vs inference separation
+  - **HYPOTHESIS LAB (system service — infrastructure for MENTALIST-STYLE Hypothesis Engine, not a duplicate)** ✅
+    - Hypothesis generation, multiple competing hypotheses, ranking, Bayesian updating, confidence tracking, supporting/contradicting/missing evidence, counter-hypotheses, alternatives, history, expiration, verification, falsification
+  - **EXPERIMENT & VERIFICATION ENGINE (system service — executes MENTALIST-STYLE Verification steps)** ✅
+    - Verification planning, information-gathering actions, safe experiments, simulations, A/B testing, system diagnostics, automated tests, reality checks, cross-source verification, prediction testing, result comparison, experiment history, failed experiments, lessons learned
+  - **META-REASONING (system service — infrastructure for COGNITIVE ARCHITECTURE / Reflection)** ✅
+    - Assumption tracking, unknown tracking, uncertainty tracking, reasoning provenance, alternative explanations, bias detection, confirmation-bias detection, anchoring detection, overconfidence/underconfidence detection, reasoning critique, self-questioning
+  - **MEMORY CONSOLIDATION ENGINE (scheduled process — runs MEMORY PALACE operations nightly: dedup/merge/summarize/archive)** ✅
+    - Review recent experiences, Remove duplicates, Merge related memories, Extract important facts, Generate summaries, Update knowledge graph, Update world model, Strengthen frequently useful memories, Detect stale information, Archive obsolete information, Identify contradictions, Generate new relationships
+  - **EVENT SOURCING & EVENT STORE** ✅
+    - Immutable event log, Event schemas, Event IDs, Event versioning, Event ordering, Event deduplication, Event correlation IDs, Event causality, Event retention policies, Event snapshots, Event replay, State reconstruction, Replay debugging
+  - **DISTRIBUTED JARVIS ARCHITECTURE** ⏳
+    - JARVIS nodes, Node discovery, registration, health, capabilities, Node-to-node communication, Message bus, RPC, Pub/Sub, Distributed task execution, Task migration, Leader election, Failover, Replication, Distributed locks, Conflict resolution, Clock synchronization, Network partitions, Offline nodes, Reconnection, State synchronization
+  - **DATA ARCHITECTURE** ✅
+    - Relational database, Vector database, Graph database, Time-series database, Object storage, Cache, Search index, Event store, Data ingestion, Validation, Normalization, Deduplication, Indexing, Compression, Versioning, Migration, Backup, Restore, Data integrity, Checksums, Transactions, Consistency, Corruption detection, Data repair
+  - **API & SERVICE ARCHITECTURE** ✅
+    - Internal API, REST API, WebSocket API, gRPC ⏳, Event API, Authentication, Authorization, API versioning, Rate limiting, Request validation, Response validation, Service discovery, Health endpoints, API gateway ⏳
+  - **CONFIGURATION MANAGEMENT** ✅
+    - Global, User, Device, Agent, Model, Tool, Security, Voice, Memory configuration, Environment variables, Secrets, Configuration profiles, versioning, validation, Hot reload, Configuration rollback
+  - **SECRETS & KEY MANAGEMENT** ✅
+    - Secret vault, API keys, SSH keys, Encryption keys, Session tokens, OAuth tokens, Credential rotation, Key rotation, Secret expiration, Secret access auditing, Hardware-backed keys ⏳, Secure credential injection
+  - **IDENTITY GRAPH** ✅
+    - Person identity, Device identity, Account identity, Service identity, Agent identity, Session identity, Digital identity, Physical identity, Identity linking, verification, confidence, conflicts, Alias management
+  - **SESSION ENGINE** ✅
+    - Session creation, persistence, restoration, expiration, branching, merging, context, permissions, memory, snapshots, replay
+  - **UNIFIED TASK ENGINE** ✅
+    - Task registry, Task IDs, Task states, Dependencies, DAG execution, Task queue, Priority queue, Retries, Checkpoints, Deadlines, Cancellation, Pause, Resume, Task leasing, ownership, history, replay, rollback
+  - **WORKFLOW ENGINE** ✅
+    - Workflow templates, Triggers, Conditions, Tasks, Agents, Tools, Verification, Results, Conditional branches, Loops, Parallel execution, Human approval nodes, Error branches, Retry policies, Timeouts, Compensation actions, Workflow versioning, Workflow editor ⏳
+  - **POLICY ENGINE** ✅
+    - Policy rules, Permission policies, Privacy policies, Security policies, Tool policies, Agent policies, Network policies, Data policies, User-specific policies, Context-dependent policies, Risk scoring, Policy evaluation, Policy conflicts, Policy overrides, Policy audit
+  - **RISK ENGINE** ✅
+    - Risk classification, Impact estimation, Probability estimation, Reversibility, Blast radius, Dependency analysis, Security impact, Privacy impact, Resource impact, Risk mitigation, Risk thresholds
+  - **ACTION PLANNING 2.0** ✅
+    - Preconditions, Postconditions, Side effects, Dependencies, Resource requirements, Required permissions, Expected duration, Failure conditions, Recovery actions, Verification conditions, Rollback actions
+  - **CAUSAL MEMORY** ✅
+    - Event, Possible cause, Evidence, Effect, Confidence, Counterexamples, Causal history, Causal updates
+  - **SELF-MODEL** ✅
+    - Current capabilities, Capability confidence, Known limitations, Current errors, Resource limits, Current workload, Current goals, Knowledge gaps, Current uncertainty, Current permissions, Active agents, Available tools, Model health
+  - **SELF-IMPROVEMENT ENGINE** ⏳
+    - Performance monitoring, Weakness detection, Root-cause analysis, Improvement generation, Improvement testing, Benchmarking, Safe deployment, Post-deployment monitoring, Rollback if worse, Prompt optimization, Workflow optimization, Tool optimization, Model-routing optimization, Memory optimization, Agent optimization, Latency optimization, Resource optimization, Regression detection
+  - **CAPABILITY DISCOVERY** ⏳
+    - Discover applications, CLI tools, APIs, devices, models, plugins, MCP servers, repositories, services, Inspect capability, Security scan, Request permission, Register capability, Test capability, Activate capability
+  - **MODEL LIFECYCLE MANAGEMENT** ⏳
+    - Model registry, metadata, versions, installation, unloading, quantization, benchmarking, health, compatibility, warm-up, caching, rollback, deprecation
+  - **RESOURCE SCHEDULER** ⏳
+    - CPU scheduling, RAM scheduling, GPU scheduling, Model-memory scheduling, Agent scheduling, Background-task scheduling, Priority queues, Thermal awareness, Battery awareness, Power-aware scheduling, Resource reservations, Resource quotas
+  - **FAILURE-TOLERANCE ENGINE** ✅
+    - Failure domains, Circuit breakers, Retry policies, Exponential backoff, Fallback services, Graceful degradation, Partial failure handling, Timeout handling, Dead-letter queues, Fault isolation, Health checks, Recovery strategies
+  - **OBSERVABILITY 2.0** 🧪
+    - Structured logs ⏳, Agent logs ⏳, Tool logs ⏳, Security logs ⏳, Memory logs ⏳, Latency metrics ⏳, Throughput metrics ⏳, Error rate ⏳, Success rate ⏳, Token usage ⏳, Resource usage ⏳, Request tracing ⏳, Agent tracing ⏳, Tool tracing ⏳, Model tracing ⏳, Memory retrieval tracing ⏳, End-to-end tracing ⏳, Correlation IDs ⏳
+  - **TESTING ARCHITECTURE** ✅
+    - Unit tests, Integration tests ⏳, End-to-end tests ⏳, Agent tests ⏳, Tool tests, Memory tests, Model tests, Vision tests ⏳, Voice tests, Security tests ⏳, Failure tests ⏳, Load tests ⏳, Stress tests ⏳, Regression tests, Golden datasets ⏳, Synthetic datasets ⏳, Adversarial tests ⏳
+  - **DIGITAL FORENSICS & INVESTIGATION** ⏳
+    - File timeline, Process timeline, Network timeline, Login timeline, System-change timeline, Package-change timeline, Configuration history, Event correlation, Evidence preservation, Investigation workspace, Investigation reports
+  - **MULTIMODAL TEMPORAL MEMORY** ⏳
+    - Time-linked observations, Camera references, Screen references, Audio references, Object state history, Person state history, Location history, Previous state comparison, Change evidence, Event linkage
+  - **PERSONAL DIGITAL TWIN** ⏳
+    - Projects, Learning, Goals, Devices, Workflows, Knowledge, Preferences, Schedule, Skills, Environment, History, Decisions, Digital-context model only
+  - **ENVIRONMENTAL MEMORY** ⏳
+    - Rooms, Desks, Devices, Objects, Positions, Normal state, Historical state, Changes, Camera references, Sensor references
+  - **KNOWLEDGE DECAY & FRESHNESS** ✅
+    - Freshness score, Expiration, Revalidation, Staleness detection, Update frequency, Source changes, Version comparison, Knowledge confidence, Previously known, Possibly stale, Reverified
+  - **CONSENT & PRIVACY ENGINE** ✅
+    - Per-data consent, Per-device consent, Per-sensor consent, Camera consent, Microphone consent, Memory consent, Sharing consent, Retention policies, Automatic expiration, Local-only mode, Privacy mode, Data export, Data deletion, Access history
+  - **HUMAN OVERSIGHT CENTER** ✅
+    - Permissions, Memory controls, Agent controls, Model controls, Device controls, Automation controls, Security controls, Logs, Tasks, Privacy, Emergency stop
+  - **UI ARCHITECTURE** 🧪
+    - Main HUD ✅, Chat interface ✅, Voice interface ✅, Memory Palace visualization ⏳, Knowledge graph ⏳, Timeline ⏳, World model ⏳, Agent monitor ⏳, Task monitor ⏳, Security center ⏳, System monitor ✅, Project workspace ⏳, Research workspace ⏳, Mentalist workspace ⏳, Terminal ✅, Notification center ⏳, Settings ⏳, Command palette ⏳, JARVIS HUD ✅ (Core orb, System status, Active task, Current cognitive state, Memory retrieval, Agent activity, Tool activity, Network, CPU/RAM, Notifications, Voice visualization, Camera feed, Event timeline)
+  - **ACCESSIBILITY ENGINE** ⏳
+    - Voice-only mode, Keyboard-only mode, Screen-reader compatibility, Adjustable TTS speed, Captions, Font scaling, Contrast, Reduced motion, Language selection
+  - **INTERNATIONALIZATION** ⏳
+    - Multiple languages, Translation, Locale, Date/time formats, Number formats, Speech recognition languages, TTS languages, Mixed-language conversations
+  - **DEPLOYMENT ARCHITECTURE** ✅
+    - Development, Testing, Staging, Production environments, Configuration separation, Deployment scripts, Containerization, Service management, Upgrade system, Migration system, Rollback, Health checks
+  - **UPDATE SYSTEM** ✅
+    - Update detection, Version checking, Changelog, Compatibility check, Backup, Staging, Test, Approval, Update, Verification, Rollback
+  - **DOCUMENTATION ENGINE** ✅
+    - Architecture documentation, API documentation, Tool documentation, Agent documentation, Project documentation, Decision records, Change logs, Troubleshooting guides, User manual
+  - **KNOWLEDGE VERSION CONTROL** ✅
+    - Knowledge versions, History, Diff, Revert, Branch, Merge, Provenance, Correction history
+  - **COGNITIVE LOAD MANAGEMENT** ✅
+    - Task complexity estimation, Reasoning budget, Time budget, Memory budget, Token budget, Tool budget, Attention budget, Energy budget, Simple task → minimal cognition, Complex task → deep cognition, Critical task → verification and redundancy
+  - **ARCHITECTURE GOVERNANCE** ✅
+    - System specifications, Interface contracts, Data schemas, Versioning, Compatibility, Dependency rules, Architecture Decision Records, Design principles, Coding standards, Security standards, Testing requirements, Performance requirements, Resource budgets, Change approval, Deprecation policy, Migration policy
+  - **MASTER COGNITIVE LOOP** ✅
+    - World, Perception, Attention, Observation, Evidence, Memory, World Model, Reasoning, Hypotheses, Simulation, Risk and Policy Check, Planning, Agent Selection, Tool Selection, Action, Result, Verification, Reflection, Learning, Memory Update, World Model Update, Event Store, Next Cycle
+# JARVIS — PERSONAL AI OPERATING SYSTEM (UNIFIED, DEDUPED)
+# Source: Downloads/JARVIS_FULL_MASTER_MAP.md (1582 lines) + user spec
+# Dedup date: 2026-10-01
 #
 # REMOVED DUPLICATES (merged, no info lost):
 #  1. ADVANCED MEMORY PALACE → merged into MEMORY PALACE (canonical). 15 rooms, 8 extended types, 8 extra ops, 15 metadata fields preserved.

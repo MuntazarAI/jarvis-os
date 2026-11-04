@@ -7,7 +7,10 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from ..core.logging import get_module_logger
 from ..core.types import Task, TaskState, new_id, now
+
+log = get_module_logger(__name__)
 
 
 # -- task engine -----------------------------------------------------------
@@ -30,6 +33,8 @@ class TaskEngine:
         with self._lock:
             self.tasks[task.task_id] = task
             heapq.heappush(self._queue, (-priority, task.created_at, task.task_id))
+        log.info("Task registered", task_id=task.task_id, goal=goal[:100],
+                 priority=priority, deadline=deadline)
         return task
 
     def next_ready(self) -> Task | None:
@@ -52,6 +57,7 @@ class TaskEngine:
             if ready:
                 ready.state = TaskState.RUNNING
                 ready.history.append({"event": "started", "at": now()})
+                log.info("Task started", task_id=ready.task_id, goal=ready.goal[:100])
             return ready
 
     def complete(self, task_id: str, result: Any) -> Task | None:
@@ -64,6 +70,7 @@ class TaskEngine:
             task.progress = 1.0
             task.updated_at = now()
             task.history.append({"event": "completed", "at": now()})
+            log.info("Task completed", task_id=task_id, goal=task.goal[:100])
             return task
 
     def fail(self, task_id: str, error: str, retry: bool = True) -> Task | None:
@@ -78,9 +85,13 @@ class TaskEngine:
             if retry and task.attempts <= self.max_retries:
                 task.state = TaskState.QUEUED
                 heapq.heappush(self._queue, (-task.priority, now(), task.task_id))
+                log.warning("Task failed, retrying", task_id=task_id, attempt=task.attempts,
+                            error=error[:200], max_retries=self.max_retries)
             else:
                 task.state = TaskState.FAILED
                 self.dead_letters.append(task)
+                log.error("Task failed permanently", task_id=task_id, goal=task.goal[:100],
+                          attempts=task.attempts, error=error[:200])
             task.updated_at = now()
             return task
 
@@ -92,6 +103,17 @@ class TaskEngine:
                 return False
             task.state = TaskState.CANCELLED
             task.history.append({"event": "cancelled", "at": now()})
+            log.info("Task cancelled", task_id=task_id, goal=task.goal[:100])
+            return True
+
+    def pause(self, task_id: str) -> bool:
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if not task or task.state != TaskState.RUNNING:
+                return False
+            task.state = TaskState.WAITING
+            task.history.append({"event": "paused", "at": now()})
+            log.info("Task paused", task_id=task_id, goal=task.goal[:100])
             return True
 
     def pause(self, task_id: str) -> bool:
