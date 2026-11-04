@@ -19,6 +19,7 @@ from ..core.logging import get_module_logger
 from ..core.types import Modality, Observation
 from ..memory.palace import MemoryPalace
 from .pipeline import SpeechToText, TextToSpeech, VoiceConfig, VoicePipeline, WakeWordDetector
+from .runtime import EnergyVAD, MicRecorder, Speaker, Transcriber, VoiceLoop, rms
 from .session import VoiceSession
 from .speak import speak_text
 
