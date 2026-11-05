@@ -80,6 +80,18 @@ from .multilingual import (
     identify_language,
     summarize_multilingual,
 )
+from .neural_networking import (
+    NeuralNetwork,
+    NeuralNetworkConfig,
+    NeuralNetworkLayer,
+    MixtureOfExperts,
+    Expert,
+    NeuralSymbolicBridge,
+    NeuralNetworkRegistry,
+    get_neural_registry,
+    create_neural_network,
+    create_moe_network,
+)
 from .observatory import (
     LiveObservatory,
     MonitorEvent,
@@ -103,6 +115,13 @@ from .distributed import (
     DistributedTask,
     WorkerHealth,
     WorkerNode,
+)
+from .integration import (
+    DotExecution,
+    JarvisIntegratedSystem,
+    StarkJob,
+    dispatch_stark_ai,
+    get_integrated_system,
 )
 from .security import (
     SecurityAuditor,
@@ -206,4 +225,21 @@ __all__ = [
     "ComponentStatus",
     "DashboardReport",
     "GlobalIntelligenceDashboard",
+    # M13: Neural Networking
+    "NeuralNetworkConfig",
+    "NeuralNetworkLayer",
+    "NeuralNetwork",
+    "Expert",
+    "MixtureOfExperts",
+    "NeuralSymbolicBridge",
+    "NeuralNetworkRegistry",
+    "get_neural_registry",
+    "create_neural_network",
+    "create_moe_network",
+    # M13b: Integration (Stark AI → DOTS → OMNINET → Neural Network)
+    "StarkJob",
+    "DotExecution",
+    "JarvisIntegratedSystem",
+    "dispatch_stark_ai",
+    "get_integrated_system",
 ]
