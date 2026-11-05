@@ -29,6 +29,20 @@ from .neural import (
 from .decoder import DecoderOnlyTransformer, JARVIS_LLM_Model
 from .moe import MoELayer, MoETransformerBlock, MoETransformer
 
+from .multimodal import (
+    EmbeddingVector,
+    MultimodalEmbedder,
+    MultimodalRetrieval,
+    get_multimodal_embedder,
+    get_multimodal_retrieval,
+)
+from .sensor_fusion import (
+    SensorReading,
+    FusedResult,
+    SensorFusion,
+    get_sensor_fusion,
+)
+
 __all__ = [
     # Neural
     "Tensor",
@@ -54,4 +68,15 @@ __all__ = [
     "MoELayer",
     "MoETransformerBlock",
     "MoETransformer",
+    # Multimodal (M26)
+    "EmbeddingVector",
+    "MultimodalEmbedder",
+    "MultimodalRetrieval",
+    "get_multimodal_embedder",
+    "get_multimodal_retrieval",
+    # Sensor Fusion (M27)
+    "SensorReading",
+    "FusedResult",
+    "SensorFusion",
+    "get_sensor_fusion",
 ]
