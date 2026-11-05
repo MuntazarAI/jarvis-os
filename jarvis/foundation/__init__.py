@@ -1,4 +1,4 @@
-"""JARVIS Foundation Model Research Lab (M13-M21).
+"""JARVIS Foundation Model Research Lab (M13-M22).
 
 Foundation Model Research Lab - builds the JARVIS family of foundation models.
 
@@ -54,6 +54,12 @@ from .training import (
     LearningRateScheduler,
     PretrainingTrainer,
     create_pretraining_config,
+    FineTuningMethod,
+    LoRAConfig,
+    FineTuningConfig,
+    FineTuningResult,
+    LoRALayer,
+    FineTuningEngine,
 )
 
 __all__ = [
@@ -104,7 +110,7 @@ __all__ = [
     "BytePairTokenizer",
     "TokenizerRegistry",
     "get_tokenizer_registry",
-    # Training (M21)
+    # Training (M21-M22)
     "PretrainingConfig",
     "TrainingStepResult",
     "Checkpoint",
@@ -112,4 +118,10 @@ __all__ = [
     "LearningRateScheduler",
     "PretrainingTrainer",
     "create_pretraining_config",
+    "FineTuningMethod",
+    "LoRAConfig",
+    "FineTuningConfig",
+    "FineTuningResult",
+    "LoRALayer",
+    "FineTuningEngine",
 ]
