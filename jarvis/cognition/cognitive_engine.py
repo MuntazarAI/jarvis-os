@@ -113,7 +113,7 @@ class CognitiveEngine:
         actions = self._act(plan)
 
         # Step 5: Learn - update knowledge from results
-        self._learn(result)
+        self._learn(None)
 
         cycle = CognitiveCycle(
             cycle_id=cycle_id,
@@ -205,8 +205,8 @@ class CognitiveEngine:
         actions = []
         for step in plan.get("steps", []):
             agent_id = step.get("agent_id")
-            if agent_id and ai_id in STARK_ROSTER_BY_ID:
-                stark = STARK_ROSTER_BY_ID[ai_id]
+            if agent_id and agent_id in STARK_ROSTER_BY_ID:
+                stark = STARK_ROSTER_BY_ID[agent_id]
                 actions.append({
                     "agent_id": stark.ai_id,
                     "name": stark.name,

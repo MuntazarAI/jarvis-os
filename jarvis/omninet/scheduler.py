@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from ..core.config import JarvisConfig
 from ..core.internet import InternetAccess
-from ..core.policy.policy import PolicyEngine
+from ..policy.policy import PolicyEngine
 from ..core.types import now
 from ..core.logging import get_module_logger
 from ..omninet import (
@@ -305,7 +305,7 @@ _scheduler: AutomatedScheduler | None = None
 
 def get_scheduler(
     system: JarvisIntegratedSystem | None = None,
-    dots: DotManager | None,
+    dots: DotManager | None = None,
 ) -> AutomatedScheduler:
     """Get or create the global scheduler."""
     global _scheduler

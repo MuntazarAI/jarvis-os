@@ -62,7 +62,7 @@ class PredictiveModel:
             prediction_id=f"pred-{len(self.predictions):06d}",
             target_id=target_id,
             target_type=target_type,
-            predicted_attribute=predicted_attribute,
+            predicted_attribute=attribute,
             predicted_value=predicted_value,
             confidence=confidence,
             time_horizon=time_horizon,

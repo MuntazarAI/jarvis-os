@@ -5,6 +5,7 @@ Additional DOT types for specialized tasks.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,11 +27,12 @@ class DotTemplate:
     max_tool_calls: int
     max_seconds: float
     dispatchable: bool
-    team: str
-    risk_tier: str
-    computer_config: dict[str, Any]
-    internet_domains: list[str]
-    tags: list[str]
+    team: str = "general"
+    risk_tier: str = "medium"
+    computer_config: dict[str, Any] = field(default_factory=dict)
+    internet_domains: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    jobs: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
 
 

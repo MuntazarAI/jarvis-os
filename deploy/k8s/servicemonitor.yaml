@@ -1,0 +1,95 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: jarvis-os
+  namespace: jarvis
+  labels:
+    app: jarvis-os
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: jarvis-os
+  namespaceSelector:
+    matchNames:
+      - jarvis
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+      honorLabels: true
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: "(python_|process_|go_).*"
+          action: drop
+        - sourceLabels: [__name__]
+          regex: "jarvis_.*"
+          action: keep
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: jarvis-os-alerts
+  namespace: jarvis
+  labels:
+    app: jarvis-os
+    release: prometheus
+spec:
+  groups:
+    - name: jarvis-os.rules
+      rules:
+        - alert: JarvisOSDown
+          expr: up{job="jarvis-os"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "JARVIS-OS instance {{ $labels.instance }} is down"
+            description: "JARVIS-OS has been down for more than 2 minutes."
+
+        - alert: JarvisOSHighMemory
+          expr: (container_memory_usage_bytes{job="jarvis-os"} / container_spec_memory_limit_bytes{job="jarvis-os"}) > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "JARVIS-OS high memory usage on {{ $labels.instance }}"
+            description: "Memory usage is above 85% of limit."
+
+        - alert: JarvisOSHighCPU
+          expr: (rate(container_cpu_usage_seconds_total{job="jarvis-os"}[5m]) / container_spec_cpu_quota{job="jarvis-os"} / container_spec_cpu_period{job="jarvis-os"}) > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "JARVIS-OS high CPU usage on {{ $labels.instance }}"
+            description: "CPU usage is above 85% of limit."
+
+        - alert: JarvisOSAgentFailure
+          expr: rate(jarvis_agent_failures_total[5m]) > 0.1
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "JARVIS-OS agent failure rate high"
+            description: "Agent failure rate exceeds 10% over 5 minutes."
+
+        - alert: JarvisOSTaskQueueBacklog
+          expr: jarvis_task_queue_depth > 1000
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "JARVIS-OS task queue backlog"
+            description: "Task queue has more than 1000 pending tasks."
+
+        - alert: JarvisOSDiskSpace
+          expr: (container_fs_usage_bytes{job="jarvis-os"} / container_fs_limit_bytes{job="jarvis-os"}) > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "JARVIS-OS disk space low"
+            description: "Disk usage is above 85% of limit."

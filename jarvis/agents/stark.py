@@ -112,6 +112,9 @@ class StarkAI(Agent):
     duties: tuple[str, ...] = field(default_factory=tuple)
     works: tuple[str, ...] = field(default_factory=tuple)
 
+    # Assigned jobs — explicit role-based job assignments
+    jobs: tuple[str, ...] = field(default_factory=tuple)
+
     # Risk tier for policy escalation
     risk_tier: str = "medium"
 
@@ -153,6 +156,7 @@ class StarkAI(Agent):
             "risk_tier": self.risk_tier,
             "duties": list(self.duties),
             "works": list(self.works),
+            "jobs": list(self.jobs),
             "internet_domains": list(self.internet_domains),
             "learned_skills": list(self.learned_skills),
         })
@@ -359,6 +363,13 @@ STARK_ROSTER: tuple[StarkAI, ...] = (
         tools=(),
         internet_domains=("pypi.org", "docs.python.org", "github.com"),
         learned_skills=(),
+        jobs=(
+            "cognitive_loop_operator",
+            "task_router",
+            "context_manager",
+            "policy_gate_overseer",
+            "operator_liaison",
+        ),
     ),
 
     # ------------------------------------------------------------------
@@ -400,6 +411,13 @@ STARK_ROSTER: tuple[StarkAI, ...] = (
         tools=("system_probe", "terminal_run", "filesystem_read", "git_status"),
         internet_domains=("github.com", "pypi.org"),
         learned_skills=(),
+        jobs=(
+            "system_administrator",
+            "devops_engineer",
+            "system_monitor",
+            "automation_operator",
+            "health_check_operator",
+        ),
     ),
 
     # ------------------------------------------------------------------
@@ -439,6 +457,13 @@ STARK_ROSTER: tuple[StarkAI, ...] = (
         tools=("capture_read",),
         internet_domains=(),
         learned_skills=(),
+        jobs=(
+            "screen_observer",
+            "field_support_agent",
+            "visual_capture_analyst",
+            "ocr_operator",
+            "observation_recorder",
+        ),
     ),
 
     # ------------------------------------------------------------------
@@ -481,6 +506,13 @@ STARK_ROSTER: tuple[StarkAI, ...] = (
         tools=("filesystem_read",),
         internet_domains=("github.com", "developer.mozilla.org"),
         learned_skills=(),
+        jobs=(
+            "knowledge_overseer",
+            "entity_resolver",
+            "provenance_analyst",
+            "knowledge_graph_querier",
+            "fact_checker",
+        ),
     ),
 
     # ------------------------------------------------------------------
@@ -522,6 +554,13 @@ STARK_ROSTER: tuple[StarkAI, ...] = (
         tools=("filesystem_read",),
         internet_domains=("github.com",),
         learned_skills=(),
+        jobs=(
+            "simulation_engineer",
+            "contingency_planner",
+            "what_if_analyst",
+            "plan_stress_tester",
+            "dry_run_coordinator",
+        ),
     ),
 
     # ------------------------------------------------------------------
@@ -574,6 +613,16 @@ STARK_ROSTER: tuple[StarkAI, ...] = (
         tools=("code_security_scan", "net_inventory", "web_audit", "dir_enum", "hash_audit", "sqli_scan", "port_scan", "vuln_scan", "ssl_scan", "dns_enum", "cve_lookup"),
         internet_domains=("cve.mitre.org", "nvd.nist.gov", "github.com"),
         learned_skills=(),
+        jobs=(
+            "vulnerability_scanner",
+            "security_auditor",
+            "threat_hunter",
+            "intrusion_analyst",
+            "compliance_checker",
+            "red_team_analyst",
+            "code_security_reviewer",
+            "network_security_monitor",
+        ),
     ),
 
     # ------------------------------------------------------------------
@@ -615,6 +664,13 @@ STARK_ROSTER: tuple[StarkAI, ...] = (
         tools=("filesystem_read",),
         internet_domains=(),
         learned_skills=(),
+        jobs=(
+            "evidence_synthesizer",
+            "claim_verifier",
+            "hypothesis_validator",
+            "reasoning_analyst",
+            "world_model_operator",
+        ),
     ),
 
     # ------------------------------------------------------------------
@@ -653,6 +709,14 @@ STARK_ROSTER: tuple[StarkAI, ...] = (
         tools=("net_inventory", "system_probe", "filesystem_read"),
         internet_domains=("github.com",),
         learned_skills=(),
+        jobs=(
+            "network_monitor",
+            "connectivity_analyst",
+            "device_fabric_observer",
+            "outage_reporter",
+            "latency_tracker",
+            "port_watcher",
+        ),
     ),
 
     # ------------------------------------------------------------------
@@ -692,6 +756,13 @@ STARK_ROSTER: tuple[StarkAI, ...] = (
         tools=("code_security_scan", "hash_audit", "filesystem_read"),
         internet_domains=("cve.mitre.org", "nvd.nist.gov"),
         learned_skills=(),
+        jobs=(
+            "blue_team_defender",
+            "security_hardener",
+            "compliance_checker",
+            "threat_detector",
+            "security_reporter",
+        ),
     ),
 
     # ------------------------------------------------------------------
@@ -731,6 +802,13 @@ STARK_ROSTER: tuple[StarkAI, ...] = (
         tools=("filesystem_read", "git_status"),
         internet_domains=("github.com",),
         learned_skills=(),
+        jobs=(
+            "legacy_code_analyst",
+            "documentation_tracer",
+            "modernization_planner",
+            "deprecated_system_reviewer",
+            "code_archaeologist",
+        ),
     ),
 )
 

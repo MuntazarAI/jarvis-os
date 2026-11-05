@@ -555,7 +555,7 @@ def get_stark_model(ai_id: str) -> StarkAI | None:
 
 def get_stark_models_by_role(role: str) -> list:
     """Get all Stark AI models with a given role."""
-    return [s for s in STARK_ROSTER_LIST if stark.role == role]
+    return [s for s in STARK_ROSTER_LIST if s.role == role]
 
 
 def get_all_stark_models() -> list:
