@@ -103,6 +103,11 @@ class StarkAI(Agent):
     dispatchable: bool = True
     roles: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
+    @property
+    def role_ids(self) -> tuple[str, ...]:
+        """Return just the role IDs from the roles tuples."""
+        return tuple(r for r, _ in self.roles)
+
     # Stark-specific duty/work descriptions (presentation + routing hints)
     duties: tuple[str, ...] = field(default_factory=tuple)
     works: tuple[str, ...] = field(default_factory=tuple)
