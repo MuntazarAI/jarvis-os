@@ -7,5 +7,28 @@ plastic dynamics that can consume sensor events and emit bounded motor events.
 
 from .core import LIFNeuron, SpikingNetwork, Synapse
 from .system import NeuralNervousSystem
+from .fly_brain import (
+    FlyBrainNetwork,
+    FlyBrainInput,
+    FlyBrainOutput,
+    FlyBrainState,
+    build_fly_brain_network,
+    get_fly_brain,
+    fly_brain_status,
+    fly_brain_step,
+)
 
-__all__ = ["LIFNeuron", "Synapse", "SpikingNetwork", "NeuralNervousSystem"]
+__all__ = [
+    "LIFNeuron",
+    "Synapse",
+    "SpikingNetwork",
+    "NeuralNervousSystem",
+    "FlyBrainNetwork",
+    "FlyBrainInput",
+    "FlyBrainOutput",
+    "FlyBrainState",
+    "build_fly_brain_network",
+    "get_fly_brain",
+    "fly_brain_status",
+    "fly_brain_step",
+]

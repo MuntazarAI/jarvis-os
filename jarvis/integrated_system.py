@@ -68,6 +68,7 @@ from jarvis.memory.palace import MemoryPalace
 from jarvis.memory.persistent import PersistentMemory
 from jarvis.memory.temporal import TemporalKnowledge
 from jarvis.world.model import WorldModel
+from jarvis.neural.fly_brain import FlyBrainNetwork, get_fly_brain, fly_brain_status, fly_brain_step
 from jarvis.vision.intelligence import VisionIntelligence
 from jarvis.voice.intelligence import AudioIntelligence
 from jarvis.video.intelligence import VideoUnderstanding
@@ -181,6 +182,9 @@ class JarvisIntegratedSystem:
         self.system_manager: SystemManager | None = None
         self.resource_manager: ResourceManager | None = None
         self.desktop_manager: DesktopManager | None = None
+
+        # M14: Fruit Fly Brain Neural Network
+        self.fly_brain: FlyBrainNetwork | None = None
 
         # M13c-God's Eye View, M13d-See-Through-Walls, M13e-Build-Your-Own-X
         self.gods_eye_view: GodsEyeView | None = None
@@ -317,6 +321,13 @@ class JarvisIntegratedSystem:
         except Exception as exc:
             errors.append(f"operating system: {exc}")
 
+        # Initialize M14 Fruit Fly Brain Neural Network
+        try:
+            self.fly_brain = get_fly_brain()
+            self.stats["subsystems_initialized"] += 1
+        except Exception as exc:
+            errors.append(f"fly brain neural network: {exc}")
+
         # Initialize M13c God's Eye View, M13d See-Through-Walls, M13e Build-Your-Own-X
         try:
             self.gods_eye_view = get_gods_eye_view(policy=None, events=None)
@@ -445,6 +456,18 @@ class JarvisIntegratedSystem:
             capabilities=[
                 "guide_reference", "project_planning",
                 "implementation_tracking", "technology_roadmap",
+            ],
+        )
+
+        # M14 Fruit Fly Brain Neural Network
+        subsystems["fly_brain"] = SubsystemStatus(
+            name="Fruit Fly Brain Neural Network",
+            version="1.0",
+            status="active" if self.fly_brain else "offline",
+            capabilities=[
+                "sparse_lif_network", "sensory_input", "motor_output",
+                "166k_neurons", "12_populations", "16_projections",
+                "read_only", "policy_gated",
             ],
         )
 
