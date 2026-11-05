@@ -21,6 +21,20 @@ from .tool_using_reasoning import (
     ToolUsingReasoner,
     get_tool_using_reasoner,
 )
+from .stark_roster_500 import (
+    STARK_ROSTER_500,
+    stark_roster_500_by_id,
+    generate_stark_agents,
+    count_by_category as stark_count_by_category,
+    list_categories as stark_list_categories,
+)
+from .ai_bots_250 import (
+    AI_BOTS_250,
+    ai_bots_250_by_id,
+    generate_ai_bots,
+    count_by_category as bots_count_by_category,
+    list_categories as bots_list_categories,
+)
 
 __all__ = [
     "Agent",
@@ -49,4 +63,16 @@ __all__ = [
     "ToolExecutor",
     "ToolUsingReasoner",
     "get_tool_using_reasoner",
+    # Expanded Stark AI roster (500 agents)
+    "STARK_ROSTER_500",
+    "stark_roster_500_by_id",
+    "generate_stark_agents",
+    "stark_count_by_category",
+    "stark_list_categories",
+    # AI Bot roster (250 bots)
+    "AI_BOTS_250",
+    "ai_bots_250_by_id",
+    "generate_ai_bots",
+    "bots_count_by_category",
+    "bots_list_categories",
 ]

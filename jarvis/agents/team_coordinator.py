@@ -38,7 +38,7 @@ from ..cognition.task_evaluation import (
     TaskEvaluation,
     TaskReasoningEngine,
 )
-from ..cognition.world_model import WorldModel
+from ..world.model import WorldModel
 
 
 @dataclass

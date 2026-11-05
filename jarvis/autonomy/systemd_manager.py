@@ -290,7 +290,7 @@ class DbusManager:
         }
 
 
-class SystemdManager:
+class SystemManager:
     """Combined systemd and D-Bus manager for JARVIS-OS."""
 
     def __init__(self) -> None:
@@ -322,5 +322,6 @@ __all__ = [
     "DbusService",
     "SystemdManager",
     "DbusManager",
+    "SystemManager",
     "get_systemd_manager",
 ]

@@ -472,10 +472,8 @@ def get_integrated_system(
     config: JarvisConfig | None = None,
 ) -> JarvisIntegratedSystem:
     """Get or create the global integrated system."""
-    global _integrated_system
-    if _integrated_system is None:
-        _integrated_system = JarvisIntegratedSystem(config=config)
-    return _integrated_system
+    from jarvis.integrated_system import get_jarvis_os
+    return get_jarvis_os()
 
 
 def dispatch_stark_ai(

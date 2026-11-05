@@ -32,46 +32,53 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..agents.stark import StarkAI, STARK_ROSTER_BY_ID
-from ..agents.agent_mesh_intelligence import AgentMesh, get_agent_mesh
-from ..agents.tool_using_reasoning import ToolUsingReasoner, get_tool_using_reasoner
-from ..cognition.task_evaluation import (
+from jarvis.agents.stark import StarkAI, STARK_ROSTER_BY_ID
+from jarvis.agents.agent_mesh_intelligence import AgentMesh, get_agent_mesh
+from jarvis.agents.tool_using_reasoning import ToolUsingReasoner, get_tool_using_reasoner
+from jarvis.cognition.task_evaluation import (
     TaskEvaluator,
     TaskReasoningEngine,
     get_task_reasoning_engine,
 )
-from ..cognition.feedback_collection import (
+from jarvis.cognition.feedback_collection import (
     FeedbackCollector,
     get_feedback_collector,
 )
-from ..cognition.cognitive_engine import CognitiveEngine, get_cognitive_engine
-from ..foundation.models.multimodal import (
+from jarvis.cognition.cognitive_engine import CognitiveEngine, get_cognitive_engine
+from jarvis.foundation.models.multimodal import (
     MultimodalEmbedder,
     MultimodalRetrieval,
     get_multimodal_embedder,
     get_multimodal_retrieval,
 )
-from ..foundation.models.sensor_fusion import (
+from jarvis.foundation.models.sensor_fusion import (
     SensorFusion,
     SensorReading,
     get_sensor_fusion,
 )
-from ..foundation.router import ModelRouter, ModelCapability, RoutingStrategy
-from ..foundation.router import get_model_registry
-from ..foundation.inference import UnifiedInferenceAPI, InferenceRequest
-from ..foundation.benchmarks import JARVISBenchmarkSuite
-from ..foundation.data.governance import DatasetGovernance
-from ..foundation.data.tokenizer import TokenizerRegistry
-from ..foundation.training.pretraining import PretrainingTrainer
-from ..foundation.training.finetuning import FineTuningEngine
-from ..memory.palace import MemoryPalace
-from ..memory.persistent import PersistentMemory
-from ..memory.temporal import TemporalKnowledge
-from ..world.model import WorldModel
-from ..vision.intelligence import VisionIntelligence
-from ..voice.intelligence import AudioIntelligence
-from ..video.intelligence import VideoUnderstanding
-from ..omninet import integration as omninet_integration
+from jarvis.foundation.router import ModelRouter, ModelCapability, RoutingStrategy
+from jarvis.foundation.router import get_model_registry
+from jarvis.foundation.inference import UnifiedInferenceAPI, InferenceRequest
+from jarvis.foundation.benchmarks import JARVISBenchmarkSuite
+from jarvis.foundation.data.governance import DatasetGovernance
+from jarvis.foundation.data.tokenizer import TokenizerRegistry
+from jarvis.foundation.training.pretraining import PretrainingTrainer
+from jarvis.foundation.training.finetuning import FineTuningEngine
+from jarvis.memory.palace import MemoryPalace
+from jarvis.memory.persistent import PersistentMemory
+from jarvis.memory.temporal import TemporalKnowledge
+from jarvis.world.model import WorldModel
+from jarvis.vision.intelligence import VisionIntelligence
+from jarvis.voice.intelligence import AudioIntelligence
+from jarvis.video.intelligence import VideoUnderstanding
+from jarvis.omninet import integration as omninet_integration
+from jarvis.autonomy.systemd_manager import SystemdManager as _SystemdManager, SystemManager
+from jarvis.autonomy.resource_manager import ResourceManager
+from jarvis.autonomy.desktop_manager import DesktopManager
+from jarvis.agents.team_coordinator import TeamCoordinator
+from jarvis.omninet.gods_eye_view import GodsEyeView, get_gods_eye_view
+from jarvis.omninet.see_through_walls import SeeThroughWalls, get_see_through_walls
+from jarvis.omninet.build_your_own_x import BuildYourOwnX, get_build_your_own_x
 
 
 @dataclass
@@ -171,8 +178,14 @@ class JarvisIntegratedSystem:
         self.multimodal_retrieval: MultimodalRetrieval | None = None
         self.sensor_fusion: SensorFusion | None = None
         self.systemd_manager: SystemdManager | None = None
+        self.system_manager: SystemManager | None = None
         self.resource_manager: ResourceManager | None = None
         self.desktop_manager: DesktopManager | None = None
+
+        # M13c-God's Eye View, M13d-See-Through-Walls, M13e-Build-Your-Own-X
+        self.gods_eye_view: GodsEyeView | None = None
+        self.see_through_walls: SeeThroughWalls | None = None
+        self.build_your_own_x: BuildYourOwnX | None = None
 
         self.stats = {
             "system_initialized": False,
@@ -223,7 +236,14 @@ class JarvisIntegratedSystem:
             self.benchmark_suite = JARVISBenchmarkSuite()
             self.dataset_governance = DatasetGovernance()
             self.tokenizer_registry = TokenizerRegistry()
-            self.pretraining_trainer = PretrainingTrainer()
+            # Create pretraining trainer with minimal config
+            from jarvis.foundation.training.pretraining import create_pretraining_config
+            self.pretraining_trainer = PretrainingTrainer(
+                config=create_pretraining_config(
+                    model_id="jarvis-pretrain",
+                    vocab_size=50000,
+                )
+            )
             self.fine_tuning_engine = FineTuningEngine()
             self.stats["subsystems_initialized"] += 1
         except Exception as exc:
@@ -257,7 +277,7 @@ class JarvisIntegratedSystem:
         try:
             self.cognitive_engine = CognitiveEngine()
             self.task_reasoning = TaskReasoningEngine(
-                reasoning_engine=self.reasoning_engine,
+                reasoning_engine=self.cognitive_engine,
                 world_model=self.world_model,
                 persistent_memory=self.persistent_memory,
             )
@@ -287,6 +307,28 @@ class JarvisIntegratedSystem:
         except Exception as exc:
             errors.append(f"feedback: {exc}")
 
+        # Initialize operating system layer
+        try:
+            self.systemd_manager = SystemdManager()
+            self.system_manager = SystemManager()
+            self.resource_manager = ResourceManager()
+            self.desktop_manager = DesktopManager()
+            self.stats["subsystems_initialized"] += 1
+        except Exception as exc:
+            errors.append(f"operating system: {exc}")
+
+        # Initialize M13c God's Eye View, M13d See-Through-Walls, M13e Build-Your-Own-X
+        try:
+            self.gods_eye_view = get_gods_eye_view(policy=None, events=None)
+            gev_result = self.gods_eye_view.initialize()
+            self.see_through_walls = get_see_through_walls(policy=None, events=None)
+            stw_result = self.see_through_walls.initialize()
+            self.build_your_own_x = get_build_your_own_x(policy=None, events=None)
+            byox_result = self.build_your_own_x.initialize()
+            self.stats["subsystems_initialized"] += 1
+        except Exception as exc:
+            errors.append(f"M13c/d/e omninet extensions: {exc}")
+
         # Count total agents
         total_agents = len(STARK_ROSTER_BY_ID)
         self.stats["total_agents"] = total_agents
@@ -307,6 +349,8 @@ class JarvisIntegratedSystem:
                 self.cognitive_engine, self.task_reasoning,
                 self.agent_mesh, self.tool_reasoner,
                 self.team_coordinator, self.feedback_collector,
+                self.systemd_manager, self.system_manager,
+                self.resource_manager, self.desktop_manager,
             ] if s is not None]
         )
 
@@ -372,6 +416,38 @@ class JarvisIntegratedSystem:
             capabilities=["feedback_collection", "satisfaction_tracking"],
         )
 
+        # M13c God's Eye View
+        subsystems["gods_eye_view"] = SubsystemStatus(
+            name="God's Eye View",
+            version="1.0",
+            status="active" if self.gods_eye_view else "offline",
+            capabilities=[
+                "cockpit_view", "contact_tracking", "global_context",
+                "military_hud", "weather", "satellite_passes",
+                "analyst_answers", "share_links",
+            ],
+        )
+        # M13d See-Through-Walls AR
+        subsystems["see_through_walls"] = SubsystemStatus(
+            name="See-Through-Walls AR",
+            version="1.0",
+            status="active" if self.see_through_walls else "offline",
+            capabilities=[
+                "shared_map_localization", "pose_sharing",
+                "multiplayer_ar", "skeleton_through_walls",
+            ],
+        )
+        # M13e Build-Your-Own-X
+        subsystems["build_your_own_x"] = SubsystemStatus(
+            name="Build-Your-Own-X",
+            version="1.0",
+            status="active" if self.build_your_own_x else "offline",
+            capabilities=[
+                "guide_reference", "project_planning",
+                "implementation_tracking", "technology_roadmap",
+            ],
+        )
+
         total_agents = len(STARK_ROSTER_BY_ID)
         active_agents = total_agents  # All Stark AI agents are available
 
@@ -391,6 +467,17 @@ class JarvisIntegratedSystem:
             total_sensors=0,
             active_sensors=0,
         )
+
+    def dispatch_stark(
+        self,
+        ai_id: str,
+        goal: str,
+        require_approval: bool = True,
+    ) -> dict[str, Any]:
+        """Dispatch a goal to a Stark AI through the full pipeline."""
+        from jarvis.agents.stark import get_security_executor
+        executor = get_security_executor()
+        return executor.execute(ai_id, goal)
 
     def shutdown(self) -> dict[str, Any]:
         """Gracefully shutdown JARVIS-OS."""
