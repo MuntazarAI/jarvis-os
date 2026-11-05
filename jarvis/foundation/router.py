@@ -70,6 +70,7 @@ class RoutingDecision:
     fallback_model_id: str | None = None
     estimated_latency_ms: float = 0.0
     estimated_cost: float = 0.0
+    fallback_used: bool = False
 
 
 @dataclass

@@ -39,11 +39,24 @@ Each experiment must record:
 - Reproducibility information
 """
 
+from .benchmarks import (
+    JARVISBenchmarkSuite,
+    BenchmarkSuite,
+    BenchmarkResult,
+    LanguageBenchmark,
+    ReasoningBenchmark,
+    CodingBenchmark,
+    MemoryBenchmark,
+    PlanningBenchmark,
+    AgentSystemBenchmark,
+    SecurityBenchmark,
+)
 from .base_model import BaseModel, ModelConfig, ModelSpec, ModelTaskType, ModelType
 from .model_registry import ModelRegistry, get_model_registry
 from .training import TrainingEngine, TrainingConfig
 from .evaluation import EvaluationEngine, get_evaluation_engine
 from .router import ModelRouter, RoutingDecision, ModelCapability, RoutingStrategy, ProviderType
+from .inference import UnifiedInferenceAPI, InferenceRequest, InferenceResponse, get_inference_api
 
 __all__ = [
     "BaseModel",
@@ -62,4 +75,18 @@ __all__ = [
     "ModelCapability",
     "RoutingStrategy",
     "ProviderType",
+    "UnifiedInferenceAPI",
+    "InferenceRequest",
+    "InferenceResponse",
+    "get_inference_api",
+    "JARVISBenchmarkSuite",
+    "BenchmarkSuite",
+    "BenchmarkResult",
+    "LanguageBenchmark",
+    "ReasoningBenchmark",
+    "CodingBenchmark",
+    "MemoryBenchmark",
+    "PlanningBenchmark",
+    "AgentSystemBenchmark",
+    "SecurityBenchmark",
 ]

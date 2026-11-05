@@ -262,15 +262,24 @@ class JARVIS_LLM_Model:
         """Run inference on token IDs."""
         return self.model.forward(input_ids)
 
-    def generate(self, prompt: str, max_new_tokens: int = 50,
-                 temperature: float = 0.7, top_p: float = 0.9,
-                 seed: int | None = None) -> dict[str, Any]:
-        """Generate text from a prompt string."""
-        # Simple character-level tokenization
-        if self.tokenizer:
-            input_ids = self.tokenizer.encode(prompt)
+    def generate(
+            self,
+            prompt_or_ids: str | list[int],
+            max_new_tokens: int = 50,
+            temperature: float = 0.7,
+            top_p: float = 0.9,
+            seed: int | None = None,
+        ) -> dict[str, Any]:
+        """Generate text from a prompt string or token IDs."""
+        if isinstance(prompt_or_ids, str):
+            prompt = prompt_or_ids
+            # Simple character-level tokenization
+            if self.tokenizer:
+                input_ids = self.tokenizer.encode(prompt)
+            else:
+                input_ids = [ord(c) % self.model.vocab_size for c in prompt]
         else:
-            input_ids = [ord(c) % self.model.vocab_size for c in prompt]
+            input_ids = list(prompt_or_ids)
 
         result = self.model.generate(
             input_ids, max_new_tokens=max_new_tokens,
@@ -280,6 +289,10 @@ class JARVIS_LLM_Model:
         # Simple detokenization
         if self.tokenizer:
             result["generated_text"] = self.tokenizer.decode(result["generated_ids"])
+        else:
+            result["generated_text"] = "".join(
+                chr(t % 128) for t in result["generated_ids"] if t < 128
+            )
 
         return result
 
