@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .core.config import JarvisConfig
 from .core.loop import Jarvis
+from .integrated_system import get_jarvis_os
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -5893,35 +5894,29 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             ai_id = args.text[0]
             goal = " ".join(args.text[1:])
-            result = dispatch_stark_ai(ai_id, goal)
+            from jarvis.agents.stark import get_security_executor
+            _executor = get_security_executor()
+            result = _executor.execute(ai_id, goal)
             if args.json:
                 print(json.dumps(result, indent=2, default=str))
             else:
-                print(f"Stark AI: {result.get('stark_ai', 'unknown')}")
-                print(f"Job: {result.get('job_id')}")
+                stark_info = result.get("stark", {})
+                print(f"Stark AI: {stark_info.get('name', 'unknown')}")
+                print(f"Task: {result.get('task_id')}")
                 print(f"OK: {result.get('ok', False)}")
                 print(f"Goal: {result.get('goal')}")
-                result_data = result.get("result", {})
-                if isinstance(result_data, dict):
-                    print(f"Web results: {result_data.get('web_results_count', 0)}")
-                    print(f"Knowledge entities: "
-                          f"{result_data.get('knowledge_entities_count', 0)}")
-                    print(f"Threat findings: "
-                          f"{result_data.get('threat_findings_count', 0)}")
-                    print(f"Neural confidence: "
-                          f"{result_data.get('neural_confidence', 0):.2f}")
-                    print(f"Neural relevance: "
-                          f"{result_data.get('neural_relevance', 0):.2f}")
-                    print(f"Neural urgency: "
-                          f"{result_data.get('neural_urgency', 0):.2f}")
+                print(f"State: {result.get('state')}")
+                print(f"Signature: {stark_info.get('signature', '')}")
+                print(f"Max tool calls: {stark_info.get('max_tool_calls', 0)}")
+                print(f"Roles: {', '.join(r.get('role_id', '') for r in stark_info.get('roles', []))}")
                 if not result.get("ok", False):
                     jarvis.close()
                     return 1
         elif args.action == "status":
-            system = get_integrated_system()
-            status = system.status()
+            system = get_jarvis_os()
+            status = system.get_system_status()
             if args.json:
-                print(json.dumps(status, indent=2, default=str))
+                print(json.dumps(status.to_dict(), indent=2, default=str))
             else:
                 print("STARK AI STATUS")
                 print(f"{'ID':10} {'NAME':15} {'ROLE':25} {'ACTS':5} "
@@ -5958,40 +5953,31 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "omninet":
         # OMNINET status dashboard
-        system = get_integrated_system()
+        system = get_jarvis_os()
         if args.action == "status":
-            status = system.status()
+            status = system.get_system_status()
+            status_dict = status.to_dict()
             if args.json:
-                print(json.dumps(status, indent=2, default=str))
+                print(json.dumps(status_dict, indent=2, default=str))
             else:
                 print("OMNINET STATUS")
                 print("=" * 60)
-                stark_status = status.get("stark_ais", {})
-                print(f"Stark AIs ({len(stark_status)}):")
-                for stark_id, stark_info in stark_status.items():
-                    print(f"  {stark_id:10} {stark_info.get('name', ''):15} "
-                          f"{stark_info.get('role', ''):25} "
-                          f"{'yes' if stark_info.get('may_act', False) else 'no':5} "
-                          f"{stark_info.get('max_tool_calls', 0):6} "
-                          f"{stark_info.get('risk_tier', ''):15}")
-                jobs_status = status.get("jobs", {})
-                print(f"\nJobs: {jobs_status.get('total', 0)} total, "
-                      f"{jobs_status.get('completed', 0)} completed, "
-                      f"{jobs_status.get('failed', 0)} failed, "
-                      f"{jobs_status.get('pending', 0)} pending")
-                exec_status = status.get("executions", {})
-                print(f"Executions: {exec_status.get('total', 0)} total, "
-                      f"{exec_status.get('completed', 0)} completed")
-                security_status = status.get("security", {})
-                print(f"\nSecurity:")
-                print(f"  Emergency stop: "
-                      f"{security_status.get('emergency_stop_engaged', False)}")
-                metrics = security_status.get("metrics", {})
-                print(f"  Total requests: {metrics.get('total_requests', 0)}")
-                print(f"  Policy denials: {metrics.get('policy_denials_total', 0)}")
-                print(f"  SSRF blocks: {metrics.get('ssrf_blocks_total', 0)}")
-                print(f"  Injection detections: "
-                      f"{metrics.get('injection_detections_total', 0)}")
+                print(f"Version: {status_dict.get('version', 'unknown')}")
+                print(f"System Status: {status_dict.get('status', 'unknown')}")
+                print(f"Uptime: {status_dict.get('uptime_seconds', 0):.1f}s")
+                print(f"Total Agents: {status_dict.get('total_agents', 0)}")
+                print(f"Active Agents: {status_dict.get('active_agents', 0)}")
+                print(f"Total Routines: {status_dict.get('total_routines', 0)}")
+                print(f"Active Routines: {status_dict.get('active_routines', 0)}")
+                print(f"Total Sensors: {status_dict.get('total_sensors', 0)}")
+                print(f"Active Sensors: {status_dict.get('active_sensors', 0)}")
+                subsystems = status_dict.get("subsystems", {})
+                print(f"\nSubsystems ({len(subsystems)}):")
+                for sub_name, sub_info in subsystems.items():
+                    print(f"  {sub_name}: {sub_info.get('status', 'unknown')} "
+                          f"({sub_info.get('version', 'n/a')})")
+                    for cap in sub_info.get("capabilities", []):
+                        print(f"    - {cap}")
         elif args.action == "dashboard":
             dashboard = system.dashboard.generate_report()
             if args.json:
@@ -6015,37 +6001,32 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "integrate":
         # Cross-system integration test:
         # Stark AI -> DOTS -> OMNINET -> Neural Network -> Dashboard
-        system = get_integrated_system()
+        system = get_jarvis_os()
         goal = " ".join(args.text) if args.text else "test system integration"
         if not args.text:
             goal = "system integration test: verify all subsystems connect"
         print(f"Running integration test: {goal}")
-        result = system.dispatch_stark("friday", goal)
+        from jarvis.agents.stark import get_security_executor
+        _executor = get_security_executor()
+        result = _executor.execute("friday", goal)
         if args.json:
             print(json.dumps(result, indent=2, default=str))
         else:
             print(f"OK: {result.get('ok', False)}")
-            print(f"Task ID: {result.get('job_id')}")
-            result_data = result.get("result", {})
-            if isinstance(result_data, dict):
-                print(f"Web results: {result_data.get('web_results_count', 0)}")
-                print(f"Knowledge entities: "
-                      f"{result_data.get('knowledge_entities_count', 0)}")
-                print(f"Threat findings: "
-                      f"{result_data.get('threat_findings_count', 0)}")
-                print(f"Neural confidence: "
-                      f"{result_data.get('neural_confidence', 0):.2f}")
-                print(f"Neural relevance: "
-                      f"{result_data.get('neural_relevance', 0):.2f}")
-                print(f"Neural urgency: "
-                      f"{result_data.get('neural_urgency', 0):.2f}")
+            print(f"Task ID: {result.get('task_id')}")
+            print(f"State: {result.get('state')}")
+            stark_info = result.get("stark", {})
+            print(f"Stark AI: {stark_info.get('name', 'unknown')}")
+            print(f"Steps: {len(result.get('steps', []))}")
             if not result.get("ok", False):
                 jarvis.close()
                 return 1
 
     if args.command == "scheduler":
         # Scheduler management - schedule automated tasks
-        system = get_integrated_system()
+        system = get_jarvis_os()
+        from jarvis.dots.manager import DotManager
+        from jarvis.omninet.scheduler import get_scheduler
         dots = DotManager()
         scheduler = get_scheduler(system=system, dots=dots)
         if args.action == "list":

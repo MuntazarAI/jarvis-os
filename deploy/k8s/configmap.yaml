@@ -1,0 +1,150 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jarvis-config
+  namespace: jarvis
+  labels:
+    app: jarvis-os
+    component: core
+data:
+  config.yaml: |
+    # JARVIS-OS Configuration
+    # All values can be overridden via environment variables
+
+    # Server settings
+    server:
+      host: "0.0.0.0"
+      port: 8080
+      metrics_port: 9090
+      workers: 4
+      timeout: 30
+      keepalive: 5
+
+    # Logging
+    logging:
+      level: "INFO"
+      format: "json"
+      output: "stdout"
+      access_log: true
+
+    # JARVIS-OS Core
+    jarvis:
+      # Stark AI Roster
+      stark_agents:
+        enabled: true
+        agents:
+          - jarvis
+          - friday
+          - karen
+          - edith
+          - veronica
+          - ultron
+          - vision
+          - nebula
+          - jocasta
+          - howard
+
+      # Agent Mesh
+      agent_mesh:
+        enabled: true
+        max_teams: 10
+        max_tasks_per_team: 100
+
+      # Cognitive Engine
+      cognitive_engine:
+        enabled: true
+        reasoning_iterations: 5
+        planning_horizon: 10
+
+      # World Model
+      world_model:
+        enabled: true
+        max_objects: 10000
+        max_events: 50000
+
+      # Memory
+      memory:
+        palace_enabled: true
+        persistent_enabled: true
+        temporal_enabled: true
+        consolidation_interval: 3600
+
+      # OMNINET
+      omninet:
+        enabled: true
+        connectors:
+          - http
+          - websocket
+        max_concurrent_requests: 100
+
+    # Foundation Models
+    foundation:
+      model_router:
+        enabled: true
+        strategy: "capability"
+      inference:
+        enabled: true
+        batch_size: 32
+        max_sequence_length: 4096
+      benchmarks:
+        enabled: true
+        run_on_startup: false
+
+    # Perception
+    perception:
+      vision:
+        enabled: true
+        max_image_size: 10485760
+      audio:
+        enabled: true
+        max_audio_size: 52428800
+      video:
+        enabled: true
+        max_video_size: 104857600
+      multimodal:
+        enabled: true
+      sensor_fusion:
+        enabled: true
+
+    # Autonomy
+    autonomy:
+      systemd:
+        enabled: true
+        read_only: true
+      resources:
+        enabled: true
+        collection_interval: 60
+      desktop:
+        enabled: false
+      hardware:
+        enabled: true
+
+    # Security
+    security:
+      policy_engine:
+        enabled: true
+        audit_log: true
+      secrets:
+        provider: "kubernetes"
+      network:
+        egress_whitelist:
+          - "pypi.org"
+          - "github.com"
+          - "cve.mitre.org"
+          - "nvd.nist.gov"
+
+    # Observability
+    observability:
+      metrics:
+        enabled: true
+        path: "/metrics"
+        port: 9090
+      health:
+        enabled: true
+        path: "/health"
+      readiness:
+        enabled: true
+        path: "/ready"
+      tracing:
+        enabled: false
+        jaeger_endpoint: ""

@@ -151,19 +151,17 @@ class WorldState:
                 confidence=obj_data.get("confidence", 0.5),
                 last_updated=obj_data.get("last_updated", time.time()),
                 source=obj_data.get("source", "unknown"),
-                roles=list(obj_data.get("roles", [])),
+                relations=list(obj_data.get("relations", [])),
             )
         for event_id, event_data in data.get("events", {}).items():
             state.events[event_id] = WorldEvent(
                 event_id=event_data.get("event_id", event_id),
-                name=event_data.get("name", ""),
-                object_type=event_data.get("object_type", "unknown"),
-                properties=event_data.get("properties", {}),
-                location=event_data.get("location"),
-                state=event_data.get("state", "unknown"),
-                confidence=event_data.get("confidence", 0.5),
-                last_updated=event_data.get("last_updated", time.time()),
+                event_type=event_data.get("event_type", "unknown"),
+                description=event_data.get("description", ""),
+                timestamp=event_data.get("timestamp", time.time()),
                 source=event_data.get("source", "unknown"),
-                relations=list(event_data.get("relations", [])),
+                confidence=event_data.get("confidence", 0.5),
+                related_objects=list(event_data.get("related_objects", [])),
+                related_events=list(event_data.get("related_events", [])),
             )
         return state

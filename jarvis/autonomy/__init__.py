@@ -1,12 +1,45 @@
-"""Autonomy & presence facades (1.0). Thin composition over existing systems."""
+"""
+JARVIS-OS Autonomy Module
 
-from .organize import CAPABILITY as ORGANIZE_CAPABILITY
-from .organize import execute as organize_execute
-from .organize import plan as organize_plan
-from .perceive import correlate as correlate_observations
-from .preferences import observe_choice, set_preference
-from .presence import PresenceRuntime
+Provides autonomous agent loop infrastructure, code execution sandbox,
+and system integration capabilities.
+"""
 
-__all__ = ["ORGANIZE_CAPABILITY", "PresenceRuntime",
-           "correlate_observations", "observe_choice",
-           "organize_execute", "organize_plan", "set_preference"]
+from .agent_loop import (
+    LoopTask,
+    TaskStatus,
+    TaskPriority,
+    TaskQueue,
+    LoopController,
+    LoopCheckpoint,
+    get_task_queue,
+    get_loop_controller,
+    initialize_autonomous_loop,
+)
+
+from .checkpoint import (
+    CheckpointManager,
+    CheckpointMetadata,
+    LoopRecovery,
+    create_checkpoint_manager,
+    create_loop_recovery,
+)
+
+__all__ = [
+    # Agent Loop
+    "LoopTask",
+    "TaskStatus",
+    "TaskPriority",
+    "TaskQueue",
+    "LoopController",
+    "LoopCheckpoint",
+    "get_task_queue",
+    "get_loop_controller",
+    "initialize_autonomous_loop",
+    # Checkpoint
+    "CheckpointManager",
+    "CheckpointMetadata",
+    "LoopRecovery",
+    "create_checkpoint_manager",
+    "create_loop_recovery",
+]

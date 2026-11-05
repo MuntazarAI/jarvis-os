@@ -123,6 +123,24 @@ from .integration import (
     dispatch_stark_ai,
     get_integrated_system,
 )
+from .gods_eye_view import (
+    GodsEyeView,
+    GeoContact,
+    GlobeView,
+    get_gods_eye_view,
+)
+from .see_through_walls import (
+    SeeThroughWalls,
+    ARPose,
+    ARSession,
+    get_see_through_walls,
+)
+from .build_your_own_x import (
+    BuildYourOwnX,
+    BuildGuide,
+    BuildProject,
+    get_build_your_own_x,
+)
 from ..agents.stark import SecurityAgentExecutor
 from .security import (
     SecurityAuditor,
@@ -243,4 +261,19 @@ __all__ = [
     "JarvisIntegratedSystem",
     "dispatch_stark_ai",
     "get_integrated_system",
+    # M13c: God's Eye View
+    "GodsEyeView",
+    "GeoContact",
+    "GlobeView",
+    "get_gods_eye_view",
+    # M13d: See-Through-Walls AR
+    "SeeThroughWalls",
+    "ARPose",
+    "ARSession",
+    "get_see_through_walls",
+    # M13e: Build-Your-Own-X
+    "BuildYourOwnX",
+    "BuildGuide",
+    "BuildProject",
+    "get_build_your_own_x",
 ]

@@ -37,6 +37,13 @@ from .templates import (
     list_templates,
     register_template,
 )
+from .dot_templates_200 import (
+    DOT_TEMPLATES_200,
+    dot_templates_200_by_id,
+    generate_dot_templates,
+    count_by_category as dots_count_by_category,
+    list_categories as dots_list_categories,
+)
 
 __all__ = [
     # Manager
@@ -70,4 +77,10 @@ __all__ = [
     "get_template",
     "list_templates",
     "register_template",
+    # Expanded DOT templates (200 templates)
+    "DOT_TEMPLATES_200",
+    "dot_templates_200_by_id",
+    "generate_dot_templates",
+    "dots_count_by_category",
+    "dots_list_categories",
 ]
