@@ -292,13 +292,10 @@ def build_parser() -> argparse.ArgumentParser:
     integration.add_argument("--json", action="store_true",
                              help="machine-readable output")
 
-    neu = sub.add_parser("neural", help="fly-brain neural substrate")
-    neu.add_argument("action", nargs="?", default="status",
-                     choices=["status", "benchmark", "snapshot"])
-    neu.add_argument("--neurons", type=int, default=2000,
-                     help="neurons for benchmark/snapshot")
-    neu.add_argument("--json", action="store_true",
-                     help="machine-readable output")
+    neural.add_argument("--neurons", type=int, default=2000,
+                        help="neurons for benchmark/snapshot")
+    neural.add_argument("--json", action="store_true",
+                        help="machine-readable output")
 
     sub.add_parser("start", help="start the JARVIS service (API server, supervised)")
     sub.add_parser("stop", help="stop the JARVIS service")
@@ -573,6 +570,39 @@ def build_parser() -> argparse.ArgumentParser:
                        help="briefing kind: morning, evening, topic, project, change")
     world.add_argument("--json", action="store_true",
                        help="machine-readable output")
+    # Stark AI dispatch command
+    stark = sub.add_parser("stark", help="Stark AI dispatch through full pipeline")
+    stark.add_argument("action", nargs="?", default="list",
+                       choices=["list", "ask", "status"])
+    stark.add_argument("text", nargs="*", help="goal text for dispatch")
+    stark.add_argument("--json", action="store_true",
+                       help="machine-readable output")
+    # OMNINET status and dashboard
+    omninet = sub.add_parser("omninet", help="OMNINET system status dashboard")
+    omninet.add_argument("action", nargs="?", default="status",
+                         choices=["status", "dashboard", "integrate"])
+    omninet.add_argument("text", nargs="*", help="goal for integration test")
+    omninet.add_argument("--json", action="store_true",
+                         help="machine-readable output")
+    # Scheduler management
+    scheduler = sub.add_parser("scheduler", help="automated scheduler management")
+    scheduler.add_argument("action", nargs="?", default="list",
+                           choices=["list", "add", "run", "enable", "disable", "stats"])
+    scheduler.add_argument("text", nargs="*", help="name, type, and goal for add")
+    scheduler.add_argument("--json", action="store_true",
+                           help="machine-readable output")
+    # Neural networking management
+    neural = sub.add_parser("neural", help="neural networking management")
+    neural.add_argument("action", nargs="?", default="status",
+                        choices=["status", "create", "test"])
+    neural.add_argument("text", nargs="*", help="network name for create/test")
+    neural.add_argument("--json", action="store_true",
+                        help="machine-readable output")
+    # Cross-system integration test
+    integrate = sub.add_parser("integrate", help="cross-system integration test")
+    integrate.add_argument("text", nargs="*", help="goal for integration test")
+    integrate.add_argument("--json", action="store_true",
+                           help="machine-readable output")
     return parser
 
 
@@ -5842,6 +5872,262 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "service":
         return _service_action(jarvis, args)
+
+    if args.command == "stark":
+        # Stark AI dispatch through full pipeline:
+        # Stark AI -> DOTS -> OMNINET -> Neural Network -> Dashboard
+        if args.action == "list":
+            from jarvis.agents.stark import STARK_ROSTER
+            print("STARK AI ROSTER")
+            print(f"{'ID':10} {'NAME':15} {'ROLE':25} {'ACTS':5} "
+                  f"{'TOOLS':6} {'RISK':15}")
+            for stark in STARK_ROSTER:
+                print(f"{stark.ai_id:10} {stark.name:15} "
+                      f"{stark.role:25} "
+                      f"{'yes' if stark.may_act else 'no':5} "
+                      f"{len(stark.tools):6} {stark.risk_tier:15}")
+            print("\nuse: jarvis stark ask <id> <goal>")
+            print("e.g. jarvis stark ask friday check system health")
+        elif args.action == "ask":
+            if len(args.text) < 2:
+                print("usage: jarvis stark ask <ai_id> <goal>")
+                print("e.g. jarvis stark ask friday check system health")
+                jarvis.close()
+                return 2
+            ai_id = args.text[0]
+            goal = " ".join(args.text[1:])
+            result = dispatch_stark_ai(ai_id, goal)
+            if args.json:
+                print(json.dumps(result, indent=2, default=str))
+            else:
+                print(f"Stark AI: {result.get('stark_ai', 'unknown')}")
+                print(f"Job: {result.get('job_id')}")
+                print(f"OK: {result.get('ok', False)}")
+                print(f"Goal: {result.get('goal')}")
+                result_data = result.get("result", {})
+                if isinstance(result_data, dict):
+                    print(f"Web results: {result_data.get('web_results_count', 0)}")
+                    print(f"Knowledge entities: "
+                          f"{result_data.get('knowledge_entities_count', 0)}")
+                    print(f"Threat findings: "
+                          f"{result_data.get('threat_findings_count', 0)}")
+                    print(f"Neural confidence: "
+                          f"{result_data.get('neural_confidence', 0):.2f}")
+                    print(f"Neural relevance: "
+                          f"{result_data.get('neural_relevance', 0):.2f}")
+                    print(f"Neural urgency: "
+                          f"{result_data.get('neural_urgency', 0):.2f}")
+                if not result.get("ok", False):
+                    jarvis.close()
+                    return 1
+        elif args.action == "status":
+            system = get_integrated_system()
+            status = system.status()
+            if args.json:
+                print(json.dumps(status, indent=2, default=str))
+            else:
+                print("STARK AI STATUS")
+                print(f"{'ID':10} {'NAME':15} {'ROLE':25} {'ACTS':5} "
+                      f"{'TOOLS':6} {'RISK':15}")
+                for stark_id, stark_info in status.get("stark_ais", {}).items():
+                    print(f"{stark_id:10} {stark_info.get('name', ''):15} "
+                          f"{stark_info.get('role', ''):25} "
+                          f"{'yes' if stark_info.get('may_act', False) else 'no':5} "
+                          f"{stark_info.get('max_tool_calls', 0):6} "
+                          f"{stark_info.get('risk_tier', ''):15}")
+                print(f"\nJobs: {status.get('jobs', {}).get('total', 0)} total, "
+                      f"{status.get('jobs', {}).get('completed', 0)} completed, "
+                      f"{status.get('jobs', {}).get('failed', 0)} failed, "
+                      f"{status.get('jobs', {}).get('pending', 0)} pending")
+                print(f"Executions: "
+                      f"{status.get('executions', {}).get('total', 0)} total, "
+                      f"{status.get('executions', {}).get('completed', 0)} completed")
+                security_status = status.get("security", {})
+                print(f"\nSecurity:")
+                print(f"  Emergency stop: "
+                      f"{security_status.get('emergency_stop_engaged', False)}")
+                metrics = security_status.get("metrics", {})
+                print(f"  Total requests: {metrics.get('total_requests', 0)}")
+                print(f"  Policy denials: "
+                      f"{metrics.get('policy_denials_total', 0)}")
+                print(f"  SSRF blocks: "
+                      f"{metrics.get('ssrf_blocks_total', 0)}")
+                print(f"  Injection detections: "
+                      f"{metrics.get('injection_detections_total', 0)}")
+        else:
+            print(f"unknown stark action: {args.action}")
+            jarvis.close()
+            return 2
+
+    if args.command == "omninet":
+        # OMNINET status dashboard
+        system = get_integrated_system()
+        if args.action == "status":
+            status = system.status()
+            if args.json:
+                print(json.dumps(status, indent=2, default=str))
+            else:
+                print("OMNINET STATUS")
+                print("=" * 60)
+                stark_status = status.get("stark_ais", {})
+                print(f"Stark AIs ({len(stark_status)}):")
+                for stark_id, stark_info in stark_status.items():
+                    print(f"  {stark_id:10} {stark_info.get('name', ''):15} "
+                          f"{stark_info.get('role', ''):25} "
+                          f"{'yes' if stark_info.get('may_act', False) else 'no':5} "
+                          f"{stark_info.get('max_tool_calls', 0):6} "
+                          f"{stark_info.get('risk_tier', ''):15}")
+                jobs_status = status.get("jobs", {})
+                print(f"\nJobs: {jobs_status.get('total', 0)} total, "
+                      f"{jobs_status.get('completed', 0)} completed, "
+                      f"{jobs_status.get('failed', 0)} failed, "
+                      f"{jobs_status.get('pending', 0)} pending")
+                exec_status = status.get("executions", {})
+                print(f"Executions: {exec_status.get('total', 0)} total, "
+                      f"{exec_status.get('completed', 0)} completed")
+                security_status = status.get("security", {})
+                print(f"\nSecurity:")
+                print(f"  Emergency stop: "
+                      f"{security_status.get('emergency_stop_engaged', False)}")
+                metrics = security_status.get("metrics", {})
+                print(f"  Total requests: {metrics.get('total_requests', 0)}")
+                print(f"  Policy denials: {metrics.get('policy_denials_total', 0)}")
+                print(f"  SSRF blocks: {metrics.get('ssrf_blocks_total', 0)}")
+                print(f"  Injection detections: "
+                      f"{metrics.get('injection_detections_total', 0)}")
+        elif args.action == "dashboard":
+            dashboard = system.dashboard.generate_report()
+            if args.json:
+                print(json.dumps(dashboard.to_dict(), indent=2, default=str))
+            else:
+                print(f"OMNINET DASHBOARD - {dashboard.report_id}")
+                print(f"Overall healthy: {dashboard.overall_healthy}")
+                print(f"Components: {dashboard.healthy_count}/"
+                      f"{dashboard.component_count}")
+                print(f"Degraded: {dashboard.degraded_count}")
+                print(f"\n{dashboard.summary}")
+                if dashboard.recommendations:
+                    print("\nRecommendations:")
+                    for rec in dashboard.recommendations:
+                        print(f"  - {rec}")
+        else:
+            print(f"unknown omninet action: {args.action}")
+            jarvis.close()
+            return 2
+
+    if args.command == "integrate":
+        # Cross-system integration test:
+        # Stark AI -> DOTS -> OMNINET -> Neural Network -> Dashboard
+        system = get_integrated_system()
+        goal = " ".join(args.text) if args.text else "test system integration"
+        if not args.text:
+            goal = "system integration test: verify all subsystems connect"
+        print(f"Running integration test: {goal}")
+        result = system.dispatch_stark("friday", goal)
+        if args.json:
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            print(f"OK: {result.get('ok', False)}")
+            print(f"Task ID: {result.get('job_id')}")
+            result_data = result.get("result", {})
+            if isinstance(result_data, dict):
+                print(f"Web results: {result_data.get('web_results_count', 0)}")
+                print(f"Knowledge entities: "
+                      f"{result_data.get('knowledge_entities_count', 0)}")
+                print(f"Threat findings: "
+                      f"{result_data.get('threat_findings_count', 0)}")
+                print(f"Neural confidence: "
+                      f"{result_data.get('neural_confidence', 0):.2f}")
+                print(f"Neural relevance: "
+                      f"{result_data.get('neural_relevance', 0):.2f}")
+                print(f"Neural urgency: "
+                      f"{result_data.get('neural_urgency', 0):.2f}")
+            if not result.get("ok", False):
+                jarvis.close()
+                return 1
+
+    if args.command == "scheduler":
+        # Scheduler management - schedule automated tasks
+        system = get_integrated_system()
+        dots = DotManager()
+        scheduler = get_scheduler(system=system, dots=dots)
+        if args.action == "list":
+            jobs = scheduler.list_jobs()
+            print(f"Scheduled Jobs ({len(jobs)}):")
+            print(f"{'ID':12} {'NAME':30} {'TYPE':12} {'ACTIVE':7} "
+                  f"{'RUNS':6} {'SUCC':6} {'FAIL':6}")
+            for job in jobs:
+                print(f"{job['job_id']:12} {job['name']:30} "
+                      f"{job['schedule_type']:12} "
+                      f"{'yes' if job['enabled'] else 'no':7} "
+                      f"{job['run_count']:6} "
+                      f"{job['success_count']:6} "
+                      f"{job['failure_count']:6}")
+            print("\nuse: jarvis scheduler add <name> <type> <goal>")
+            print("e.g. jarvis scheduler add 'daily health check' interval "
+                  f"3600 friday 'check system health'")
+        elif args.action == "add":
+            if len(args.text) < 3:
+                print("usage: jarvis scheduler add <name> <type> "
+                      f"<goal> [ai_id]")
+                print(f"  types: interval, daily, weekly")
+                print(f"  ai_id: stark AI id (default: friday)")
+                jarvis.close()
+                return 2
+            name = args.text[0]
+            schedule_type = args.text[1]
+            goal = " ".join(args.text[2:]) if len(args.text) > 2 else "check system health"
+            ai_id = args.text[3] if len(args.text) > 3 else "friday"
+            job_id = scheduler.schedule_job(
+                name=name,
+                schedule_type=schedule_type,
+                target_ai_id=ai_id,
+                target_goal=goal,
+            )
+            print(f"Scheduled: {job_id} - {name} ({schedule_type})")
+        elif args.action == "run":
+            results = scheduler.run_pending()
+            print(f"Ran {len(results)} scheduled jobs:")
+            for r in results:
+                print(f"  {r.job_id}: {'OK' if r.success else 'FAILED'}"
+                      f"{' - ' + r.error if r.error else ''}")
+        elif args.action == "enable":
+            if len(args.text) < 1:
+                print("usage: jarvis scheduler enable <job_id>")
+                jarvis.close()
+                return 2
+            if scheduler.enable_job(args.text[0]):
+                print(f"Enabled job: {args.text[0]}")
+            else:
+                print(f"Job not found: {args.text[0]}")
+                jarvis.close()
+                return 1
+        elif args.action == "disable":
+            if len(args.text) < 1:
+                print("usage: jarvis scheduler disable <job_id>")
+                jarvis.close()
+                return 2
+            if scheduler.disable_job(args.text[0]):
+                print(f"Disabled job: {args.text[0]}")
+            else:
+                print(f"Job not found: {args.text[0]}")
+                jarvis.close()
+                return 1
+        elif args.action == "stats":
+            stats = scheduler.stats()
+            print("Scheduler Statistics:")
+            print(f"  Total jobs: {stats['total_jobs']}")
+            print(f"  Enabled: {stats['enabled_jobs']}")
+            print(f"  Disabled: {stats['disabled_jobs']}")
+            print(f"  Total runs: {stats['total_runs']}")
+            print(f"  Successes: {stats['total_successes']}")
+            print(f"  Failures: {stats['total_failures']}")
+            print(f"  Success rate: {stats['success_rate']:.1%}")
+        else:
+            print(f"unknown scheduler action: {args.action}")
+            jarvis.close()
+            return 2
+
 
     parser.print_help()
     jarvis.close()
