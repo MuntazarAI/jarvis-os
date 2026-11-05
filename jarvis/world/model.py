@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from ..cognition.world_model import (
     WorldState,
@@ -39,6 +39,10 @@ from ..cognition.world_model import (
     get_predictive_model,
     get_uncertainty_model,
 )
+
+if TYPE_CHECKING:
+    from ..memory.persistent import PersistentMemory
+    from ..memory.temporal import TemporalKnowledge
 
 
 @dataclass

@@ -19,11 +19,13 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from ..cognition.reasoning import ReasoningEngine, get_reasoning_engine
 from ..memory.persistent import PersistentMemory, get_persistent_memory
-from ..world.model import WorldModel, get_world_model
+
+if TYPE_CHECKING:
+    from ..world.model import WorldModel
 
 
 @dataclass

@@ -55,6 +55,12 @@ from .evidence_based_reasoning import (
     EvidenceBasedReasoning,
     get_evidence_based_reasoning,
 )
+from .feedback_collection import (
+    UserFeedback,
+    FeedbackSummary,
+    FeedbackCollector,
+    get_feedback_collector,
+)
 
 __all__ = [
     # Reasoning
@@ -96,4 +102,9 @@ __all__ = [
     "ReasoningResult",
     "EvidenceBasedReasoning",
     "get_evidence_based_reasoning",
+    # Feedback Collection (M37)
+    "UserFeedback",
+    "FeedbackSummary",
+    "FeedbackCollector",
+    "get_feedback_collector",
 ]
