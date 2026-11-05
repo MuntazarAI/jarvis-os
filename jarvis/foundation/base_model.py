@@ -233,5 +233,5 @@ class BaseModel:
             "is_trained": self.is_trained,
             "is_deployed": self.is_deployed,
             "parameter_count": self.get_parameter_count(),
-            "memory_footprint": self.memory_footprint(),
+            "memory_footprint": self.get_memory_footprint(),
         }

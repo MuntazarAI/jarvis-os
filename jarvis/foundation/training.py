@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .base_model import Model, ModelConfig
+from .base_model import BaseModel, ModelConfig
 
 
 @dataclass

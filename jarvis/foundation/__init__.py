@@ -39,18 +39,21 @@ Each experiment must record:
 - Reproducibility information
 """
 
-from .base_model import BaseModel, ModelConfig, ModelSpec
-from .model_registry import ModelRegistry
+from .base_model import BaseModel, ModelConfig, ModelSpec, ModelTaskType, ModelType
+from .model_registry import ModelRegistry, get_model_registry
 from .training import TrainingEngine, TrainingConfig
-from .evaluation import ModelEvaluator, EvaluationSuite
+from .evaluation import EvaluationEngine, get_evaluation_engine
 
 __all__ = [
     "BaseModel",
     "ModelConfig",
     "ModelSpec",
+    "ModelTaskType",
+    "ModelType",
     "ModelRegistry",
+    "get_model_registry",
     "TrainingEngine",
     "TrainingConfig",
-    "ModelEvaluator",
-    "EvaluationSuite",
+    "EvaluationEngine",
+    "get_evaluation_engine",
 ]
