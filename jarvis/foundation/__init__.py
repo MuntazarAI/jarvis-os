@@ -43,6 +43,7 @@ from .base_model import BaseModel, ModelConfig, ModelSpec, ModelTaskType, ModelT
 from .model_registry import ModelRegistry, get_model_registry
 from .training import TrainingEngine, TrainingConfig
 from .evaluation import EvaluationEngine, get_evaluation_engine
+from .router import ModelRouter, RoutingDecision, ModelCapability, RoutingStrategy, ProviderType
 
 __all__ = [
     "BaseModel",
@@ -56,4 +57,9 @@ __all__ = [
     "TrainingConfig",
     "EvaluationEngine",
     "get_evaluation_engine",
+    "ModelRouter",
+    "RoutingDecision",
+    "ModelCapability",
+    "RoutingStrategy",
+    "ProviderType",
 ]
