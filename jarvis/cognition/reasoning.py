@@ -27,6 +27,17 @@ class ReasoningStep:
     timestamp: float = field(default_factory=time.time)
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "step_id": self.step_id,
+            "step_type": self.step_type,
+            "content": self.content,
+            "confidence": self.confidence,
+            "dependencies": self.dependencies,
+            "timestamp": self.timestamp,
+            "metadata": self.metadata,
+        }
+
 
 @dataclass
 class ReasoningChain:
