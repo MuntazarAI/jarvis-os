@@ -48,6 +48,13 @@ from .cognitive_engine import (
     CognitiveEngine,
     get_cognitive_engine,
 )
+from .evidence_based_reasoning import (
+    Evidence,
+    Hypothesis,
+    ReasoningResult,
+    EvidenceBasedReasoning,
+    get_evidence_based_reasoning,
+)
 
 __all__ = [
     # Reasoning
@@ -83,4 +90,10 @@ __all__ = [
     "CognitiveCycle",
     "CognitiveEngine",
     "get_cognitive_engine",
+    # Evidence-Based Reasoning (M31)
+    "Evidence",
+    "Hypothesis",
+    "ReasoningResult",
+    "EvidenceBasedReasoning",
+    "get_evidence_based_reasoning",
 ]
