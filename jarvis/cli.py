@@ -6016,6 +6016,127 @@ def main(argv: list[str] | None = None) -> int:
                 jarvis.close()
                 return 1
 
+    if args.command == "scheduler":
+        # Scheduler management - schedule automated tasks
+        system = get_integrated_system()
+        dots = DotManager()
+        scheduler = get_scheduler(system=system, dots=dots)
+        if args.action == "list":
+            jobs = scheduler.list_jobs()
+            print(f"Scheduled Jobs ({len(jobs)}):")
+            print(f"{'ID':12} {'NAME':30} {'TYPE':12} {'ACTIVE':7} "
+                  f"{'RUNS':6} {'SUCC':6} {'FAIL':6}")
+            for job in jobs:
+                print(f"{job['job_id']:12} {job['name']:30} "
+                      f"{job['schedule_type']:12} "
+                      f"{'yes' if job['enabled'] else 'no':7} "
+                      f"{job['run_count']:6} "
+                      f"{job['success_count']:6} "
+                      f"{job['failure_count']:6}")
+            print("\nuse: jarvis scheduler add <name> <type> <goal>")
+            print("e.g. jarvis scheduler add 'daily health check' interval "
+                  f"3600 friday 'check system health'")
+        elif args.action == "add":
+            if len(args.text) < 3:
+                print("usage: jarvis scheduler add <name> <type> "
+                      f"<goal> [ai_id]")
+                print(f"  types: interval, daily, weekly")
+                print(f"  ai_id: stark AI id (default: friday)")
+                jarvis.close()
+                return 2
+            name = args.text[0]
+            schedule_type = args.text[1]
+            goal = " ".join(args.text[2:]) if len(args.text) > 2 else "check system health"
+            ai_id = args.text[3] if len(args.text) > 3 else "friday"
+            job_id = scheduler.schedule_job(
+                name=name,
+                schedule_type=schedule_type,
+                target_ai_id=ai_id,
+                target_goal=goal,
+            )
+            print(f"Scheduled: {job_id} - {name} ({schedule_type})")
+        elif args.action == "run":
+            results = scheduler.run_pending()
+            print(f"Ran {len(results)} scheduled jobs:")
+            for r in results:
+                print(f"  {r.job_id}: {'OK' if r.success else 'FAILED'}"
+                      f"{' - ' + r.error if r.error else ''}")
+        elif args.action == "enable":
+            if len(args.text) < 1:
+                print("usage: jarvis scheduler enable <job_id>")
+                jarvis.close()
+                return 2
+            if scheduler.enable_job(args.text[0]):
+                print(f"Enabled job: {args.text[0]}")
+            else:
+                print(f"Job not found: {args.text[0]}")
+                jarvis.close()
+                return 1
+        elif args.action == "disable":
+            if len(args.text) < 1:
+                print("usage: jarvis scheduler disable <job_id>")
+                jarvis.close()
+                return 2
+            if scheduler.disable_job(args.text[0]):
+                print(f"Disabled job: {args.text[0]}")
+            else:
+                print(f"Job not found: {args.text[0]}")
+                jarvis.close()
+                return 1
+        elif args.action == "stats":
+            stats = scheduler.stats()
+            print("Scheduler Statistics:")
+            print(f"  Total jobs: {stats['total_jobs']}")
+            print(f"  Enabled: {stats['enabled_jobs']}")
+            print(f"  Disabled: {stats['disabled_jobs']}")
+            print(f"  Total runs: {stats['total_runs']}")
+            print(f"  Successes: {stats['total_successes']}")
+            print(f"  Failures: {stats['total_failures']}")
+            print(f"  Success rate: {stats['success_rate']:.1%}")
+        else:
+            print(f"unknown scheduler action: {args.action}")
+            jarvis.close()
+            return 2
+
+    if args.command == "neural":
+        # Neural networking management
+        from ..omninet.neural_networking import (
+            get_neural_registry,
+            create_neural_network,
+        )
+        if args.action == "status":
+            registry = get_neural_registry()
+            stats = registry.stats()
+            print("Neural Network Registry:")
+            print(f"  Networks: {stats['networks']}")
+            print(f"  MoE networks: {stats['moe_networks']}")
+            print(f"  Bridges: {stats['bridges']}")
+            print(f"  Created: {stats['created_at']}")
+        elif args.action == "create":
+            if len(args.text) < 1:
+                print("usage: jarvis neural create <name>")
+                jarvis.close()
+                return 2
+            nn = create_neural_network(args.text[0])
+            nn.add_dense_layer(10, 8, "relu")
+            nn.add_dense_layer(8, 4, "linear")
+            print(f"Created neural network: {nn.network_id}")
+            print(f"  Layers: {len(nn.layers)}")
+            print(f"  Layer 1: 4 -> 8 (relu)")
+            print(f"  Layer 2: 8 -> 3 (linear)")
+        elif args.action == "test":
+            nn = create_neural_network("test-nn")
+            nn.add_dense_layer(3, 5, "relu")
+            nn.add_dense_layer(5, 2, "linear")
+            result = nn.forward([0.5, 0.3, 0.8])
+            print(f"Neural network test:")
+            print(f"  Input: [0.5, 0.3, 0.8]")
+            print(f"  Output: {[round(x, 4) for x in result]}")
+        else:
+            print(f"unknown neural action: {args.action}")
+            jarvis.close()
+            return 2
+
     parser.print_help()
     jarvis.close()
     return 2

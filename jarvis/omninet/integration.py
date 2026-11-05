@@ -342,9 +342,32 @@ class JarvisIntegratedSystem:
         }
 
     def _threat_intel_check(self, goal: str) -> dict[str, Any]:
-        """Check threat intelligence."""
-        # Check for known threats in the goal
-        findings = self.threat_intel.discover(goal, authorized=True)
+        """Check threat intelligence for the goal."""
+        findings = []
+        import re
+        # Check URLs for threat intelligence
+        url_matches = re.findall(r'https?://\S+', goal)
+        for url in url_matches[:3]:
+            result = self.threat_intel.check_url_reputation(url)
+            if result.get("malicious"):
+                findings.append({
+                    "url": url,
+                    "threat_type": result.get("threat_type", "unknown"),
+                    "confidence": result.get("confidence", 0),
+                    "sources": result.get("sources", []),
+                })
+        # Check for CVEs in the goal
+        cve_matches = re.findall(r'CVE-\d{4}-\d{4,}', goal, re.IGNORECASE)
+        for cve_id in cve_matches[:3]:
+            finding = self.threat_intel.query_cve(cve_id.upper())
+            if finding:
+                findings.append({
+                    "cve_id": cve_id,
+                    "description": finding.description,
+                    "severity": finding.severity,
+                    "confidence": finding.confidence,
+                    "source": finding.source,
+                })
         return {
             "ok": True,
             "findings": findings,
