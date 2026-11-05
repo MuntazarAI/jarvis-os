@@ -21,8 +21,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .neural import Tensor, Linear
-from ...vision.intelligence import VisionIntelligence
-from ...voice.intelligence import AudioIntelligence
 
 
 @dataclass
