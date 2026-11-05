@@ -292,11 +292,6 @@ def build_parser() -> argparse.ArgumentParser:
     integration.add_argument("--json", action="store_true",
                              help="machine-readable output")
 
-    neural.add_argument("--neurons", type=int, default=2000,
-                        help="neurons for benchmark/snapshot")
-    neural.add_argument("--json", action="store_true",
-                        help="machine-readable output")
-
     sub.add_parser("start", help="start the JARVIS service (API server, supervised)")
     sub.add_parser("stop", help="stop the JARVIS service")
     sub.add_parser("restart", help="restart the JARVIS service")
@@ -598,6 +593,8 @@ def build_parser() -> argparse.ArgumentParser:
     neural.add_argument("text", nargs="*", help="network name for create/test")
     neural.add_argument("--json", action="store_true",
                         help="machine-readable output")
+    neural.add_argument("--neurons", type=int, default=2000,
+                        help="neurons for benchmark/snapshot")
     # Cross-system integration test
     integrate = sub.add_parser("integrate", help="cross-system integration test")
     integrate.add_argument("text", nargs="*", help="goal for integration test")
