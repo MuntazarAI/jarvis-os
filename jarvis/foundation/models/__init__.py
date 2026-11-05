@@ -27,6 +27,7 @@ from .neural import (
 )
 
 from .decoder import DecoderOnlyTransformer, JARVIS_LLM_Model
+from .moe import MoELayer, MoETransformerBlock, MoETransformer
 
 __all__ = [
     # Neural
@@ -49,4 +50,8 @@ __all__ = [
     # Decoder
     "DecoderOnlyTransformer",
     "JARVIS_LLM_Model",
+    # MoE
+    "MoELayer",
+    "MoETransformerBlock",
+    "MoETransformer",
 ]
