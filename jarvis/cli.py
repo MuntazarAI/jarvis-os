@@ -292,13 +292,10 @@ def build_parser() -> argparse.ArgumentParser:
     integration.add_argument("--json", action="store_true",
                              help="machine-readable output")
 
-    neu = sub.add_parser("neural", help="fly-brain neural substrate")
-    neu.add_argument("action", nargs="?", default="status",
-                     choices=["status", "benchmark", "snapshot"])
-    neu.add_argument("--neurons", type=int, default=2000,
-                     help="neurons for benchmark/snapshot")
-    neu.add_argument("--json", action="store_true",
-                     help="machine-readable output")
+    neural.add_argument("--neurons", type=int, default=2000,
+                        help="neurons for benchmark/snapshot")
+    neural.add_argument("--json", action="store_true",
+                        help="machine-readable output")
 
     sub.add_parser("start", help="start the JARVIS service (API server, supervised)")
     sub.add_parser("stop", help="stop the JARVIS service")
@@ -573,6 +570,39 @@ def build_parser() -> argparse.ArgumentParser:
                        help="briefing kind: morning, evening, topic, project, change")
     world.add_argument("--json", action="store_true",
                        help="machine-readable output")
+    # Stark AI dispatch command
+    stark = sub.add_parser("stark", help="Stark AI dispatch through full pipeline")
+    stark.add_argument("action", nargs="?", default="list",
+                       choices=["list", "ask", "status"])
+    stark.add_argument("text", nargs="*", help="goal text for dispatch")
+    stark.add_argument("--json", action="store_true",
+                       help="machine-readable output")
+    # OMNINET status and dashboard
+    omninet = sub.add_parser("omninet", help="OMNINET system status dashboard")
+    omninet.add_argument("action", nargs="?", default="status",
+                         choices=["status", "dashboard", "integrate"])
+    omninet.add_argument("text", nargs="*", help="goal for integration test")
+    omninet.add_argument("--json", action="store_true",
+                         help="machine-readable output")
+    # Scheduler management
+    scheduler = sub.add_parser("scheduler", help="automated scheduler management")
+    scheduler.add_argument("action", nargs="?", default="list",
+                           choices=["list", "add", "run", "enable", "disable", "stats"])
+    scheduler.add_argument("text", nargs="*", help="name, type, and goal for add")
+    scheduler.add_argument("--json", action="store_true",
+                           help="machine-readable output")
+    # Neural networking management
+    neural = sub.add_parser("neural", help="neural networking management")
+    neural.add_argument("action", nargs="?", default="status",
+                        choices=["status", "create", "test"])
+    neural.add_argument("text", nargs="*", help="network name for create/test")
+    neural.add_argument("--json", action="store_true",
+                        help="machine-readable output")
+    # Cross-system integration test
+    integrate = sub.add_parser("integrate", help="cross-system integration test")
+    integrate.add_argument("text", nargs="*", help="goal for integration test")
+    integrate.add_argument("--json", action="store_true",
+                           help="machine-readable output")
     return parser
 
 
@@ -6098,44 +6128,6 @@ def main(argv: list[str] | None = None) -> int:
             jarvis.close()
             return 2
 
-    if args.command == "neural":
-        # Neural networking management
-        from ..omninet.neural_networking import (
-            get_neural_registry,
-            create_neural_network,
-        )
-        if args.action == "status":
-            registry = get_neural_registry()
-            stats = registry.stats()
-            print("Neural Network Registry:")
-            print(f"  Networks: {stats['networks']}")
-            print(f"  MoE networks: {stats['moe_networks']}")
-            print(f"  Bridges: {stats['bridges']}")
-            print(f"  Created: {stats['created_at']}")
-        elif args.action == "create":
-            if len(args.text) < 1:
-                print("usage: jarvis neural create <name>")
-                jarvis.close()
-                return 2
-            nn = create_neural_network(args.text[0])
-            nn.add_dense_layer(10, 8, "relu")
-            nn.add_dense_layer(8, 4, "linear")
-            print(f"Created neural network: {nn.network_id}")
-            print(f"  Layers: {len(nn.layers)}")
-            print(f"  Layer 1: 4 -> 8 (relu)")
-            print(f"  Layer 2: 8 -> 3 (linear)")
-        elif args.action == "test":
-            nn = create_neural_network("test-nn")
-            nn.add_dense_layer(3, 5, "relu")
-            nn.add_dense_layer(5, 2, "linear")
-            result = nn.forward([0.5, 0.3, 0.8])
-            print(f"Neural network test:")
-            print(f"  Input: [0.5, 0.3, 0.8]")
-            print(f"  Output: {[round(x, 4) for x in result]}")
-        else:
-            print(f"unknown neural action: {args.action}")
-            jarvis.close()
-            return 2
 
     parser.print_help()
     jarvis.close()

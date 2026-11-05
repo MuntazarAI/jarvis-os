@@ -123,6 +123,7 @@ from .integration import (
     dispatch_stark_ai,
     get_integrated_system,
 )
+from ..agents.stark import SecurityAgentExecutor
 from .security import (
     SecurityAuditor,
     SecurityEvent,
