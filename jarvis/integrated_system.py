@@ -80,6 +80,26 @@ from jarvis.agents.team_coordinator import TeamCoordinator
 from jarvis.omninet.gods_eye_view import GodsEyeView, get_gods_eye_view
 from jarvis.omninet.see_through_walls import SeeThroughWalls, get_see_through_walls
 from jarvis.omninet.build_your_own_x import BuildYourOwnX, get_build_your_own_x
+from jarvis.omninet.web_search_intelligence import (
+    WebSearchIntelligence,
+    get_web_search_intelligence,
+)
+from jarvis.omninet.security_scanning_intelligence import (
+    SecurityScanningIntelligence,
+    get_security_scanning_intelligence,
+)
+from jarvis.omninet.knowledge_graph_expansion import (
+    KnowledgeGraphExpansion,
+    get_knowledge_graph_expansion,
+)
+from jarvis.omninet.audio_intelligence import (
+    AudioIntelligence,
+    get_audio_intelligence,
+)
+from jarvis.omninet.vision_intelligence import (
+    VisionIntelligence,
+    get_vision_intelligence,
+)
 
 
 @dataclass
@@ -190,6 +210,17 @@ class JarvisIntegratedSystem:
         self.gods_eye_view: GodsEyeView | None = None
         self.see_through_walls: SeeThroughWalls | None = None
         self.build_your_own_x: BuildYourOwnX | None = None
+
+        # M13f: Web Search Intelligence
+        self.web_search: WebSearchIntelligence | None = None
+        # M13g: Security Scanning Intelligence
+        self.security_scanning: SecurityScanningIntelligence | None = None
+        # M13h: Knowledge Graph Expansion
+        self.knowledge_graph: KnowledgeGraphExpansion | None = None
+        # M13i: Audio Intelligence
+        self.audio_intelligence: AudioIntelligence | None = None
+        # M13j: Vision Intelligence
+        self.vision_intelligence: VisionIntelligence | None = None
 
         self.stats = {
             "system_initialized": False,
@@ -340,6 +371,23 @@ class JarvisIntegratedSystem:
         except Exception as exc:
             errors.append(f"M13c/d/e omninet extensions: {exc}")
 
+        # Initialize M13f Web Search Intelligence, M13g Security Scanning,
+        # M13h Knowledge Graph Expansion, M13i Audio Intelligence, M13j Vision Intelligence
+        try:
+            self.web_search = get_web_search_intelligence(policy=None, events=None)
+            ws_result = self.web_search.initialize()
+            self.security_scanning = get_security_scanning_intelligence(policy=None, events=None)
+            ss_result = self.security_scanning.initialize()
+            self.knowledge_graph = get_knowledge_graph_expansion(policy=None, events=None)
+            kg_result = self.knowledge_graph.initialize()
+            self.audio_intelligence = get_audio_intelligence(policy=None, events=None)
+            au_result = self.audio_intelligence.initialize()
+            self.vision_intelligence = get_vision_intelligence(policy=None, events=None)
+            vi_result = self.vision_intelligence.initialize()
+            self.stats["subsystems_initialized"] += 1
+        except Exception as exc:
+            errors.append(f"M13f/g/h/i/j omninet extensions: {exc}")
+
         # Count total agents
         total_agents = len(STARK_ROSTER_BY_ID)
         self.stats["total_agents"] = total_agents
@@ -456,6 +504,60 @@ class JarvisIntegratedSystem:
             capabilities=[
                 "guide_reference", "project_planning",
                 "implementation_tracking", "technology_roadmap",
+            ],
+        )
+
+        # M13f Web Search Intelligence
+        subsystems["web_search"] = SubsystemStatus(
+            name="Web Search Intelligence",
+            version="1.0",
+            status="active" if self.web_search else "offline",
+            capabilities=[
+                "web_search", "content_fetch", "domain_allowlist",
+                "policy_gated_search",
+            ],
+        )
+        # M13g Security Scanning Intelligence
+        subsystems["security_scanning"] = SubsystemStatus(
+            name="Security Scanning Intelligence",
+            version="1.0",
+            status="active" if self.security_scanning else "offline",
+            capabilities=[
+                "vulnerability_scanning", "port_scanning", "web_auditing",
+                "ssl_scanning", "dns_enumeration", "cve_lookup",
+                "defensive_only", "policy_gated",
+            ],
+        )
+        # M13h Knowledge Graph Expansion
+        subsystems["knowledge_graph"] = SubsystemStatus(
+            name="Knowledge Graph Expansion",
+            version="1.0",
+            status="active" if self.knowledge_graph else "offline",
+            capabilities=[
+                "entity_query", "entity_search", "relationship_tracking",
+                "provenance_tracking",
+            ],
+        )
+        # M13i Audio Intelligence
+        subsystems["audio_intelligence"] = SubsystemStatus(
+            name="Audio Intelligence",
+            version="1.0",
+            status="active" if self.audio_intelligence else "offline",
+            capabilities=[
+                "microphone_access", "voice_activity_detection",
+                "speech_to_text", "text_to_speech",
+                "audio_event_processing",
+            ],
+        )
+        # M13j Vision Intelligence
+        subsystems["vision_intelligence"] = SubsystemStatus(
+            name="Vision Intelligence",
+            version="1.0",
+            status="active" if self.vision_intelligence else "offline",
+            capabilities=[
+                "screen_observation", "camera_access",
+                "image_classification", "object_detection",
+                "visual_recognition",
             ],
         )
 

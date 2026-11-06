@@ -141,6 +141,37 @@ from .build_your_own_x import (
     BuildProject,
     get_build_your_own_x,
 )
+from .web_search_intelligence import (
+    WebSearchIntelligence,
+    SearchResult,
+    SearchResponse,
+    get_web_search_intelligence,
+)
+from .security_scanning_intelligence import (
+    SecurityScanningIntelligence,
+    SecurityFinding,
+    ScanReport,
+    get_security_scanning_intelligence,
+)
+from .knowledge_graph_expansion import (
+    KnowledgeGraphExpansion,
+    KnowledgeEntity,
+    KnowledgeRelationship,
+    get_knowledge_graph_expansion,
+)
+from .audio_intelligence import (
+    AudioIntelligence,
+    AudioEvent,
+    TranscriptionResult,
+    TTSRequest,
+    get_audio_intelligence,
+)
+from .vision_intelligence import (
+    VisionIntelligence,
+    VisualObservation,
+    ImageClassification,
+    get_vision_intelligence,
+)
 from ..agents.stark import SecurityAgentExecutor
 from .security import (
     SecurityAuditor,
@@ -276,4 +307,30 @@ __all__ = [
     "BuildGuide",
     "BuildProject",
     "get_build_your_own_x",
+    # M13f: Web Search Intelligence
+    "WebSearchIntelligence",
+    "SearchResult",
+    "SearchResponse",
+    "get_web_search_intelligence",
+    # M13g: Security Scanning Intelligence
+    "SecurityScanningIntelligence",
+    "SecurityFinding",
+    "ScanReport",
+    "get_security_scanning_intelligence",
+    # M13h: Knowledge Graph Expansion
+    "KnowledgeGraphExpansion",
+    "KnowledgeEntity",
+    "KnowledgeRelationship",
+    "get_knowledge_graph_expansion",
+    # M13i: Audio Intelligence
+    "AudioIntelligence",
+    "AudioEvent",
+    "TranscriptionResult",
+    "TTSRequest",
+    "get_audio_intelligence",
+    # M13j: Vision Intelligence
+    "VisionIntelligence",
+    "VisualObservation",
+    "ImageClassification",
+    "get_vision_intelligence",
 ]
