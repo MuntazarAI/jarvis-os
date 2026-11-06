@@ -172,6 +172,40 @@ from .vision_intelligence import (
     ImageClassification,
     get_vision_intelligence,
 )
+from .weather_intelligence import (
+    WeatherIntelligence,
+    WeatherObservation,
+    WeatherForecast,
+    WeatherAlert,
+    get_weather_intelligence,
+)
+from .geospatial_intelligence import (
+    GeospatialIntelligence,
+    GeoLocation,
+    GeoDistance,
+    GeoMap,
+    get_geospatial_intelligence,
+)
+from .calendar_intelligence import (
+    CalendarIntelligence,
+    CalendarEvent,
+    MeetingRequest,
+    Reminder,
+    get_calendar_intelligence,
+)
+from .translation_intelligence import (
+    TranslationIntelligence,
+    Translation,
+    LanguageDetection,
+    get_translation_intelligence,
+)
+from .document_intelligence import (
+    DocumentIntelligence,
+    DocumentParse,
+    OCRResult,
+    FormAnalysis,
+    get_document_intelligence,
+)
 from ..agents.stark import SecurityAgentExecutor
 from .security import (
     SecurityAuditor,
@@ -333,4 +367,33 @@ __all__ = [
     "VisualObservation",
     "ImageClassification",
     "get_vision_intelligence",
+    # M13k: Weather Intelligence
+    "WeatherIntelligence",
+    "WeatherObservation",
+    "WeatherForecast",
+    "WeatherAlert",
+    "get_weather_intelligence",
+    # M13l: Geospatial Intelligence
+    "GeospatialIntelligence",
+    "GeoLocation",
+    "GeoDistance",
+    "GeoMap",
+    "get_geospatial_intelligence",
+    # M13m: Calendar Intelligence
+    "CalendarIntelligence",
+    "CalendarEvent",
+    "MeetingRequest",
+    "Reminder",
+    "get_calendar_intelligence",
+    # M13n: Translation Intelligence
+    "TranslationIntelligence",
+    "Translation",
+    "LanguageDetection",
+    "get_translation_intelligence",
+    # M13o: Document Intelligence
+    "DocumentIntelligence",
+    "DocumentParse",
+    "OCRResult",
+    "FormAnalysis",
+    "get_document_intelligence",
 ]

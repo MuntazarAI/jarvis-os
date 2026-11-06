@@ -100,6 +100,26 @@ from jarvis.omninet.vision_intelligence import (
     VisionIntelligence,
     get_vision_intelligence,
 )
+from jarvis.omninet.weather_intelligence import (
+    WeatherIntelligence,
+    get_weather_intelligence,
+)
+from jarvis.omninet.geospatial_intelligence import (
+    GeospatialIntelligence,
+    get_geospatial_intelligence,
+)
+from jarvis.omninet.calendar_intelligence import (
+    CalendarIntelligence,
+    get_calendar_intelligence,
+)
+from jarvis.omninet.translation_intelligence import (
+    TranslationIntelligence,
+    get_translation_intelligence,
+)
+from jarvis.omninet.document_intelligence import (
+    DocumentIntelligence,
+    get_document_intelligence,
+)
 
 
 @dataclass
@@ -205,6 +225,13 @@ class JarvisIntegratedSystem:
 
         # M14: Fruit Fly Brain Neural Network
         self.fly_brain: FlyBrainNetwork | None = None
+
+        # M13k-o: Additional OMNINET subsystems
+        self.weather_intelligence: WeatherIntelligence | None = None
+        self.geospatial_intelligence: GeospatialIntelligence | None = None
+        self.calendar_intelligence: CalendarIntelligence | None = None
+        self.translation_intelligence: TranslationIntelligence | None = None
+        self.document_intelligence: DocumentIntelligence | None = None
 
         # M13c-God's Eye View, M13d-See-Through-Walls, M13e-Build-Your-Own-X
         self.gods_eye_view: GodsEyeView | None = None
@@ -388,6 +415,24 @@ class JarvisIntegratedSystem:
         except Exception as exc:
             errors.append(f"M13f/g/h/i/j omninet extensions: {exc}")
 
+        # Initialize M13k Weather Intelligence, M13l Geospatial Intelligence,
+        # M13m Calendar Intelligence, M13n Translation Intelligence,
+        # M13o Document Intelligence
+        try:
+            self.weather_intelligence = get_weather_intelligence(policy=None, events=None)
+            w_result = self.weather_intelligence.initialize()
+            self.geospatial_intelligence = get_geospatial_intelligence(policy=None, events=None)
+            g_result = self.geospatial_intelligence.initialize()
+            self.calendar_intelligence = get_calendar_intelligence(policy=None, events=None)
+            c_result = self.calendar_intelligence.initialize()
+            self.translation_intelligence = get_translation_intelligence(policy=None, events=None)
+            t_result = self.translation_intelligence.initialize()
+            self.document_intelligence = get_document_intelligence(policy=None, events=None)
+            d_result = self.document_intelligence.initialize()
+            self.stats["subsystems_initialized"] += 1
+        except Exception as exc:
+            errors.append(f"M13k/l/m/n/o omninet extensions: {exc}")
+
         # Count total agents
         total_agents = len(STARK_ROSTER_BY_ID)
         self.stats["total_agents"] = total_agents
@@ -558,6 +603,57 @@ class JarvisIntegratedSystem:
                 "screen_observation", "camera_access",
                 "image_classification", "object_detection",
                 "visual_recognition",
+            ],
+        )
+
+        # M13k Weather Intelligence
+        subsystems["weather_intelligence"] = SubsystemStatus(
+            name="Weather Intelligence",
+            version="1.0",
+            status="active" if self.weather_intelligence else "offline",
+            capabilities=[
+                "current_observation", "multi_day_forecast",
+                "weather_alerts", "climate_data",
+            ],
+        )
+        # M13l Geospatial Intelligence
+        subsystems["geospatial_intelligence"] = SubsystemStatus(
+            name="Geospatial Intelligence",
+            version="1.0",
+            status="active" if self.geospatial_intelligence else "offline",
+            capabilities=[
+                "geocoding", "reverse_geocoding",
+                "distance_calculation", "map_reference",
+            ],
+        )
+        # M13m Calendar Intelligence
+        subsystems["calendar_intelligence"] = SubsystemStatus(
+            name="Calendar Intelligence",
+            version="1.0",
+            status="active" if self.calendar_intelligence else "offline",
+            capabilities=[
+                "calendar_query", "event_creation",
+                "meeting_coordination", "reminder_tracking",
+            ],
+        )
+        # M13n Translation Intelligence
+        subsystems["translation_intelligence"] = SubsystemStatus(
+            name="Translation Intelligence",
+            version="1.0",
+            status="active" if self.translation_intelligence else "offline",
+            capabilities=[
+                "multi_language_translation", "language_detection",
+                "localization_support",
+            ],
+        )
+        # M13o Document Intelligence
+        subsystems["document_intelligence"] = SubsystemStatus(
+            name="Document Intelligence",
+            version="1.0",
+            status="active" if self.document_intelligence else "offline",
+            capabilities=[
+                "document_parsing", "ocr",
+                "form_analysis", "pdf_text_extraction",
             ],
         )
 
