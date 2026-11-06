@@ -43,6 +43,7 @@ pub struct ModulesConfig {
     pub hardware: Option<bool>,
     pub logs: Option<bool>,
     pub policy: Option<bool>,
+    pub bpf: Option<bool>,
 }
 
 /// Security configuration.
@@ -153,6 +154,7 @@ impl Config {
             "hardware" => self.modules.hardware.unwrap_or(true),
             "logs" => self.modules.logs.unwrap_or(true),
             "policy" => self.modules.policy.unwrap_or(true),
+            "bpf" => self.modules.bpf.unwrap_or(false),
             _ => false,
         }
     }

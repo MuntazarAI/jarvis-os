@@ -67,6 +67,9 @@ impl BridgeServer {
         if config.module_enabled("policy") {
             modules.insert("policy".to_string(), Arc::new(crate::modules::policy::PolicyModule));
         }
+        if config.module_enabled("bpf") {
+            modules.insert("bpf".to_string(), Arc::new(crate::modules::bpf::BpfModule::new()));
+        }
 
         info!("Loaded {} modules", modules.len());
 

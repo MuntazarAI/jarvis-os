@@ -10,6 +10,7 @@ mod service;
 mod hardware;
 mod logs;
 mod policy;
+mod bpf;
 
 pub use system::SystemModule;
 pub use cpu::CpuModule;
@@ -21,6 +22,7 @@ pub use service::ServiceModule;
 pub use hardware::HardwareModule;
 pub use logs::LogsModule;
 pub use policy::PolicyModule;
+pub use bpf::BpfModule;
 
 use crate::modules::{ModuleHandler, result_ok, param_optional_string, param_optional_u64, param_optional_bool, param_optional_string_array};
 use async_trait::async_trait;

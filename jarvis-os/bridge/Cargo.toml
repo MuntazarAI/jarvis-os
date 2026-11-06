@@ -46,6 +46,14 @@ libc = "0.2"
 # tokio-util for framed reads
 tokio-util = { version = "0.7", features = ["codec"] }
 
+# eBPF support
+aya = { version = "0.13", features = ["async", "bpf"] }
+aya-log = "0.13"
+num_cpus = "1.16"
+
+# Hex encoding
+hex = "0.4"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
 serde_json = "1"
@@ -57,3 +65,6 @@ panic = "abort"
 
 [profile.dev]
 panic = "abort"
+
+[build-dependencies]
+aya-build = { version = "0.13", features = ["nightly"] }

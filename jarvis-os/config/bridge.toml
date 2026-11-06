@@ -26,6 +26,7 @@ service = true
 hardware = true
 logs = true
 policy = true
+bpf = false  # Requires root/CAP_BPF, enable on target system
 
 [security]
 # Require PolicyEngine approval for all operations
