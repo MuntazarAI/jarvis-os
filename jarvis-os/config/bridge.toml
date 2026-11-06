@@ -1,0 +1,54 @@
+# JARVIS-OS Bridge Configuration
+# Install to /etc/jarvis-os/bridge.toml
+
+[server]
+# Unix domain socket path (directory must be writable by jarvis-os user)
+socket_path = "/run/jarvis-os/bridge.sock"
+
+# Maximum concurrent connections
+max_connections = 100
+
+# Connection timeout in seconds
+connection_timeout_secs = 30
+
+# Read timeout in seconds
+read_timeout_secs = 10
+
+[modules]
+# Enable/disable individual modules
+system = true
+cpu = true
+memory = true
+storage = true
+network = true
+process = true
+service = true
+hardware = true
+logs = true
+policy = true
+
+[security]
+# Require PolicyEngine approval for all operations
+require_policy_approval = true
+
+# Allowed Unix domain socket peer UIDs (empty = allow all)
+# allowed_uids = [1000, 1001]
+
+# Allowed GIDs (empty = allow all)
+# allowed_gids = [1000]
+
+# Maximum request size in bytes (1 MB default)
+max_request_size = 1048576
+
+# Rate limit: max requests per second per connection
+rate_limit_rps = 100.0
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+# Log format: json, pretty
+format = "pretty"
+
+# Log file (optional, empty = stdout)
+# file = "/var/log/jarvis-os/bridge.log"
