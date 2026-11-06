@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="200" viewBox="0 0 1920 200">
+  <defs>
+    <linearGradient id="repoBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0d1117;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#161b22;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="repoAccent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#00d4ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#58a6ff;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <rect width="1920" height="200" fill="url(#repoBg)" />
+  
+  <!-- Circuit pattern -->
+  <path d="M0 100 L200 100 L200 150 L300 150" fill="none" stroke="#30363d" stroke-width="2"/>
+  <path d="M600 50 L700 50 L700 100 L800 100" fill="none" stroke="#30363d" stroke-width="2"/>
+  <path d="M1200 120 L1300 120 L1300 170 L1400 170" fill="none" stroke="#30363d" stroke-width="2"/>
+  <path d="M1600 80 L1700 80 L1700 130 L1800 130" fill="none" stroke="#30363d" stroke-width="2"/>
+  
+  <!-- Logo -->
+  <circle cx="120" cy="100" r="35" fill="none" stroke="url(#repoAccent)" stroke-width="3"/>
+  <path d="M120 65 L120 40 M120 135 L120 160 M85 100 L40 100 M155 100 L200 100" fill="none" stroke="#58a6ff" stroke-width="2"/>
+  <circle cx="85" cy="100" r="4" fill="#58a6ff"/>
+  <circle cx="155" cy="100" r="4" fill="#58a6ff"/>
+  
+  <!-- Text -->
+  <text x="200" y="65" font-family="Arial, sans-serif, -apple-system, BlinkMacSystemFont" font-size="32" font-weight="600" fill="#c9d1d9">JARVIS-OS</text>
+  <text x="200" y="95" font-family="Arial, sans-serif, -apple-system, BlinkMacSystemFont" font-size="14" fill="#8b949e">Local-First Personal AI OS — Policy-Gated Security</text>
+  
+  <!-- Stats row -->
+  <text x="1400" y="65" font-family="Arial, sans-serif, -apple-system, BlinkMacSystemFont" font-size="16" fill="#c9d1d9" text-anchor="end">510 Agents</text>
+  <text x="1400" y="95" font-family="Arial, sans-serif, -apple-system, BlinkMacSystemFont" font-size="14" fill="#8b949e" text-anchor="end">• 200 DOTS • 250 Bots</text>
+  
+  <text x="1850" y="65" font-family="Arial, sans-serif, -apple-system, BlinkMacSystemFont" font-size="16" fill="#c9d1d9" text-anchor="end">166K Neurons</text>
+  <text x="1850" y="95" font-family="Arial, sans-serif, -apple-system, BlinkMacSystemFont" font-size="14" fill="#8b949e" text-anchor="end">• 13 Subsystems</text>
+</svg>

@@ -1,11 +1,15 @@
 # JARVIS-OS
 
 <p align="center">
-  <img src="docs/assets/jarvis-os-banner.svg" alt="JARVIS-OS — Local Intelligence System Core" width="100%">
+  <img src="docs/assets/jarvis-os-banner-social.png" alt="JARVIS-OS — Personal AI Operating System" width="100%">
 </p>
 
 <p align="center">
   <strong>LOCAL-FIRST · EVIDENCE-DRIVEN · MODULAR · BOUNDED AUTONOMY</strong>
+</p>
+
+<p align="center">
+  <img src="docs/assets/jarvis-os-banner-repo.png" alt="JARVIS-OS Repository Banner" width="100%">
 </p>
 
 <p align="center">
@@ -126,6 +130,33 @@ Perceive → Understand → Remember → Reason → Plan → Act → Verify → 
 ```
 
 The system is designed to preserve context across tasks while keeping observations, memories, hypotheses, actions, and verification distinguishable.
+
+---
+
+## ◈ System Inventory
+
+<p align="center">
+  <table>
+    <tr>
+      <td><b>🤖 Stark AI Agents</b></td>
+      <td><b>🔲 DOT Templates</b></td>
+      <td><b>🤖 AI Bots</b></td>
+      <td><b>🧠 Fly Brain Neurons</b></td>
+      <td><b>🔌 OMNINET Subsystems</b></td>
+    </tr>
+    <tr>
+      <td><b>510</b></td>
+      <td><b>200</b></td>
+      <td><b>250</b></td>
+      <td><b>166,000</b></td>
+      <td><b>13</b></td>
+    </tr>
+  </table>
+</p>
+
+<p align="center">
+  <em>All agents, DOTs, and bots are policy-gated, audited, and security-constrained.</em>
+</p>
 
 ---
 
