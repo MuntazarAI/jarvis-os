@@ -1,32 +1,21 @@
-"""Small, dependency-free plugin contract for JARVIS-OS."""
+"""
+Plugin System — JARVIS-OS dynamic plugin loading.
 
-from dataclasses import dataclass, field
-from typing import Any
+Provides sandboxed plugin loading for extending JARVIS-OS functionality.
+Plugins are loaded from manifests, run in restricted execution contexts,
+and require PolicyEngine approval for activation.
+"""
 
+from .plugin_system import (
+    PluginSystem,
+    PluginManifest,
+    PluginInstance,
+    get_plugin_system,
+)
 
-@dataclass(frozen=True)
-class PluginRequest:
-    operation: str
-    payload: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class PluginResponse:
-    ok: bool
-    data: dict[str, Any] = field(default_factory=dict)
-    error: str | None = None
-
-
-class Plugin:
-    """Base contract for bounded JARVIS plugins."""
-
-    name = "unnamed"
-    version = "0.0.0"
-    description = ""
-    capabilities: tuple[str, ...] = ()
-
-    def health(self) -> dict[str, str]:
-        return {"status": "ok", "plugin": self.name}
-
-    def handle(self, request: PluginRequest) -> PluginResponse:
-        raise NotImplementedError
+__all__ = [
+    "PluginSystem",
+    "PluginManifest",
+    "PluginInstance",
+    "get_plugin_system",
+]
