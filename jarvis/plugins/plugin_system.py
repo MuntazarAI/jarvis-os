@@ -4,23 +4,69 @@ Plugin System — JARVIS-OS dynamic plugin loading.
 Provides a sandboxed plugin system for extending JARVIS-OS functionality.
 Plugins are loaded from manifests, run in restricted execution contexts,
 and require PolicyEngine approval for activation.
+
+Also provides base classes for plugin development:
+- Plugin: Base class for plugins
+- PluginRequest: Request to a plugin
+- PluginResponse: Response from a plugin
 """
 
 from __future__ import annotations
 
-import hashlib
 import importlib
 import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from ..core.logging import get_module_logger
 from ..policy.policy import PolicyEngine
 from ..events.store import EventStore
 
 log = get_module_logger(__name__)
+
+
+@dataclass
+class PluginRequest:
+    """A request to a plugin."""
+    operation: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    request_id: str = field(default_factory=lambda: f"req-{time.time_ns()}")
+
+
+@dataclass
+class PluginResponse:
+    """A response from a plugin."""
+    ok: bool
+    data: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+    request_id: str | None = None
+
+
+class Plugin:
+    """Base class for JARVIS-OS plugins.
+
+    Subclasses should define:
+    - name: str - unique plugin identifier
+    - version: str - plugin version
+    - description: str - human-readable description
+    - capabilities: tuple[str, ...] - supported operations
+
+    And implement:
+    - health() -> dict[str, str] - health check
+    - handle(request: PluginRequest) -> PluginResponse - handle operations
+    """
+    name: str = ""
+    version: str = "0.1.0"
+    description: str = ""
+    capabilities: tuple[str, ...] = ()
+
+    def health(self) -> dict[str, str]:
+        return {"status": "ok", "plugin": self.name}
+
+    def handle(self, request: PluginRequest) -> PluginResponse:
+        return PluginResponse(ok=False, error=f"Operation {request.operation} not supported")
 
 
 @dataclass
@@ -243,5 +289,8 @@ __all__ = [
     "PluginSystem",
     "PluginManifest",
     "PluginInstance",
+    "Plugin",
+    "PluginRequest",
+    "PluginResponse",
     "get_plugin_system",
 ]

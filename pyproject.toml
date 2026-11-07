@@ -63,6 +63,9 @@ include = ["jarvis*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
 
 [tool.black]
 line-length = 100
@@ -77,9 +80,3 @@ ignore_missing_imports = true
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-filterwarnings = [
-    "ignore::DeprecationWarning",
-]
