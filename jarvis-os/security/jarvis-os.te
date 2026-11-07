@@ -1,0 +1,160 @@
+# JARVIS-OS SELinux Policy Module
+# Compile with: make -f /usr/share/selinux/devel/Makefile jarvis-os.pp
+# Install with: semodule -i jarvis-os.pp
+
+policy_module(jarvis-os, 1.0)
+
+# ============================================================================
+# Type Declarations
+# ============================================================================
+
+# Main daemon type
+type jarvis_os_bridge_t;
+type jarvis_os_bridge_exec_t;
+init_daemon_domain(jarvis_os_bridge_t, jarvis_os_bridge_exec_t)
+
+# Socket and communication
+type jarvis_os_bridge_var_run_t;
+files_pid_filetrans(jarvis_os_bridge_t, jarvis_os_bridge_var_run_t, { sock_file dir })
+
+# Configuration
+type jarvis_os_bridge_etc_t;
+files_config_file(jarvis_os_bridge_t, jarvis_os_bridge_etc_t)
+
+# Logs
+type jarvis_os_bridge_log_t;
+logging_log_file(jarvis_os_bridge_log_t)
+
+# State data
+type jarvis_os_bridge_var_lib_t;
+files_var_lib_file(jarvis_os_bridge_t, jarvis_os_bridge_var_lib_t)
+
+# Cache
+type jarvis_os_bridge_cache_t;
+files_var_cache_file(jarvis_os_bridge_t, jarvis_os_bridge_cache_t)
+
+# ============================================================================
+# Domain Transitions
+# ============================================================================
+
+# Allow init to start the bridge
+init_system_domain(jarvis_os_bridge_t, jarvis_os_bridge_exec_t)
+
+# ============================================================================
+# File Access Permissions
+# ============================================================================
+
+# Read system information
+allow jarvis_os_bridge_t proc_t:dir { read getattr search open };
+allow jarvis_os_bridge_t proc_t:file { read getattr open };
+allow jarvis_os_bridge_t proc_kcore_t:file { read getattr open };
+
+# Read sysfs for hardware info
+allow jarvis_os_bridge_t sysfs_t:dir { read getattr search open };
+allow jarvis_os_bridge_t sysfs_t:file { read getattr open };
+allow jarvis_os_bridge_t sysfs_t:lnk_file { read getattr };
+
+# Read DMI/SMBIOS information
+allow jarvis_os_bridge_t sysfs_t:dir { read getattr search open };
+allow jarvis_os_bridge_t sysfs_t:file { read getattr open };
+
+# Read thermal zones
+allow jarvis_os_bridge_t thermal_zone_t:dir { read getattr search open };
+allow jarvis_os_bridge_t thermal_zone_t:file { read getattr open };
+
+# Read hwmon
+allow jarvis_os_bridge_t hwmon_t:dir { read getattr search open };
+allow jarvis_os_bridge_t hwmon_t:file { read getattr open };
+
+# Read cgroup information
+allow jarvis_os_bridge_t cgroup_t:dir { read getattr search open };
+allow jarvis_os_bridge_t cgroup_t:file { read getattr open };
+
+# Read network sysfs
+allow jarvis_os_bridge_t net_conf_t:file { read getattr open };
+allow jarvis_os_bridge_t net_conf_t:dir { read getattr search open };
+
+# Read module information
+allow jarvis_os_bridge_t modules_object_t:file { read getattr open };
+
+# Read kernel symbols
+allow jarvis_os_bridge_t kernel_object_t:file { read getattr open };
+
+# ============================================================================
+# Socket Permissions
+# ============================================================================
+
+# Unix domain socket for IPC
+allow jarvis_os_bridge_t self:unix_stream_socket { create bind listen connect ioctl read write getattr setattr };
+allow jarvis_os_bridge_t self:unix_dgram_socket { create bind connect ioctl read write getattr setattr };
+
+# Allow jarvis user to connect to bridge socket
+type jarvis_user_t;
+allow jarvis_user_t jarvis_os_bridge_var_run_t:sock_file { read write getattr };
+allow jarvis_user_t jarvis_os_bridge_t:unix_stream_socket connectto;
+
+# ============================================================================
+# Systemd Permissions
+# ============================================================================
+
+# Read systemd unit status (for service inspection)
+allow jarvis_os_bridge_t systemd_unit_file_t:file { read getattr open };
+allow jarvis_os_bridge_t systemd_var_run_t:dir { read getattr search open };
+allow jarvis_os_bridge_t systemd_var_run_t:sock_file { read write getattr };
+
+# ============================================================================
+# Network Permissions (Read-only)
+# ============================================================================
+
+# Read network configuration
+allow jarvis_os_bridge_t net_conf_t:file { read getattr open };
+allow jarvis_os_bridge_t net_conf_t:dir { read getattr search open };
+
+# Read network interfaces
+allow jarvis_os_bridge_t net_device_t:chr_file { read getattr open };
+
+# ============================================================================
+# D-Bus Permissions (Read-only)
+# ============================================================================
+
+# Read D-Bus system bus for service info
+allow jarvis_os_bridge_t dbus_system_bus_t:dbus { acquire_svc send_msg };
+allow jarvis_os_bridge_t system_dbusd_t:dbus { acquire_svc send_msg };
+
+# ============================================================================
+# Journalctl Permissions
+# ============================================================================
+
+# Read journal logs
+allow jarvis_os_bridge_t systemd_journald_var_run_t:sock_file { read write getattr };
+allow jarvis_os_bridge_t systemd_journald_t:dbus { acquire_svc send_msg };
+
+# ============================================================================
+# Capability Permissions
+# ============================================================================
+
+# Required for reading system information
+allow jarvis_os_bridge_t self:capability { dac_override sys_admin sys_resource sys_ptrace };
+
+# ============================================================================
+# Kernel Permissions
+# ============================================================================
+
+# Read kernel messages (dmesg)
+allow jarvis_os_bridge_t kernel_t:system { syslog_read };
+
+# ============================================================================
+# Audit
+# ============================================================================
+
+# Audit policy decisions
+auditallow jarvis_os_bridge_t self:capability { dac_override sys_admin };
+
+# ============================================================================
+# Optional: Allow transition to journalctl for log reading
+# ============================================================================
+
+# type jarvis_os_bridge_journalctl_t;
+# type jarvis_os_bridge_journalctl_exec_t;
+# init_daemon_domain(jarvis_os_bridge_journalctl_t, jarvis_os_bridge_journalctl_exec_t)
+# domtrans_pattern(jarvis_os_bridge_t, jarvis_os_bridge_journalctl_exec_t, jarvis_os_bridge_journalctl_t)
