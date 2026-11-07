@@ -516,6 +516,9 @@ class SecurityManager:
     def intel(self, target: str | Path, *, source: str = "cli",
               authorized: bool = True, max_steps: int = 12
               ) -> dict[str, Any]:
+        if self.policy is not None and getattr(
+                self.policy.config.policy, "emergency_stop", False):
+            raise SecurityError("emergency stop engaged; intel refused")
         task = self.start(target, authorized=authorized, source=source)
         return self.run(task.task_id, max_steps=max_steps)
 
@@ -523,6 +526,9 @@ class SecurityManager:
     def discover(self, target: str | Path, *, authorized: bool = True
                  ) -> list[SecurityFinding]:
         """Read-only scan used by specialist agent handlers."""
+        if self.policy is not None and getattr(
+                self.policy.config.policy, "emergency_stop", False):
+            raise SecurityError("emergency stop engaged; discover refused")
         self._require_idle()
         if self.findings.corrupt:
             raise SecurityError(
@@ -552,6 +558,9 @@ class SecurityManager:
 
     def validate_findings(self, *, ids: list[str] | None = None,
                           task_id: str = "") -> dict[str, Any]:
+        if self.policy is not None and getattr(
+                self.policy.config.policy, "emergency_stop", False):
+            raise SecurityError("emergency stop engaged; validate_findings refused")
         self._require_idle()
         findings = self.findings.list()
         if ids:
@@ -623,6 +632,9 @@ class SecurityManager:
 
     def propose_remediation(self, finding_id: str,
                             replacement: str = "") -> dict[str, Any]:
+        if self.policy is not None and getattr(
+                self.policy.config.policy, "emergency_stop", False):
+            raise SecurityError("emergency stop engaged; propose_remediation refused")
         self._require_idle()
         finding = self.findings.get(finding_id)
         if finding is None:
@@ -694,6 +706,10 @@ class SecurityManager:
         replacement hash. Raw file content and credentials are never
         written into the approval store.
         """
+        # Emergency stop blocks all remediation
+        if self.policy is not None and getattr(
+                self.policy.config.policy, "emergency_stop", False):
+            raise SecurityError("emergency stop engaged; remediation refused")
         self._require_idle()
         finding = self.findings.get(finding_id)
         if finding is None:
@@ -766,6 +782,10 @@ class SecurityManager:
         if not self.policy.redeem(full, actor, action, args):
             return {"ok": False, "status": "denied",
                     "detail": "approval rejected, spent, or misbound"}
+        # Mark approval as consumed
+        if full in self.policy.approvals:
+            self.policy.approvals[full]["status"] = "consumed"
+            self.policy._persist_approvals()
 
         new_lines = list(current)
         new_lines[line_no - 1] = replacement_line

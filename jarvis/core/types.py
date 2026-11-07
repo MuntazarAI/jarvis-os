@@ -237,6 +237,7 @@ class ActionPlan:
     rollback_actions: list[str] = field(default_factory=list)
     risk: RiskLevel = RiskLevel.LOW
     reversibility: bool = True
+    context: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
