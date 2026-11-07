@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..core.types import TaskState, new_id, now
+from .computer import DotComputer
 from .model import (
     DOT_SCHEMA_VERSION,
     Checkpoint,
@@ -20,6 +21,7 @@ from .model import (
     InvalidTransition,
     validate_transition,
 )
+from .space import Space, SpacePage
 
 TERMINAL_STATES = frozenset(
     {DotStatus.COMPLETED, DotStatus.FAILED, DotStatus.STOPPED})
@@ -37,6 +39,8 @@ class DotDependencies:
     triggers: Any = None
     store: Any = None  # JsonFileWorldStore-like: save(dict)/load() -> dict
     policy: Any = None
+    internet: Any = None  # InternetAccess for controlled outbound requests
+    skills: Any = None    # SkillRegistry for agent skill learning/evolution
 
 
 def _scrub(value: Any) -> Any:
@@ -170,19 +174,264 @@ class DotManager:
             raise KeyError(f"unknown schedule: {schedule_id}")
         return sched
 
+    # -- Spaces (OpenDots: workspaces for Dot documents) ------------------
+
+    def create_space(self, name: str, description: str = "",
+                     owner_dot_id: str = "") -> Space:
+        """Create a Space (workspace) for Dot documents.
+
+        OpenDots-inspired: a Space is a home for working documents.
+        Dots appear in navigation and can be granted access to multiple
+        Spaces. Each Dot has a default Space for saving pages.
+        """
+        space = Space(name=name, description=description,
+                      owner_dot_id=owner_dot_id)
+        if not hasattr(self, '_spaces'):
+            self._spaces: dict[str, Space] = {}
+        self._spaces[space.space_id] = space
+        self.persist()
+        return space
+
+    def get_space(self, space_id: str) -> Space | None:
+        return getattr(self, '_spaces', {}).get(space_id)
+
+    def list_spaces(self) -> list[Space]:
+        return list(getattr(self, '_spaces', {}).values())
+
+    def add_dot_to_space(self, space_id: str, dot_id: str) -> bool:
+        """Add a Dot to a Space (grant access)."""
+        space = self.get_space(space_id)
+        dot = self.get(dot_id)
+        if space is None or dot is None:
+            return False
+        if dot_id not in space.member_dot_ids:
+            space.member_dot_ids.append(dot_id)
+        if not dot.space_id:
+            dot.space_id = space_id
+        dot.updated_at = now()
+        self.persist()
+        return True
+
+    def remove_dot_from_space(self, space_id: str, dot_id: str) -> bool:
+        """Remove a Dot from a Space."""
+        space = self.get_space(space_id)
+        if space is None:
+            return False
+        if dot_id in space.member_dot_ids:
+            space.member_dot_ids.remove(dot_id)
+        dot = self.get(dot_id)
+        if dot and dot.space_id == space_id:
+            dot.space_id = ""
+            dot.updated_at = now()
+        self.persist()
+        return True
+
+    def set_default_dot_for_space(self, space_id: str, dot_id: str) -> bool:
+        """Set the default Dot for a Space."""
+        space = self.get_space(space_id)
+        if space is None:
+            return False
+        space.default_dot_id = dot_id
+        space.updated_at = now()
+        self.persist()
+        return True
+
+    # -- Computers (OpenDots: each Dot can have its own computer) ----------
+
+    def create_computer(self, dot_id: str, name: str = "",
+                        description: str = "",
+                        os: str = "linux", arch: str = "x86_64",
+                        max_memory_mb: int = 2048,
+                        max_cpu_cores: float = 2.0,
+                        max_disk_gb: int = 20,
+                        network_enabled: bool = False,
+                        allowed_domains: list[str] | None = None,
+                        allowed_tools: list[str] | None = None) -> DotComputer:
+        """Create a computer environment for a Dot.
+
+        OpenDots-inspired: each Dot can have its own computer using
+        OpenBot-style containers. The computer provides an isolated
+        execution environment with bounded tool access.
+        """
+        computer = DotComputer(
+            dot_id=dot_id, name=name, description=description,
+            os=os, arch=arch,
+            max_memory_mb=max_memory_mb,
+            max_cpu_cores=max_cpu_cores,
+            max_disk_gb=max_disk_gb,
+            network_enabled=network_enabled,
+            allowed_domains=list(allowed_domains or []),
+            allowed_tools=list(allowed_tools or []),
+        )
+        if not hasattr(self, '_computers'):
+            self._computers: dict[str, DotComputer] = {}
+        self._computers[computer.computer_id] = computer
+
+        # Link computer to Dot
+        dot = self.get(dot_id)
+        if dot:
+            dot.computer_id = computer.computer_id
+            dot.updated_at = now()
+        self.persist()
+        return computer
+
+    def get_computer(self, computer_id: str) -> DotComputer | None:
+        return getattr(self, '_computers', {}).get(computer_id)
+
+    def get_computer_for_dot(self, dot_id: str) -> DotComputer | None:
+        """Get the computer assigned to a Dot."""
+        dot = self.get(dot_id)
+        if dot and dot.computer_id:
+            return self.get_computer(dot.computer_id)
+        return None
+
+    def list_computers(self) -> list[DotComputer]:
+        return list(getattr(self, '_computers', {}).values())
+
+    def update_computer(self, computer_id: str,
+                        **kwargs: Any) -> DotComputer | None:
+        """Update computer configuration."""
+        computer = self.get_computer(computer_id)
+        if computer is None:
+            return None
+        for key, value in kwargs.items():
+            if hasattr(computer, key):
+                setattr(computer, key, value)
+        computer.updated_at = now()
+        self.persist()
+        return computer
+
+    def delete_computer(self, computer_id: str) -> bool:
+        """Delete a computer and unlink from its Dot."""
+        computer = self.get_computer(computer_id)
+        if computer is None:
+            return False
+        dot = self.get(computer.dot_id)
+        if dot and dot.computer_id == computer_id:
+            dot.computer_id = ""
+            dot.updated_at = now()
+        del self._computers[computer_id]
+        self.persist()
+        return True
+
+    # -- Ask → Browse → Approve → Save (OpenDots human-in-the-loop) ------
+
+    def request_approval(self, dot_id: str, action: str,
+                         args: dict[str, Any] | None = None,
+                         reason: str = "") -> str:
+        """Request human approval for a Dot action.
+
+        OpenDots-inspired: Ask → Browse → Approve → Save workflow.
+        A human review card appears, then the approved action becomes
+        an editable action. The dot cannot execute the action until
+        approved.
+        """
+        dot = self.get(dot_id)
+        if dot is None:
+            raise KeyError(f"unknown dot: {dot_id}")
+        if not dot.ask_before_act and action not in dot.require_approval_for:
+            return "auto-approved"  # No approval needed
+
+        if not hasattr(self, '_approval_requests'):
+            self._approval_requests: dict[str, dict[str, Any]] = {}
+
+        request_id = f"approval-{new_id('appr')}"
+        self._approval_requests[request_id] = {
+            "request_id": request_id,
+            "dot_id": dot_id,
+            "dot_name": dot.name,
+            "action": action,
+            "args": args or {},
+            "reason": reason,
+            "status": "pending",  # pending, approved, denied
+            "created_at": now(),
+            "decided_at": None,
+            "decided_by": None,
+        }
+        self.persist()
+        return request_id
+
+    def approve_request(self, request_id: str, decided_by: str = "user") -> bool:
+        """Approve a pending approval request."""
+        if not hasattr(self, '_approval_requests'):
+            return False
+        req = self._approval_requests.get(request_id)
+        if req is None or req["status"] != "pending":
+            return False
+        req["status"] = "approved"
+        req["decided_by"] = decided_by
+        req["decided_at"] = now()
+        self.persist()
+        return True
+
+    def deny_request(self, request_id: str, decided_by: str = "user") -> bool:
+        """Deny a pending approval request."""
+        if not hasattr(self, '_approval_requests'):
+            return False
+        req = self._approval_requests.get(request_id)
+        if req is None or req["status"] != "pending":
+            return False
+        req["status"] = "denied"
+        req["decided_by"] = decided_by
+        req["decided_at"] = now()
+        self.persist()
+        return True
+
+    def get_approval_request(self, request_id: str) -> dict[str, Any] | None:
+        """Get a pending approval request."""
+        if not hasattr(self, '_approval_requests'):
+            return None
+        return self._approval_requests.get(request_id)
+
+    def list_approval_requests(self,
+                               status: str | None = None) -> list[dict[str, Any]]:
+        """List approval requests, optionally filtered by status."""
+        if not hasattr(self, '_approval_requests'):
+            return []
+        reqs = list(self._approval_requests.values())
+        if status:
+            reqs = [r for r in reqs if r["status"] == status]
+        return sorted(reqs, key=lambda r: r["created_at"], reverse=True)
+
+    def requires_approval(self, dot_id: str, action: str) -> bool:
+        """Check if an action requires approval for this Dot."""
+        dot = self.get(dot_id)
+        if dot is None:
+            return False
+        if dot.ask_before_act:
+            return True
+        return action in dot.require_approval_for
+
     # -- lifecycle -----------------------------------------------------
     def create(self, name: str, goal: str, role: str = "general",
                description: str = "", priority: int = 5,
                workspace: dict[str, Any] | None = None,
                tools: list[str] | None = None,
+               permitted_tools: list[str] | None = None,
                skills: list[str] | None = None,
                permissions: list[str] | None = None,
-               trigger_subscriptions: list[str] | None = None) -> Dot:
-        dot = Dot(name=name, description=description, role=role, goal=goal,
-                  priority=priority, workspace=dict(workspace or {}),
-                  tools=list(tools or []), skills=list(skills or []),
-                  permissions=list(permissions or []),
-                  trigger_subscriptions=list(trigger_subscriptions or []))
+               trigger_subscriptions: list[str] | None = None,
+               instructions: str = "",
+               computer_id: str = "",
+               computer_config: dict[str, Any] | None = None,
+               space_id: str = "",
+               ask_before_act: bool = False,
+               require_approval_for: list[str] | None = None) -> Dot:
+        dot = Dot(
+            name=name, description=description, role=role, goal=goal,
+            instructions=instructions,
+            priority=priority, workspace=dict(workspace or {}),
+            tools=list(tools or []),
+            permitted_tools=list(permitted_tools or []),
+            skills=list(skills or []),
+            permissions=list(permissions or []),
+            trigger_subscriptions=list(trigger_subscriptions or []),
+            computer_id=computer_id,
+            computer_config=dict(computer_config or {}),
+            space_id=space_id,
+            ask_before_act=ask_before_act,
+            require_approval_for=list(require_approval_for or []),
+        )
         self.dots[dot.dot_id] = dot
         dot.transition(DotStatus.READY)
         self._mirror_world(dot, "created")

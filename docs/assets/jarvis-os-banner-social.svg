@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0a0f;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1a1a2e;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#00d4ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#7b2cbf;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)" />
+  
+  <!-- Decorative grid -->
+  <path d="M0 630 L1200 630 L1200 0 L0 0 Z" fill="none" stroke="rgba(0, 212, 255, 0.05)" stroke-width="1"/>
+  <g stroke="rgba(0, 212, 255, 0.03)" stroke-width="1">
+    <line x1="0" y1="100" x2="1200" y2="100"/>
+    <line x1="0" y1="200" x2="1200" y2="200"/>
+    <line x1="0" y1="300" x2="1200" y2="300"/>
+    <line x1="0" y1="400" x2="1200" y2="400"/>
+    <line x1="0" y1="500" x2="1200" y2="500"/>
+    <line x1="200" y1="0" x2="200" y2="630"/>
+    <line x1="400" y1="0" x2="400" y2="630"/>
+    <line x1="600" y1="0" x2="600" y2="630"/>
+    <line x1="800" y1="0" x2="800" y2="630"/>
+    <line x1="1000" y1="0" x2="1000" y2="630"/>
+  </g>
+  
+  <!-- Circuit pattern accents -->
+  <path d="M100 100 L200 100 L200 200 L300 200" fill="none" stroke="url(#accent)" stroke-width="3" filter="url(#glow)"/>
+  <path d="M400 400 L500 400 L500 500 L600 500" fill="none" stroke="url(#accent)" stroke-width="3" filter="url(#glow)" opacity="0.6"/>
+  <path d="M800 150 L900 150 L900 250 L1000 250" fill="none" stroke="url(#accent)" stroke-width="3" filter="url(#glow)" opacity="0.4"/>
+  
+  <!-- JARVIS-OS Logo (circuit brain) -->
+  <circle cx="600" cy="315" r="120" fill="none" stroke="url(#accent)" stroke-width="4" filter="url(#glow)"/>
+  <circle cx="600" cy="315" r="80" fill="none" stroke="#00d4ff" stroke-width="2" opacity="0.5"/>
+  <path d="M600 195 L600 150 M600 435 L600 480 M480 315 L435 315 M720 315 L765 315" fill="none" stroke="#00d4ff" stroke-width="3" filter="url(#glow)"/>
+  <circle cx="480" cy="315" r="8" fill="#00d4ff"/>
+  <circle cx="720" cy="315" r="8" fill="#00d4ff"/>
+  <circle cx="600" cy="195" r="8" fill="#7b2cbf"/>
+  <circle cx="600" cy="435" r="8" fill="#7b2cbf"/>
+  <circle cx="600" cy="315" r="4" fill="#fff"/>
+  
+  <!-- Title -->
+  <text x="600" y="200" font-family="Arial, sans-serif" font-size="64" font-weight="bold" fill="#fff" text-anchor="middle" letter-spacing="2">JARVIS-OS</text>
+  <text x="600" y="250" font-family="Arial, sans-serif" font-size="24" fill="#00d4ff" text-anchor="middle" letter-spacing="4">Personal AI Operating System</text>
+  
+  <!-- Stats -->
+  <text x="200" y="480" font-family="Arial, sans-serif" font-size="20" fill="#fff">510 Stark AI Agents</text>
+  <text x="200" y="510" font-family="Arial, sans-serif" font-size="18" fill="#888">• 200 DOT Templates • 250 AI Bots</text>
+  
+  <text x="700" y="480" font-family="Arial, sans-serif" font-size="20" fill="#fff">166K Neurons</text>
+  <text x="700" y="510" font-family="Arial, sans-serif" font-size="18" fill="#888">• 13 OMNINET Subsystems • Policy-Gated</text>
+  
+  <!-- Bottom tagline -->
+  <text x="600" y="570" font-family="Arial, sans-serif" font-size="16" fill="#666" text-anchor="middle">Local-First AI OS  •  Policy-Gated Security  •  Read-Only by Default</text>
+  
+  <!-- GitHub octocat style corner -->
+  <path d="M1150 580 L1180 580 L1180 610 L1150 610 Z" fill="#00d4ff"/>
+</svg>

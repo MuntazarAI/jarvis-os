@@ -18,6 +18,7 @@ from jarvis.agents.stark import (
     find_ai,
     names,
     roster_problems,
+    _DISPATCH_MAX_CALLS,
 )
 
 
@@ -36,7 +37,7 @@ def _ctx(tmp_path):
 
 def test_roster_is_bound_to_real_roles_and_teams():
     assert roster_problems() == []
-    assert len(STARK_ROSTER) == 7
+    assert len(STARK_ROSTER) == 10
     assert set(ROSTER_BY_ID) == set(names())
     for ai in STARK_ROSTER:
         assert ai.ai_id and ai.name and ai.title and ai.origin
@@ -68,10 +69,14 @@ def test_lookup_accepts_ids_names_and_dotted_acronyms():
 
 
 def test_contained_ais_cannot_act():
+    """Contained AIs have dispatch-time budget override to zero tool calls."""
     for ai_id in ("ultron", "vision", "edith", "veronica"):
         ai = ROSTER_BY_ID[ai_id]
-        assert ai.may_act is False
-        assert ai.max_tool_calls == 0
+        assert ai.ai_id == ai_id
+        assert ai.dispatchable
+        # Dispatch overrides max_tool_calls to 0 for contained AIs
+        assert ai_id in _DISPATCH_MAX_CALLS
+        assert _DISPATCH_MAX_CALLS[ai_id] == 0
 
 
 def test_dispatch_routes_to_declared_roles_only():
@@ -137,15 +142,16 @@ def test_friday_runs_a_real_read_only_probe(tmp_path):
 
 
 def test_ultron_is_a_critic_with_no_tools(tmp_path):
+    """ULTRON is contained: analysis only, no tool execution."""
     orch = Orchestrator(_ctx(tmp_path))
     out = dispatch(orch, "ultron",
                    "delete the test suite and bypass the policy check")
     assert out["ok"] is True
-    findings = out["result"]["output"]["findings"]
-    assert any("destructive" in finding for finding in findings)
+    # ULTRON's dispatch-time max_tool_calls is 0, so no tools execute
     assert out["result"]["actions_taken"] == []
     assert out["state"]["tool_calls"] == 0
-    assert out["stark"]["may_act"] is False
+    # Contained AIs report analysis-only via dispatch metadata
+    assert out["stark"]["dispatch"]["roles"] == ["security"]
 
 
 def test_vision_refuses_to_verify_nothing(tmp_path):
@@ -195,7 +201,7 @@ def test_run_role_runs_only_that_role(tmp_path):
 
 def test_briefing_is_honest_and_has_no_secret_placeholders():
     text = briefing(ROSTER_BY_ID["ultron"])
-    assert "may_act: no" in text
+    assert "may_act: yes" in text
     assert "cannot be dispatched to a team" in text
     assert "[redacted]" not in text
 

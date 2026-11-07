@@ -1,23 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 520" role="img" aria-labelledby="title desc">
 <title id="title">JARVIS-OS — Local-first personal AI operating system</title>
-<desc id="desc">Original futuristic JARVIS-OS system banner with an amber neural core, network graph, telemetry panels and local-first architecture motifs.</desc>
+<desc id="desc">Modern JARVIS-OS banner with amber neural core, network graph, telemetry panels and local-first architecture motifs on dark background.</desc>
+
 <defs>
   <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0" stop-color="#050607"/><stop offset=".52" stop-color="#17100a"/><stop offset="1" stop-color="#24170b"/>
+    <stop offset="0" stop-color="#050607"/>
+    <stop offset=".52" stop-color="#17100a"/>
+    <stop offset="1" stop-color="#24170b"/>
   </linearGradient>
   <linearGradient id="amber" x1="0" y1="0" x2="1" y2="0">
-    <stop offset="0" stop-color="#ff8a00"/><stop offset=".5" stop-color="#ffc247"/><stop offset="1" stop-color="#ffe6a3"/>
+    <stop offset="0" stop-color="#ff8a00"/>
+    <stop offset=".5" stop-color="#ffc247"/>
+    <stop offset="1" stop-color="#ffe6a3"/>
   </linearGradient>
   <radialGradient id="core"><stop offset="0" stop-color="#fff9df"/><stop offset=".18" stop-color="#ffd36a"/><stop offset=".55" stop-color="#ff8a00" stop-opacity=".8"/><stop offset="1" stop-color="#ff6a00" stop-opacity="0"/></radialGradient>
   <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse"><path d="M44 0H0V44" fill="none" stroke="#ffb02e" stroke-opacity=".08"/></pattern>
   <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <filter id="glowSoft"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
 </defs>
+
+<!-- Background -->
 <rect width="1600" height="520" rx="28" fill="url(#bg)"/>
 <rect width="1600" height="520" rx="28" fill="url(#grid)"/>
+
+<!-- Decorative wave bottom -->
 <path d="M0 430 C260 360 390 470 650 395 S1080 330 1600 410 V520H0Z" fill="#090b0c" opacity=".95"/>
 <path d="M0 430 C260 360 390 470 650 395 S1080 330 1600 410" fill="none" stroke="#ff9f1c" stroke-opacity=".28" stroke-width="2"/>
 
-<!-- neural network -->
+<!-- Neural network graph top-right -->
 <g transform="translate(930 70)" stroke="#ffad2f" stroke-opacity=".32" stroke-width="2" fill="none">
   <path d="M35 190L135 92L255 145L365 55L480 135"/>
   <path d="M35 190L190 235L310 165L480 135"/>
@@ -29,7 +39,7 @@
   <circle cx="365" cy="55" r="5"/><circle cx="480" cy="135" r="6"/><circle cx="190" cy="235" r="5"/><circle cx="310" cy="165" r="5"/>
 </g>
 
-<!-- central system core -->
+<!-- Central system core -->
 <g transform="translate(170 100)" filter="url(#glow)">
   <circle cx="150" cy="150" r="118" fill="#ff9a00" opacity=".08"/>
   <circle cx="150" cy="150" r="92" fill="none" stroke="#ff9a00" stroke-opacity=".25" stroke-width="18"/>
@@ -39,28 +49,83 @@
   <path d="M150 55V85M150 215V245M55 150H85M215 150H245M83 83L104 104M196 196L217 217M217 83L196 104M104 196L83 217" stroke="#ffd36a" stroke-width="4" stroke-linecap="round"/>
 </g>
 
-<!-- title -->
+<!-- Main title -->
 <g font-family="Arial,Helvetica,sans-serif">
   <text x="480" y="170" fill="#fff8e7" font-size="74" font-weight="700" letter-spacing="9">JARVIS-OS</text>
   <text x="485" y="215" fill="#ffb52e" font-family="monospace" font-size="20" letter-spacing="4">LOCAL-FIRST PERSONAL AI SYSTEM</text>
   <text x="485" y="258" fill="#d8cbb9" font-family="monospace" font-size="16" letter-spacing="2">MEMORY  /  WORLD  /  REASONING  /  DEVICES  /  POLICY</text>
 </g>
 
-<!-- telemetry panel -->
+<!-- Telemetry panel right -->
 <g transform="translate(1170 275)">
-  <rect width="345" height="145" rx="12" fill="#050505" fill-opacity=".78" stroke="#ff9d18" stroke-opacity=".38"/>
-  <g font-family="monospace" font-size="13" fill="#cdbda8">
-    <text x="22" y="32" fill="#ffbd4a" letter-spacing="2">SYSTEM STATUS</text>
-    <text x="22" y="62">MEMORY</text><text x="190" y="62" fill="#8ee28e">READY</text>
-    <text x="22" y="88">WORLD MODEL</text><text x="190" y="88" fill="#8ee28e">READY</text>
-    <text x="22" y="114">POLICY</text><text x="190" y="114" fill="#8ee28e">ENFORCED</text>
+  <rect x="0" y="0" w="290" h="230" fill="#0b0d0e" stroke="rgba(255,159,28,0.15)" stroke-width="1" rx="8"/>
+  
+  <text x="20" y="30" fill="#ffb52e" font-family="monospace" font-size="12" font-weight="700">SYSTEM STATUS</text>
+  
+  <rect x="20" y="45" w="260" h="12" fill="#1a1a12" rx="6"/>
+  <rect x="20" y="45" w="206" h="12" fill="url(#amber)" rx="6"/>
+  <text x="20" y="63" fill="#b8c0cc" font-family="monospace" font-size="10">COGNITIVE LOOP  84%</text>
+  
+  <rect x="20" y="75" w="260" h="12" fill="#1a1a12" rx="6"/>
+  <rect x="20" y="75" w="148" h="12" fill="url(#amber)" rx="6"/>
+  <text x="20" y="93" fill="#b8c0cc" font-family="monospace" font-size="10">MEMORY PALACE  62%</text>
+  
+  <rect x="20" y="105" w="260" h="12" fill="#1a1a12" rx="6"/>
+  <rect x="20" y="105" w="182" h="12" fill="url(#amber)" rx="6"/>
+  <text x="20" y="123" fill="#b8c0cc" font-family="monospace" font-size="10">WORLD MODEL  71%</text>
+  
+  <rect x="20" y="135" w="260" h="12" fill="#1a1a12" rx="6"/>
+  <rect x="20" y="135" w="198" h="12" fill="url(#amber)" rx="6"/>
+  <text x="20" y="153" fill="#b8c0cc" font-family="monospace" font-size="10">AGENT MESH  78%</text>
+  
+  <rect x="20" y="165" w="260" h="12" fill="#1a1a12" rx="6"/>
+  <rect x="20" y="165" w="94" h="12" fill="url(#amber)" rx="6"/>
+  <text x="20" y="183" fill="#b8c0cc" font-family="monospace" font-size="10">VOICE PIPELINE  36%</text>
+  
+  <rect x="20" y="195" w="260" h="12" fill="#1a1a12" rx="6"/>
+  <rect x="20" y="195" w="62" h="12" fill="url(#amber)" rx="6"/>
+  <text x="20" y="213" fill="#b8c0cc" font-family="monospace" font-size="10">VOICE OUTPUT  24%</text>
+</g>
+
+<!-- Agent nodes bottom right -->
+<g transform="translate(1190 380)">
+  <text x="0" y="15" fill="#ffb52e" font-family="monospace" font-size="12" font-weight="700">AGENT MESH</text>
+  
+  <g transform="translate(20 20)" fill="#ffc85b">
+    <circle cx="15" cy="15" r="12" fill="#ff9a00" opacity=".6"/>
+    <circle cx="15" cy="15" r="8" fill="#fff8dd"/>
+    <text x="35" cy="20" fill="#b8c0cc" font-family="monospace" font-size="10">SUPERVISOR</text>
+  </g>
+  <g transform="translate(90 20)" fill="#ffc85b">
+    <circle cx="15" cy="15" r="12" fill="#ff9a00" opacity=".4"/>
+    <circle cx="15" cy="15" r="7" fill="#ffd36a"/>
+    <text x="35" cy="20" fill="#b8c0cc" font-family="monospace" font-size="10">PLANNER</text>
+  </g>
+  <g transform="translate(170 20)" fill="#ffc85b">
+    <circle cx="15" cy="15" r="12" fill="#ff9a00" opacity=".3"/>
+    <circle cx="15" cy="15" r="6" fill="#ffb52e"/>
+    <text x="35" cy="20" fill="#b8c0cc" font-family="monospace" font-size="10">RESEARCHER</text>
+  </g>
+  <g transform="translate(20 55)" fill="#ffc85b">
+    <circle cx="15" cy="15" r="12" fill="#ff9a00" opacity=".4"/>
+    <circle cx="15" cy="15" r="7" fill="#ffd36a"/>
+    <text x="35" cy="20" fill="#b8c0cc" font-family="monospace" font-size="10">CODER</text>
+  </g>
+  <g transform="translate(90 55)" fill="#ffc85b">
+    <circle cx="15" cy="15" r="12" fill="#ff9a00" opacity=".5"/>
+    <circle cx="15" cy="15" r="8" fill="#fff8dd"/>
+    <text x="35" cy="20" fill="#b8c0cc" font-family="monospace" font-size="10">SECURITY</text>
+  </g>
+  <g transform="translate(170 55)" fill="#ffc85b">
+    <circle cx="15" cy="15" r="12" fill="#ff9a00" opacity=".35"/>
+    <circle cx="15" cy="15" r="7" fill="#ffc85b"/>
+    <text x="35" cy="20" fill="#b8c0cc" font-family="monospace" font-size="10">KNOWLEDGE</text>
   </g>
 </g>
 
-<path d="M70 470H1530" stroke="#ffad2f" stroke-opacity=".22"/>
-<g font-family="monospace" font-size="12" fill="#927c61">
-  <text x="80" y="495">LOCAL-FIRST</text><text x="250" y="495">EVIDENCE-DRIVEN</text>
-  <text x="470" y="495">MODULAR</text><text x="610" y="495">BOUNDED AUTONOMY</text>
-  <text x="875" y="495">OPEN SOURCE</text>
-</g>
+<!-- Bottom tagline -->
+<text x="485" y="460" fill="#b8c0cc" font-family="monospace" font-size="14" letter-spacing="3">
+  LOCAL-FIRST · EVIDENCE-DRIVEN · MODULAR · BOUNDED AUTONOMY
+</text>
+
 </svg>

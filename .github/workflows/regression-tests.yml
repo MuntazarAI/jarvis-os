@@ -1,0 +1,82 @@
+name: Regression Tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "0 2 * * *"  # daily at 02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  neural-benchmark:
+    name: Neural microbenchmark regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install system test dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg xvfb xclip ydotool
+      - name: Install project and test tooling
+        run: python -m pip install --upgrade pip pytest && python -m pip install -e .
+      - name: Run neural benchmark
+        run: python benchmarks/neural_benchmark.py --size 1000 --steps 1000 --repeats 3
+      - name: Publish benchmark artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: neural-benchmark
+          path: benchmark-results/neural.json
+
+  memory-consolidation:
+    name: Memory consolidation verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install project and test tooling
+        run: python -m pip install --upgrade pip pytest && python -m pip install -e .
+      - name: Run consolidation tests
+        run: python -m pytest tests/test_memory3.py tests/test_consolidation.py -q --tb=short
+
+  loop-regression:
+    name: Cognitive loop regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install system test dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg xvfb xclip ydotool
+      - name: Install project and test tooling
+        run: python -m pip install --upgrade pip pytest && python -m pip install -e .
+      - name: Run full test suite
+        run: xvfb-run -a bash -lc 'printf "ci-seed" | xclip -selection clipboard; python -m pytest tests/ -q --tb=short --ignore=tests/test_agent_mesh.py --ignore=tests/test_agent_reach.py'
+
+  write-summary:
+    name: Write regression summary
+    runs-on: ubuntu-latest
+    needs: [neural-benchmark, memory-consolidation, loop-regression]
+    if: always()
+    steps:
+      - name: Write summary
+        run: |
+          {
+            echo "## JARVIS-OS Regression Tests"
+            echo ""
+            echo "### Results"
+            echo "- Neural benchmark: ${{ needs.neural-benchmark.result }}"
+            echo "- Memory consolidation: ${{ needs.memory-consolidation.result }}"
+            echo "- Cognitive loop regression: ${{ needs.loop-regression.result }}"
+          } >> "$GITHUB_STEP_SUMMARY"

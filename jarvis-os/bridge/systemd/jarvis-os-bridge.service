@@ -1,0 +1,56 @@
+# JARVIS-OS Bridge — systemd service unit
+# Install to /etc/systemd/system/jarvis-os-bridge.service
+
+[Unit]
+Description=JARVIS-OS System Bridge
+Documentation=https://github.com/MuntazarAI/jarvis-os
+After=network.target
+Wants=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=jarvis-os
+Group=jarvis-os
+ExecStart=/usr/bin/jarvis-os-bridge
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=10
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Capabilities (minimal required)
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_SYS_ADMIN CAP_SYS_RESOURCE
+AmbientCapabilities=CAP_DAC_OVERRIDE CAP_SYS_ADMIN CAP_SYS_RESOURCE
+
+# File system access
+ReadWritePaths=/run/jarvis-os /etc/jarvis-os /var/log/jarvis-os
+ReadOnlyPaths=/proc /sys /etc/os-release /etc/hostname
+
+# Environment
+Environment=RUST_LOG=jarvis_os_bridge=info
+Environment=JARVIS_HOME=/var/lib/jarvis-os
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+MemoryMax=512M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

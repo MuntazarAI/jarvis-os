@@ -52,7 +52,8 @@ class MissionDependencies:
     store: Any = None  # JsonFileWorldStore-like: save(dict)/load() -> dict
     policy: Any = None
     bus: Any = None  # EventBus for mission.* events (optional)
-    bus: Any = None  # EventBus for mission.* events (optional)
+    internet: Any = None  # InternetAccess for controlled outbound requests
+    skills: Any = None    # SkillRegistry for agent skill learning/evolution
 
 
 class MissionManager:

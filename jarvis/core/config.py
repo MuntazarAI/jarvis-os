@@ -184,6 +184,20 @@ class VoiceConfig:
 
 
 @dataclass
+class LoggingConfig:
+    """Structured logging configuration."""
+
+    level: str = "INFO"
+    json_format: bool = True
+    file_enabled: bool = True
+    console_enabled: bool = True
+    correlation_id_header: str = "X-Correlation-ID"
+    max_log_bytes: int = 4 * 1024 * 1024
+    max_log_files: int = 5
+    log_dir: str = "logs"
+
+
+@dataclass
 class ServiceConfig:
     """24/7 background service. All bounds validated; nothing unlimited."""
 
@@ -251,6 +265,7 @@ class JarvisConfig:
     conductor: ConductorConfig = field(default_factory=ConductorConfig)
     autonomy: AutonomyConfig = field(default_factory=AutonomyConfig)
     service: ServiceConfig = field(default_factory=ServiceConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
     personality: dict[str, Any] = field(
         default_factory=lambda: {
             "formality": "professional",
@@ -360,6 +375,13 @@ class JarvisConfig:
             errors.append("service.max_log_bytes must be >= 65536")
         if not 1 <= self.service.max_log_files <= 20:
             errors.append("service.max_log_files must be 1..20")
+        if self.logging.max_log_bytes < 65536:
+            errors.append("logging.max_log_bytes must be >= 65536")
+        if not 1 <= self.logging.max_log_files <= 20:
+            errors.append("logging.max_log_files must be 1..20")
+        valid_levels = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+        if self.logging.level.upper() not in valid_levels:
+            errors.append(f"logging.level must be one of {valid_levels}")
         if errors:
             raise ValueError("; ".join(errors))
         return errors
@@ -367,3 +389,9 @@ class JarvisConfig:
     def ensure_dirs(self) -> None:
         for name in ("home", "logs", "screenshots", "captures", "exports"):
             self.paths.resolve(name).mkdir(parents=True, exist_ok=True)
+        # Ensure logging directory (handle both str and Path home)
+        home = self.paths.home
+        if not isinstance(home, Path):
+            home = Path(home)
+        log_dir = home / self.logging.log_dir
+        log_dir.mkdir(parents=True, exist_ok=True)
