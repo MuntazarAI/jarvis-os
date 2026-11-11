@@ -121,6 +121,35 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("devices", help="capability snapshot: voice, vision, computer, models")
 
+    mod = sub.add_parser("models", help="model backends: list, add, remove, "
+                                       "use, test, key")
+    mod.add_argument("action", nargs="?", default="list",
+                     choices=["list", "add", "remove", "use", "test", "key"])
+    mod.add_argument("target", nargs="?", default="",
+                     help="backend name (add/remove/test/key) or kind (use)")
+    mod.add_argument("value", nargs="?", default="",
+                     help="backend[:model] for use")
+    mod.add_argument("--type", default="openai",
+                     choices=["ollama", "openai"], help="backend protocol")
+    mod.add_argument("--base-url", default="", help="backend base URL")
+    mod.add_argument("--model", action="append", default=[],
+                     help="kind=model-id (repeatable)")
+    mod.add_argument("--api-key-env", default="",
+                     help="environment variable that holds the API key")
+    mod.add_argument("--api-key-secret", default="",
+                     help="vault secret that holds the API key")
+    mod.add_argument("--timeout", type=float, default=0.0,
+                     help="backend timeout in seconds (0 = default)")
+    mod.add_argument("--local", action="store_true",
+                     help="treat the backend as local (data never leaves)")
+    mod.add_argument("--remote", action="store_true",
+                     help="treat the backend as remote (data leaves the machine)")
+    mod.add_argument("--allow-remote", action="store_true",
+                     help="with 'use': also turn policy.local_only off")
+    mod.add_argument("--probe", action="store_true",
+                     help="with 'test': send one real prompt to the backend")
+    mod.add_argument("--json", action="store_true", help="emit JSON")
+
     exp = sub.add_parser("experience", help="Experience Layer foundation: read-only status")
     exp.add_argument("action", nargs="?", default="status",
                      choices=["status"])
@@ -626,12 +655,286 @@ def _conductor_oneshot(raw: list[str], home: str = "") -> int:
         jarvis.close()
 
 
+def _load_config(home: str = "") -> JarvisConfig:
+    """Config for a home: CLI home > env > config.json > defaults."""
+    return JarvisConfig.load(home or None)
+
+
 def _make_jarvis(home: str) -> Jarvis:
-    config = JarvisConfig()
-    config.apply_env_overrides()
-    if home:
-        config.paths.home = Path(home)
-    return Jarvis(config=config)
+    return Jarvis(config=_load_config(home))
+
+
+def _models_text(report: dict[str, Any]) -> str:
+    """Human-readable rendering of the models report."""
+    lines: list[str] = []
+    if report.get("added"):
+        added = report["added"]
+        lines.append(f"added backend '{added['name']}' [{added['type']}]")
+        for kind, model_id in (added.get("models") or {}).items():
+            lines.append(f"    {kind:10s} {model_id}")
+    if "removed" in report:
+        lines.append(f"removed {report['removed']} backend(s): {report.get('name', '')}")
+    if report.get("kind"):
+        lines.append(f"{report['kind']} -> {report.get('target')}")
+    if report.get("secret"):
+        lines.append(f"stored API key for '{report.get('backend')}' "
+                     f"as vault secret '{report['secret']}'")
+    for backend in report.get("backends", []):
+        if not isinstance(backend, dict) or "alive" not in backend:
+            continue
+        name = backend.get("name") or backend.get("backend") or "?"
+        state = "up" if backend.get("alive") else "unreachable"
+        scope = "local" if backend.get("local") else "remote"
+        lines.append(f"{name} [{backend.get('type', '?')}, {scope}] "
+                     f"{state} — {backend.get('available_models', backend.get('model_count', 0))} models"
+                     f" — key: {backend.get('key', 'none')}")
+        for kind, model_id in (backend.get("models") or {}).items():
+            lines.append(f"    {kind:10s} {model_id}")
+        if backend.get("probe_ok"):
+            lines.append(f"    probe: {backend.get('probe_text', '')[:80]}")
+    selection = report.get("selection")
+    if isinstance(selection, dict) and selection:
+        lines.append("selection:")
+        for kind, target in selection.items():
+            lines.append(f"    {kind:10s} {target}")
+    elif report.get("ok") and "backends" in report and "added" not in report:
+        lines.append("selection: (none — the first healthy backend wins)")
+    if "local_only" in report and report["local_only"] is not None:
+        lines.append(f"local_only: {report['local_only']}"
+                     + ("  (remote backends blocked)"
+                        if report["local_only"] else "  (remote backends allowed)"))
+    for warning in report.get("warnings", []):
+        lines.append(f"warning: {warning}")
+    if report.get("error"):
+        lines.append(f"error: {report['error']}")
+    return "\n".join(lines) or "ok"
+
+
+def _models_action(args: Any) -> int:
+    """Model backends: list, add, remove, use, test, key.
+
+    Reads and writes the models section of config.json. API keys live in
+    the encrypted vault, never in config and never in argv (argv is
+    visible to every process on the machine).
+    """
+    from .core.config import MODEL_KINDS
+    from .models.backends import (build_client, configured_backends,
+                                  resolve_selection, selection_targets)
+
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "list") or "list"
+
+    def _out(payload: dict[str, Any], code: int = 0) -> int:
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print(_models_text(payload))
+        return code
+
+    try:
+        config = _load_config(getattr(args, "home", "") or "")
+    except (OSError, ValueError) as exc:
+        return _out({"ok": False, "error": f"config: {exc}"}, 1)
+
+    if action == "list":
+        specs = configured_backends(config)
+        selection = resolve_selection(config)
+        backends: list[dict[str, Any]] = []
+        for spec in specs:
+            available: list[str] = []
+            alive = False
+            client = build_client(spec, config)
+            if client is not None:
+                try:
+                    available = client.models()
+                    alive = bool(available) or client.alive()
+                except Exception:
+                    alive = False
+            key_source = ""
+            if spec.api_key_secret:
+                key_source = "vault:" + spec.api_key_secret
+            elif spec.api_key_env:
+                key_source = "env:" + spec.api_key_env
+            key_state = "none"
+            if spec.has_key:
+                from .models.backends import resolve_key
+                key_state = "present" if resolve_key(spec, config) else "missing"
+            backends.append({
+                "name": spec.name, "type": spec.type,
+                "base_url": spec.base_url, "local": spec.local,
+                "enabled": spec.enabled, "models": spec.models,
+                "alive": alive, "available_models": len(available),
+                "key": key_state,
+                "key_source": key_source,
+            })
+        return _out({"backends": backends,
+                     "selection": {kind: f"{name}:{model}" for kind, (name, model)
+                                   in selection.items()},
+                     "raw_selection": selection_targets(config),
+                     "local_only": config.policy.local_only,
+                     "kinds": list(MODEL_KINDS)})
+
+    if action == "add":
+        name = str(getattr(args, "target", "") or "").strip()
+        if not name:
+            return _out({"error": "backend name required"}, 2)
+        models: dict[str, str] = {}
+        for item in getattr(args, "model", []) or []:
+            kind, _, model_id = str(item).partition("=")
+            kind = kind.strip().lower()
+            model_id = model_id.strip()
+            if kind not in MODEL_KINDS or not model_id:
+                return _out({"error": f"bad --model '{item}' "
+                                      "(use kind=model-id)"}, 2)
+            models[kind] = model_id
+        entry: dict[str, Any] = {"name": name, "type": args.type,
+                                 "base_url": args.base_url, "models": models}
+        if args.api_key_env:
+            entry["api_key_env"] = args.api_key_env
+        if args.api_key_secret:
+            entry["api_key_secret"] = args.api_key_secret
+        if args.local:
+            entry["local"] = True
+        if args.remote:
+            entry["local"] = False
+        if args.type == "ollama" and not entry["base_url"]:
+            entry["base_url"] = config.models.ollama_host
+        if args.type == "openai" and not entry["base_url"]:
+            return _out({"error": "--base-url required for openai backends"}, 2)
+        if getattr(args, "timeout", 0.0):
+            entry["timeout"] = float(args.timeout)
+        entries = [e for e in config.models.backends
+                   if str(e.get("name") or "") != name]
+        if not entries and not config.models.backends:
+            # The local Ollama backend is implicit until something is
+            # configured: make it explicit so it stays available.
+            from .models.backends import default_ollama_spec
+            entries = [default_ollama_spec(
+                config.models.ollama_host).to_dict()]
+        entries.append(entry)
+        config.models.backends = entries
+        config.save()
+        return _out({"ok": True, "added": entry, "configured": entries})
+
+    if action == "remove":
+        name = str(getattr(args, "target", "") or "").strip()
+        before = len(config.models.backends)
+        config.models.backends = [e for e in config.models.backends
+                                  if str(e.get("name") or "") != name]
+        removed = before - len(config.models.backends)
+        for kind, target in list(config.models.selection.items()):
+            if str(target).split(":", 1)[0].strip() == name:
+                config.models.selection.pop(kind, None)
+        config.save()
+        return _out({"ok": True, "removed": removed, "name": name,
+                     "backends": config.models.backends,
+                     "selection": config.models.selection})
+
+    if action == "use":
+        kind = str(getattr(args, "target", "") or "").strip().lower()
+        value = str(getattr(args, "value", "") or "").strip()
+        if kind not in MODEL_KINDS:
+            return _out({"error": f"kind must be one of "
+                                  f"{', '.join(MODEL_KINDS)}"}, 2)
+        if not value:
+            return _out({"error": "backend or backend:model required"}, 2)
+        backend_name, _, model_id = value.partition(":")
+        backend_name = backend_name.strip()
+        model_id = model_id.strip()
+        specs = {s.name: s for s in configured_backends(config)}
+        spec = specs.get(backend_name)
+        if spec is None:
+            return _out({"error": f"unknown backend '{backend_name}'"}, 2)
+        if not model_id:
+            model_id = spec.models.get(kind, "")
+        if not model_id:
+            return _out({"error": f"backend '{backend_name}' has no model "
+                                  f"for '{kind}'"}, 2)
+        config.models.selection[kind] = value
+        warnings: list[str] = []
+        if not spec.local and config.policy.local_only:
+            if getattr(args, "allow_remote", False):
+                config.policy.local_only = False
+            else:
+                warnings.append(
+                    "policy.local_only is on: this backend stays unused. "
+                    "Re-run with --allow-remote to turn it off.")
+        config.save()
+        return _out({"ok": True, "kind": kind, "target": value,
+                     "local_only": config.policy.local_only,
+                     "warnings": warnings,
+                     "selection": config.models.selection})
+
+    if action == "test":
+        specs = configured_backends(config)
+        name = str(getattr(args, "target", "") or "").strip()
+        if name:
+            specs = [s for s in specs if s.name == name]
+            if not specs:
+                return _out({"error": f"unknown backend '{name}'"}, 2)
+        results: list[dict[str, Any]] = []
+        for spec in specs:
+            entry = {"backend": spec.name, "type": spec.type, "alive": False,
+                     "model_count": 0, "error": "", "probe_ok": False,
+                     "probe_text": "", "local": spec.local,
+                     "key": "configured" if spec.has_key else "none"}
+            client = build_client(spec, config)
+            if client is None:
+                entry["error"] = "no client (missing base_url?)"
+            else:
+                available: list[str] = []
+                try:
+                    available = client.models()
+                    entry["model_count"] = len(available)
+                    entry["alive"] = bool(available) or client.alive()
+                except Exception as exc:
+                    entry["error"] = type(exc).__name__
+                if getattr(args, "probe", False) and entry["alive"]:
+                    model_id = spec.models.get("fast") or (
+                        available[0] if available else "")
+                    if model_id:
+                        result = client.generate(
+                            "Reply with exactly: OK", model=model_id,
+                            options={"num_predict": 8})
+                        entry["probe_ok"] = bool(result.get("ok"))
+                        entry["probe_text"] = str(result.get("text", ""))[:120]
+                        if not entry["probe_ok"]:
+                            entry["error"] = str(result.get("error", ""))[:200]
+            results.append(entry)
+        ok = bool(results) and all(r["alive"] for r in results)
+        return _out({"ok": ok, "backends": results}, 0 if ok else 1)
+
+    if action == "key":
+        name = str(getattr(args, "target", "") or "").strip()
+        if not name:
+            return _out({"error": "backend name required"}, 2)
+        secret = str(getattr(args, "value", "") or "").strip() or f"{name}_api_key"
+        try:
+            import getpass
+            if sys.stdin.isatty():
+                key = getpass.getpass(f"API key for {name}: ").strip()
+            else:
+                key = sys.stdin.readline().strip()
+        except Exception:
+            key = ""
+        if not key:
+            return _out({"error": "no key read (pipe it on stdin, e.g. "
+                                  f"'cat key.txt | jarvis models key {name}')"},
+                         2)
+        from .security.security import SecretVault
+        vault = SecretVault(config.paths.home)
+        vault.put(secret, key)
+        entries = [e for e in config.models.backends
+                   if str(e.get("name") or "") == name]
+        for entry in entries:
+            entry["api_key_secret"] = secret
+        if entries:
+            config.models.backends = entries
+            config.save()
+        return _out({"ok": True, "backend": name, "secret": secret,
+                     "wired": bool(entries)})
+
+    return _out({"error": f"unknown action '{action}'"}, 2)
 
 
 def _audio_action(jarvis: Any, args: Any) -> int:
@@ -3870,7 +4173,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 2
 
-    jarvis = _make_jarvis(getattr(args, "home", ""))
+    if args.command == "models":
+        return _models_action(args)
+
+    try:
+        jarvis = _make_jarvis(getattr(args, "home", ""))
+    except (OSError, ValueError) as exc:
+        # A broken config must not silently change behaviour: say so.
+        print(f"config error: {exc}", file=sys.stderr)
+        return 2
 
     if args.command == "talk":
         result = jarvis.cycle_once(" ".join(args.text))
@@ -5098,14 +5409,34 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "devices":
         from .computer.computer import ComputerController
-        from .models.ollama import OllamaClient
+        from .models.backends import (build_client, configured_backends,
+                                      resolve_selection)
         from .vision.observer import VisionObserver
         from .voice.runtime import VoiceLoop
+        selection = resolve_selection(jarvis.config)
+        models_status: dict[str, Any] = {}
+        for spec in configured_backends(jarvis.config):
+            client = build_client(spec, jarvis.config)
+            alive = False
+            count = 0
+            if client is not None:
+                try:
+                    available = client.models()
+                    count = len(available)
+                    alive = bool(available) or client.alive()
+                except Exception:
+                    alive = False
+            models_status[spec.name] = {
+                "type": spec.type, "local": spec.local, "alive": alive,
+                "models": count,
+                "serves": sorted(k for k, v in selection.items()
+                                 if v[0] == spec.name),
+            }
         snapshot = {
             "voice": VoiceLoop().status(),
-            "vision": VisionObserver().status(),
+            "vision": VisionObserver(config=jarvis.config).status(),
             "computer": ComputerController().status(),
-            "models": OllamaClient().health(),
+            "models": models_status,
             "memory": jarvis.palace.stats(),
         }
         print(json.dumps(snapshot, indent=2, default=str))

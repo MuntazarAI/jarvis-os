@@ -338,6 +338,29 @@ source .venv/bin/activate
 
 System backends are detected automatically when available, including Ollama, espeak-ng, Tesseract, FFmpeg, and ydotool. Optional setups that need root access or large downloads are documented in [docs/OPTIONAL_HOST_CAPABILITIES.md](docs/OPTIONAL_HOST_CAPABILITIES.md).
 
+### Any model, any provider
+
+Models are reached through pluggable **backends**: the local Ollama
+daemon, NVIDIA NIM, or any OpenAI-compatible server (LM Studio, vLLM,
+llama.cpp, Groq, OpenRouter, Together, OpenAI). Which backend answers
+which kind of work — fast, reasoning, coding, vision, embedding — is
+configuration, not code:
+
+```bash
+jarvis models list                                  # providers + health
+jarvis models add nvidia --type openai \
+  --base-url https://integrate.api.nvidia.com/v1 \
+  --model reasoning=nvidia/nemotron-3-ultra-550b-a55b \
+  --api-key-secret nvidia_api_key --remote
+cat key.txt | jarvis models key nvidia              # key goes in the vault
+jarvis models use reasoning nvidia --allow-remote   # pick a model
+```
+
+API keys live in the encrypted vault, never in config or on a command
+line. `policy.local_only` keeps remote backends configured but unused
+until you deliberately allow them. Full details in
+[docs/MODELS.md](docs/MODELS.md).
+
 ---
 
 ## Current status

@@ -29,6 +29,23 @@ class OllamaClient:
     def __init__(self, config: OllamaConfig | None = None) -> None:
         self.config = config or OllamaConfig()
 
+    @classmethod
+    def from_spec(cls, spec: Any) -> "OllamaClient":
+        """Build a client from a backend spec (see models/backends.py)."""
+        models = dict(getattr(spec, "models", {}) or {})
+        config = OllamaConfig(
+            host=getattr(spec, "base_url", "") or "http://localhost:11434",
+            timeout=float(getattr(spec, "timeout", 120.0) or 120.0),
+            default_model=(models.get("reasoning") or models.get("fast")
+                           or "qwen2.5:3b"),
+            coding_model=(models.get("coding") or models.get("reasoning")
+                          or "qwen2.5-coder:3b"),
+            vision_model=models.get("vision") or "qwen3-vl:2b",
+            embedding_model=models.get("embedding")
+            or "nomic-embed-text:latest",
+        )
+        return cls(config)
+
     # -- transport ---------------------------------------------------------
     def _post(self, path: str, payload: dict[str, Any],
               timeout: float | None = None) -> dict[str, Any]:

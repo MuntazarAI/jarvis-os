@@ -15,12 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from .config import JarvisConfig
+from ..models.backends import DEFAULT_OLLAMA_MODELS, build_client, configured_backends
 
-EXPECTED_OLLAMA_MODELS = (
-    "qwen2.5:3b",
-    "qwen3-vl:2b",
-    "nomic-embed-text:latest",
-)
+EXPECTED_OLLAMA_MODELS = tuple(DEFAULT_OLLAMA_MODELS.values())
 
 
 @dataclass
@@ -90,23 +87,44 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
     import shutil
     checks: list[HealthCheck] = []
     checks.append(HealthCheck("python", True, sys.version.split()[0], True))
+    cfg = config or JarvisConfig()
+    specs = configured_backends(cfg)
+    ollama_configured = any(s.type == "ollama" and s.enabled for s in specs)
     for binary in ("ffmpeg", "espeak-ng", "tesseract", "ollama", "ydotool",
                    "arecord", "wmctrl"):
         found = shutil.which(binary) is not None
+        required = binary == "ffmpeg" or (binary == "ollama"
+                                          and ollama_configured)
         checks.append(HealthCheck(f"bin:{binary}", found,
                                   "found" if found else "missing",
-                                  required=binary in ("ffmpeg", "ollama")))
-    try:
-        with urllib.request.urlopen("http://localhost:11434/api/tags",
-                                    timeout=5) as resp:
-            names = [m.get("name", "") for m in
-                     json.loads(resp.read()).get("models", [])]
-        checks.append(HealthCheck("ollama", True, f"{len(names)} models", True))
-        for want in EXPECTED_OLLAMA_MODELS:
-            checks.append(HealthCheck(f"model:{want}", want in names,
-                                      "pulled" if want in names else "missing"))
-    except Exception as exc:
-        checks.append(HealthCheck("ollama", False, f"unreachable: {exc}", True))
+                                  required=required))
+    # Every configured backend is probed: is it reachable, and does it
+    # really serve the models it claims?
+    for spec in specs:
+        if not spec.enabled:
+            continue
+        names: list[str] = []
+        alive = False
+        client = build_client(spec, cfg)
+        if client is not None:
+            try:
+                names = client.models()
+                alive = bool(names) or client.alive()
+            except Exception:
+                alive = False
+        checks.append(HealthCheck(
+            f"backend:{spec.name}", alive,
+            f"{len(names)} models" if alive else "unreachable",
+            required=spec.local))
+        for kind, model_id in spec.models.items():
+            available = model_id in names
+            checks.append(HealthCheck(f"model:{spec.name}/{kind}", available,
+                                      f"{model_id} "
+                                      + ("available" if available else "missing")))
+    checks.append(HealthCheck(
+        "models:local-only", not cfg.policy.local_only,
+        "remote backends blocked" if cfg.policy.local_only
+        else "remote backends allowed"))
     checks.append(HealthCheck("camera", bool(list(Path("/dev").glob("video*"))),
                               "video device present"
                               if list(Path("/dev").glob("video*"))

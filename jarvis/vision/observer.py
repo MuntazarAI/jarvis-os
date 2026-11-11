@@ -45,14 +45,17 @@ class VisionObserver:
     """High-level see() API over the pipeline pieces."""
 
     def __init__(self, capture_dir: str = "/tmp/jarvis-vision",
-                 consent: Any | None = None) -> None:
+                 consent: Any | None = None,
+                 config: Any | None = None) -> None:
         from .pipeline import CameraCapture, OCREngine, ScreenCapture
+        from ..core.config import JarvisConfig
         self.captures = ScreenCapture()
         self.camera = CameraCapture()
         self.ocr = OCREngine()
         self.capture_dir = Path(capture_dir)
         self.capture_dir.mkdir(parents=True, exist_ok=True)
         self.consent = consent
+        self.config = config or JarvisConfig()
         self.history: list[VisionObservation] = []
 
     def status(self) -> dict[str, Any]:
@@ -63,11 +66,17 @@ class VisionObserver:
                 "observations": len(self.history)}
 
     def _vision_ready(self) -> bool:
+        """True when the selected vision backend can serve its model."""
         try:
-            from ..models.ollama import OllamaClient, OllamaConfig
-            config = OllamaConfig()
-            client = OllamaClient(config)
-            return client.alive() and client.has(config.vision_model)
+            from ..models.backends import client_for_kind
+            found = client_for_kind(self.config, "vision")
+            if not found:
+                return False
+            client, model_id = found
+            if not client.alive():
+                return False
+            available = client.models()
+            return not available or model_id in available
         except Exception:
             return False
 
@@ -77,8 +86,12 @@ class VisionObserver:
 
     def _describe(self, path: str, question: str) -> str:
         try:
-            from ..models.ollama import OllamaClient
-            result = OllamaClient().describe_image(path, question)
+            from ..models.backends import client_for_kind
+            found = client_for_kind(self.config, "vision")
+            if not found:
+                return ""
+            client, model_id = found
+            result = client.generate(question, model=model_id, images=[path])
             return result.get("text", "") if result.get("ok") else ""
         except Exception:
             return ""

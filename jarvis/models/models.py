@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 
 from ..core.config import JarvisConfig
 from ..core.types import now
+from .backends import (BackendSpec, build_client, configured_backends,
+                       resolve_selection)
 
 
 # -- registry / router -----------------------------------------------------
@@ -16,23 +16,28 @@ from ..core.types import now
 class Model:
     name: str
     kind: str  # fast | reasoning | coding | vision | embedding
-    backend: str = "local"  # local | ollama | cloud
+    backend: str = "local"  # backend instance name (ollama, nvidia, ...)
     capabilities: list[str] = field(default_factory=list)
     healthy: bool = True
     latency_ms: float = 0.0
     last_check: float = 0.0
     version: str = "1"
     backend_model: str = ""  # concrete model id on the backend (e.g. qwen2.5:3b)
+    generative: bool = False  # True when a real model can answer
+    local: bool = True  # False for remote providers (privacy boundary)
 
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "kind": self.kind, "backend": self.backend,
                 "capabilities": self.capabilities, "healthy": self.healthy,
-                "latency_ms": self.latency_ms, "version": self.version}
+                "latency_ms": self.latency_ms, "version": self.version,
+                "backend_model": self.backend_model,
+                "generative": self.generative, "local": self.local}
 
 
 class ModelRegistry:
-    def __init__(self) -> None:
+    def __init__(self, config: JarvisConfig | None = None) -> None:
         self._models: dict[str, Model] = {}
+        self.config = config or JarvisConfig()
 
     def register(self, model: Model) -> None:
         self._models[model.name] = model
@@ -56,21 +61,32 @@ class ModelRegistry:
         model = self._models.get(name)
         if model is None:
             return False
-        if model.backend == "ollama":
-            model.healthy = self._ollama_up()
+        if model.generative:
+            model.healthy = self._probe(model)
         model.last_check = now()
         return model.healthy
 
-    @staticmethod
-    def _ollama_up() -> bool:
-        if shutil.which("ollama") is None:
+    def _probe(self, model: Model) -> bool:
+        """Ask the backend whether it really serves this model."""
+        spec = self._spec(model.backend)
+        if spec is None:
+            return False
+        client = build_client(spec, self.config)
+        if client is None:
             return False
         try:
-            proc = subprocess.run(["ollama", "list"], capture_output=True,
-                                  text=True, timeout=5)
-            return proc.returncode == 0
-        except (OSError, subprocess.SubprocessError):
+            available = client.models()
+        except Exception:
             return False
+        if not available:
+            return False
+        return not model.backend_model or model.backend_model in available
+
+    def _spec(self, backend: str) -> BackendSpec | None:
+        for spec in configured_backends(self.config):
+            if spec.name == backend:
+                return spec
+        return None
 
     def stats(self) -> dict[str, Any]:
         by_kind: dict[str, int] = {}
@@ -96,41 +112,85 @@ class ModelRouter:
         self.registry = registry
         self.config = config or JarvisConfig()
         self.history: list[dict[str, Any]] = []
+        self._clients: dict[str, Any] = {}
 
-    def route(self, task: str) -> Model:
+    # -- backends --------------------------------------------------------
+    def _specs(self) -> dict[str, BackendSpec]:
+        return {s.name: s for s in configured_backends(self.config)}
+
+    def _client(self, model: Model) -> Any | None:
+        """Client for a model's backend (built once, cached)."""
+        spec = self._specs().get(model.backend)
+        if spec is None:
+            return None
+        client = self._clients.get(spec.name)
+        if client is None:
+            client = build_client(spec, self.config)
+            if client is None:
+                return None
+            self._clients[spec.name] = client
+        return client
+
+    def _selection(self) -> dict[str, tuple[str, str]]:
+        return resolve_selection(self.config)
+
+    # -- selection --------------------------------------------------------
+    def kind_for(self, task: str) -> str:
         kind = "fast"
         low = task.lower()
         for marker, mapped in self.KIND_FOR_TASK.items():
             if marker in low:
                 kind = mapped
                 break
-        candidates = self.registry.by_kind(kind)
+        return kind
+
+    def _candidates(self, kind: str) -> list[Model]:
+        """Models that may answer this kind, honouring the local-only wall.
+
+        Unhealthy models stay in the list: a stale probe must not make a
+        backend permanently unreachable, so the call itself decides.
+        """
+        candidates = self.registry.by_kind(kind, healthy_only=False)
+        if self.config.policy.local_only:
+            candidates = [m for m in candidates if m.local]
+        return candidates
+
+    def _rank(self, model: Model) -> tuple[int, float]:
+        """Selected first, then healthy generative models, then stubs."""
+        selected = self._selection().get(model.kind)
+        if selected and model.backend == selected[0] and (
+                not selected[1] or model.backend_model == selected[1]):
+            return (0, model.latency_ms)
+        if model.generative and model.healthy:
+            return (1, model.latency_ms)
+        if model.generative:
+            return (2, model.latency_ms)
+        return (3, model.latency_ms)
+
+    def route(self, task: str) -> Model:
+        kind = self.kind_for(task)
+        candidates = self._candidates(kind)
         if not candidates:
             candidates = self.registry.by_kind("fast")
         if self.config.policy.local_only:
-            local = [m for m in candidates if m.backend != "cloud"]
+            local = [m for m in candidates if m.local]
             if local:
                 candidates = local
         if not candidates:
             raise RuntimeError(f"no model available for kind={kind}")
-        # Prefer a healthy generative backend (ollama) over local stubs,
-        # which cannot generate. Within a backend class, lowest latency wins.
-        def rank(model: Model) -> tuple[int, float]:
-            if model.backend == "ollama" and model.healthy:
-                return (0, model.latency_ms)
-            if model.backend == "local":
-                return (1, model.latency_ms)
-            return (2, model.latency_ms)
-
-        chosen = sorted(candidates, key=rank)[0]
+        chosen = sorted(candidates, key=self._rank)[0]
         self.history.append({"task": task[:80], "model": chosen.name,
                              "kind": kind, "at": now()})
         return chosen
 
     def fallback_chain(self, kind: str) -> list[str]:
-        """Ordered backends to try: kind → fast → local stub. Never empty."""
-        names = [m.name for m in self.registry.by_kind(kind)]
-        names += [m.name for m in self.registry.by_kind("fast") if m.name not in names]
+        """Ordered backends to try: kind → fast → local stub. Never empty.
+
+        Order is by rank, so the selected backend is always tried first.
+        """
+        names = [m.name for m in sorted(self._candidates(kind), key=self._rank)]
+        names += [m.name for m in sorted(self._candidates("fast"), key=self._rank)
+                  if m.name not in names]
         if not names:
             names = ["local-stub"]
         if self.config.models.fallback_enabled and "local-stub" not in names:
@@ -140,35 +200,38 @@ class ModelRouter:
     def complete(self, task: str, prompt: str, system: str = "",
                  images: list[str] | None = None) -> dict[str, Any]:
         """Route then generate. Tries each healthy candidate in rank order."""
-        kind = "fast"
-        low = task.lower()
-        for marker, mapped in self.KIND_FOR_TASK.items():
-            if marker in low:
-                kind = mapped
-                break
+        kind = self.kind_for(task)
         tried: list[str] = []
         for name in self.fallback_chain(kind):
             if name == "local-stub":
                 tried.append(name)
                 continue
             model = self.registry.get(name)
-            if model is None or model.backend != "ollama" or not model.healthy:
+            if model is None or not model.generative:
+                continue
+            client = self._client(model)
+            if client is None:
+                tried.append(f"{name}: no client")
                 continue
             try:
-                from .ollama import OllamaClient, OllamaConfig
-                client = OllamaClient(OllamaConfig(host=self.config.models.ollama_host))
                 result = client.generate(
                     prompt, model=model.backend_model or model.name,
                     system=system,
                     options={"num_predict": self.config.models.llm_max_tokens},
-                    images=images)
+                    images=images if model.kind == "vision" else None)
             except Exception as exc:
                 tried.append(f"{name}: {type(exc).__name__}")
                 continue
             tried.append(name)
             if result.get("ok"):
+                # Keep the provider's own model id before we overwrite
+                # "model" with the registry entry name.
+                result["provider_model"] = result.get("model", "")
                 result["model"] = name
+                result["backend"] = model.backend
+                result["backend_model"] = model.backend_model
                 self.history.append({"task": task[:80], "model": name,
+                                     "backend": model.backend,
                                      "kind": kind, "at": now()})
                 return result
         return {"ok": False, "error": "no generative backend available",
@@ -176,7 +239,9 @@ class ModelRouter:
 
 
 def default_registry(config: JarvisConfig | None = None) -> ModelRegistry:
-    reg = ModelRegistry()
+    """Register the local stubs plus every configured backend."""
+    cfg = config or JarvisConfig()
+    reg = ModelRegistry(cfg)
     reg.register(Model("local-fast", "fast", "local", ["chat", "intent"],
                        latency_ms=50.0))
     reg.register(Model("local-reasoning", "reasoning", "local",
@@ -187,33 +252,37 @@ def default_registry(config: JarvisConfig | None = None) -> ModelRegistry:
                        ["ocr", "describe"], latency_ms=800.0))
     reg.register(Model("local-embed", "embedding", "local",
                        ["search"], latency_ms=60.0))
-    if shutil.which("ollama"):
-        reg.register(Model("ollama-main", "reasoning", "ollama",
-                           ["planning"], latency_ms=1500.0,
-                           backend_model="qwen2.5:3b"))
-    cfg_for_ollama = config or JarvisConfig()
-    if cfg_for_ollama.models.ollama_enabled:
+    selection = resolve_selection(cfg)
+    for spec in configured_backends(cfg):
+        if not spec.enabled:
+            continue
+        client = build_client(spec, cfg)
+        if client is None:
+            continue
         try:
-            from .ollama import OllamaClient, OllamaConfig
-            client = OllamaClient(OllamaConfig(host=cfg_for_ollama.models.ollama_host))
-            present = set(client.models()) if client.alive() else set()
+            present = set(client.models())
+            reachable = bool(present) or client.alive()
         except Exception:
-            present = set()
-        specs = [
-            ("ollama-fast", "fast", "qwen2.5:3b", 900.0),
-            ("ollama-reasoning", "reasoning", "qwen2.5:3b", 1200.0),
-            ("ollama-coding", "coding", "qwen2.5-coder:3b", 1300.0),
-            ("ollama-vision", "vision", "qwen3-vl:2b", 2500.0),
-            ("ollama-embed", "embedding", "nomic-embed-text:latest", 300.0),
-        ]
-        for entry_name, kind, backend_model, latency in specs:
-            reg.register(Model(entry_name, kind, "ollama", ["generate"],
-                               healthy=backend_model in present,
-                               latency_ms=latency, backend_model=backend_model))
-    cfg = config or JarvisConfig()
+            present, reachable = set(), False
+        # The selected model wins over the backend's default for that kind.
+        effective: dict[str, str] = dict(spec.models)
+        for kind, (backend_name, model_id) in selection.items():
+            if backend_name == spec.name and model_id:
+                effective[kind] = model_id
+        for kind, backend_model in effective.items():
+            if reachable and not present:
+                healthy = True  # server does not enumerate models; trust it
+            else:
+                healthy = backend_model in present
+            reg.register(Model(
+                f"{spec.name}-{kind}", kind, spec.name, ["generate"],
+                healthy=healthy,
+                latency_ms=spec.latency_ms, backend_model=backend_model,
+                generative=True, local=spec.local))
     if cfg.models.cloud_enabled:
         reg.register(Model("cloud-reasoning", "reasoning", "cloud",
-                           ["planning", "analysis"], latency_ms=2000.0))
+                           ["planning", "analysis"], latency_ms=2000.0,
+                           local=False))
     return reg
 
 
