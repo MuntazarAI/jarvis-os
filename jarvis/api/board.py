@@ -158,6 +158,44 @@ def _security_info(home: str) -> dict[str, Any]:
     return _safe(_read, {"posture": "unknown"})
 
 
+def _models_info(jarvis: Any) -> dict[str, Any]:
+    """Which model provider answers which kind of work, and is it up."""
+    def _snapshot() -> dict[str, Any]:
+        from ..models.backends import (build_client, configured_backends,
+                                       resolve_selection)
+        cfg = getattr(jarvis, "config", None)
+        selection = resolve_selection(cfg)
+        backends = []
+        for spec in configured_backends(cfg):
+            alive = False
+            count = 0
+            client = build_client(spec, cfg)
+            if client is not None:
+                try:
+                    available = client.models()
+                    count = len(available)
+                    alive = bool(available) or client.alive()
+                except Exception:
+                    alive = False
+            backends.append({
+                "name": spec.name,
+                "type": spec.type,
+                "local": spec.local,
+                "alive": alive,
+                "models": count,
+                "serves": sorted(k for k, v in selection.items()
+                                 if v[0] == spec.name),
+            })
+        return {
+            "backends": backends,
+            "selection": {kind: f"{name}:{model}"
+                          for kind, (name, model) in selection.items()},
+            "local_only": bool(getattr(cfg.policy, "local_only", True))
+            if cfg is not None else True,
+        }
+    return _safe(_snapshot, {"status": "unknown"})
+
+
 def build_board(jarvis: Any) -> dict[str, Any]:
     """Assemble the snapshot. Never raises; unknowns are explicit."""
     try:
@@ -174,6 +212,7 @@ def build_board(jarvis: Any) -> dict[str, Any]:
             "missions": _missions_info(jarvis),
             "durable": _durable_info(home),
             "voice": _voice_info(jarvis),
+            "models": _models_info(jarvis),
             "approvals": _approvals(policy),
             "reach": _reach_info(jarvis),
             "security": _security_info(home),
@@ -312,6 +351,19 @@ let secRows = [["posture", sec.posture ?? "?"],
 ["reverified", (sec.counts && sec.counts.reverified) ?? "?"],
 ["store", sec.store ?? "?"]];
 g.push(card("security", secRows));
+let mods = b.models || {};
+let modelRows = [];
+(mods.backends || []).forEach(bk => {
+modelRows.push([bk.name, (bk.alive ? "up" : "down") + " · " +
+(bk.local ? "local" : "remote") + " · " + (bk.models ?? 0) + " models"]);
+(bk.serves || []).forEach(k => {
+modelRows.push(["  " + k, (mods.selection || {})[k] || ""]);
+});
+});
+if (mods.local_only === false) modelRows.push(["remote", "allowed"]);
+else if (mods.local_only === true) modelRows.push(["remote", "blocked"]);
+g.push(card("models", modelRows.length ? modelRows :
+[["models", "none configured"]]));
 if (Array.isArray(sec.findings) && sec.findings.length) {
 g.push(card("security findings", sec.findings.slice(0, 6).map(f =>
 [(f.severity || "?") + " · " + (f.state || "?"),
