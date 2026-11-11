@@ -338,6 +338,19 @@ source .venv/bin/activate
 
 System backends are detected automatically when available, including Ollama, espeak-ng, Tesseract, FFmpeg, and ydotool. Optional setups that need root access or large downloads are documented in [docs/OPTIONAL_HOST_CAPABILITIES.md](docs/OPTIONAL_HOST_CAPABILITIES.md).
 
+### Install everything with one command
+
+```bash
+cd ~/Projects/jarvis-os && python3 -m jarvis.cli install
+```
+
+This installs the package so `jarvis` runs from any directory, installs
+and starts two user systemd services (the background loop and the local
+API that serves the dashboard), makes sure a model backend is
+configured, and runs the health checks. No root needed — the services
+are user units under `~/.config/systemd/user`. Undo with
+`jarvis install --uninstall`.
+
 ### Any model, any provider
 
 Models are reached through pluggable **backends**: the local Ollama

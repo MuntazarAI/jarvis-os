@@ -19,6 +19,8 @@ state lives in `--home` (default `~/.jarvis-os`).
 - Ask: `talk "<request>"` (one-shot) · `repl` (interactive)
 - Health: `doctor` (deps/hardware/models) · `service doctor` ·
   `task doctor` · `status` (system JSON)
+- Setup: `install` (one-shot: global command, 24/7 service, models,
+  health) · `install --uninstall` (undo) · `setup` (read-only checklist)
 - Observe: `board [--open]` (dashboard URL) · `serve` (API+WS) ·
   `remote` (phone/local remote URL) · `/experience` page + 
   `GET /api/experience` (command-center snapshot) ·
