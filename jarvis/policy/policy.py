@@ -423,7 +423,9 @@ class PolicyEngine:
         """Load approvals from durable storage.
 
         Accepts both store formats: the flat one ({token: entry}) and
-        the versioned one ({"version": 1, "approvals": {...}}).
+        the versioned one ({"version": 1, "approvals": {...}}). Both are
+        read and merged -- an entry is never dropped because the file
+        carries a wrapper key as well.
         """
         path = self._approvals_path()
         if not path or not path.exists():
@@ -434,10 +436,14 @@ class PolicyEngine:
             return
         if not isinstance(raw, dict):
             return
-        source = raw.get("approvals")
-        if not isinstance(source, dict):
-            source = {k: v for k, v in raw.items()
-                      if k not in ("version", "approvals")}
+        source: dict[str, Any] = {}
+        nested = raw.get("approvals")
+        if isinstance(nested, dict):
+            source.update(nested)
+        for token, entry in raw.items():
+            if token in ("version", "approvals"):
+                continue
+            source.setdefault(token, entry)
         fresh: dict[str, Any] = {}
         for token, entry in source.items():
             if not isinstance(token, str) or not isinstance(entry, dict):
@@ -769,10 +775,10 @@ class PolicyEngine:
             raw_args = entry.get("args", entry.get("plan", {}).get("args", {}))
             out.append({
                 "approval_id": token[:12] + "…",  # truncated for display
-                "actor": entry["actor"],
+                "actor": entry.get("actor", "?"),
                 "action": entry.get("action", entry.get("plan", {}).get("action", "")),
                 "args": sanitize_approval_args(raw_args),
-                "created": entry["created"],
+                "created": entry.get("created", entry.get("requested_at", 0)),
                 "status": entry.get("status", "pending"),
                 "expires_at": entry.get("expires_at"),
             })

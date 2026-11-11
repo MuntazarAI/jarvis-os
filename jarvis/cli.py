@@ -502,6 +502,8 @@ def build_parser() -> argparse.ArgumentParser:
                                 "changes", "refresh", "research",
                                 "briefing", "health", "diagnostics",
                                 "topics"])
+    world.add_argument("query", nargs="?", default="",
+                       help="what to search/research (same as --text)")
     world.add_argument("--text", default="",
                        help="query for search/research/briefing")
     world.add_argument("--topic", default="",
@@ -707,7 +709,7 @@ def _models_text(report: dict[str, Any]) -> str:
         lines.append("selection:")
         for kind, target in selection.items():
             lines.append(f"    {kind:10s} {target}")
-    elif report.get("ok") and "backends" in report and "added" not in report:
+    elif "selection" in report:
         lines.append("selection: (none — the first healthy backend wins)")
     if "local_only" in report and report["local_only"] is not None:
         lines.append(f"local_only: {report['local_only']}"
@@ -836,9 +838,12 @@ def _models_action(args: Any) -> int:
             if str(target).split(":", 1)[0].strip() == name:
                 config.models.selection.pop(kind, None)
         config.save()
+        from .models.backends import resolve_selection
+        resolved = {k: f"{name}:{model}"
+                    for k, (name, model) in resolve_selection(config).items()}
         return _out({"ok": True, "removed": removed, "name": name,
-                     "backends": config.models.backends,
-                     "selection": config.models.selection})
+                     "configured": config.models.backends,
+                     "selection": resolved})
 
     if action == "use":
         kind = str(getattr(args, "target", "") or "").strip().lower()
@@ -870,10 +875,13 @@ def _models_action(args: Any) -> int:
                     "policy.local_only is on: this backend stays unused. "
                     "Re-run with --allow-remote to turn it off.")
         config.save()
+        from .models.backends import resolve_selection
+        resolved = {k: f"{name}:{model}"
+                    for k, (name, model) in resolve_selection(config).items()}
         return _out({"ok": True, "kind": kind, "target": value,
                      "local_only": config.policy.local_only,
                      "warnings": warnings,
-                     "selection": config.models.selection})
+                     "selection": resolved})
 
     if action == "test":
         specs = configured_backends(config)
@@ -912,7 +920,11 @@ def _models_action(args: Any) -> int:
                             entry["error"] = str(result.get("error", ""))[:200]
             results.append(entry)
         ok = bool(results) and all(r["alive"] for r in results)
-        return _out({"ok": ok, "backends": results}, 0 if ok else 1)
+        from .models.backends import resolve_selection
+        resolved = {k: f"{name}:{model}"
+                    for k, (name, model) in resolve_selection(config).items()}
+        return _out({"ok": ok, "backends": results, "selection": resolved},
+                    0 if ok else 1)
 
     if action == "key":
         name = str(getattr(args, "target", "") or "").strip()
@@ -1182,9 +1194,10 @@ def _world_action(jarvis: Any, args: Any) -> int:
         from .worldintel.research import Researcher
         from .worldintel.telemetry import TELEMETRY
         from .worldintel.worldsync import sync_answer
-        query = getattr(args, "text", "") or (
+        query = (getattr(args, "text", "")
+                 or getattr(args, "query", "") or (
             "What is happening in AI today?" if action == "search"
-            else "Research recent AI developments")
+            else "Research recent AI developments"))
         started = _time.monotonic()
         researcher = Researcher(
             registry, cache, max_searches=cfg.max_searches,
@@ -1304,7 +1317,7 @@ def _world_action(jarvis: Any, args: Any) -> int:
                 "evidence": s.get("evidence", []) if isinstance(
                     s, dict) else []})
         kind = getattr(args, "kind", "morning")
-        query = getattr(args, "text", "")
+        query = getattr(args, "text", "") or getattr(args, "query", "")
         if query:
             from .worldintel.research import Researcher
             researcher = Researcher(
@@ -4543,7 +4556,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         from .api.server import JarvisAPI
         api = JarvisAPI(jarvis, host=args.host, port=args.port, token=args.token)
-        api.serve_forever()
+        try:
+            api.serve_forever()
+        except OSError as exc:
+            import errno as _errno
+            if exc.errno in (_errno.EADDRINUSE, _errno.EACCES):
+                print(f"cannot bind {args.host}:{args.port} — {exc.strerror}",
+                      file=sys.stderr)
+                print("the API is probably already running: "
+                      "systemctl --user status jarvis-api.service",
+                      file=sys.stderr)
+                print("stop it first (systemctl --user stop jarvis-api.service) "
+                      "or use another port: jarvis serve --port 8766",
+                      file=sys.stderr)
+                jarvis.close()
+                return 1
+            raise
         print(f"jarvis api on http://{args.host}:{api.port} (Ctrl-C to stop)")
         try:
             import time
@@ -5593,7 +5621,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "see":
         from .vision.observer import VisionObserver
-        observer = VisionObserver()
+        observer = VisionObserver(config=jarvis.config)
         if args.source == "camera":
             obs = observer.see_camera(question=args.ask, scene=not args.fast)
         elif args.source == "file":

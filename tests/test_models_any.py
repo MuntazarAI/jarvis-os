@@ -310,7 +310,8 @@ def test_cli_adds_and_selects_a_backend(tmp_path, capsys):
     code = _run_cli(["models", "use", "fast", "remote", "--json"], home)
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["selection"]["fast"] == "remote"
+    # the CLI reports the resolved target: backend and the model it serves
+    assert payload["selection"]["fast"] == "remote:model-a"
 
     config = json.loads((home / "config.json").read_text())
     assert config["models"]["selection"]["fast"] == "remote"

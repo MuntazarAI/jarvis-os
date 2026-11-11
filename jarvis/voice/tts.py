@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 import wave
@@ -188,23 +189,45 @@ class LocalFallbackTTSProvider(TTSProvider):
                 request_id=request.request_id, provider=self.name,
                 status="failed", error="no local TTS backend",
                 sample_rate=request.sample_rate)
+        # Both backends write a WAV file; stdout is audio, not text, so
+        # the file is the only sane transport.
+        target = Path(str(dest)) if dest else Path(
+            tempfile.mkdtemp(prefix="jarvis-tts-")) / "speech.wav"
         try:
-            binary = ("piper" if self.backend == "piper"
-                      else shutil.which("espeak-ng") or "espeak")
-            proc = subprocess.run(
-                [binary, request.text[:800]], capture_output=True,
-                text=True, timeout=60)
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="failed", error=f"cannot write {target}: {exc}"[:200],
+                sample_rate=request.sample_rate)
+        try:
+            if self.backend == "piper":
+                cmd = [shutil.which("piper") or "piper", "--output_file",
+                       str(target), request.text[:800]]
+            else:
+                cmd = [shutil.which("espeak-ng") or "espeak", "-w",
+                       str(target), request.text[:800]]
+            proc = subprocess.run(cmd, capture_output=True, timeout=60)
             latency = round((time.perf_counter() - started) * 1000, 2)
             if proc.returncode != 0:
+                detail = (proc.stderr or b"").decode("utf-8", "replace")
                 return TTSResult(
                     request_id=request.request_id, provider=self.name,
                     status="failed",
-                    error=(proc.stderr or "tts failed")[-200:],
+                    error=(detail.strip() or "tts failed")[-200:],
+                    sample_rate=request.sample_rate,
+                    latency_ms=latency)
+            if not target.exists() or target.stat().st_size == 0:
+                return TTSResult(
+                    request_id=request.request_id, provider=self.name,
+                    status="failed", error="tts produced no audio file",
                     sample_rate=request.sample_rate,
                     latency_ms=latency)
             return TTSResult(
                 request_id=request.request_id, provider=self.name,
                 status="success", duration_s=0.0,
+                audio_path=str(target),
+                audio_bytes=target.stat().st_size,
                 sample_rate=request.sample_rate, latency_ms=latency,
                 metadata={"backend": self.backend})
         except (OSError, subprocess.SubprocessError) as exc:
