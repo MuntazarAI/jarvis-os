@@ -150,6 +150,16 @@ def build_parser() -> argparse.ArgumentParser:
                      help="with 'test': send one real prompt to the backend")
     mod.add_argument("--json", action="store_true", help="emit JSON")
 
+    inst = sub.add_parser("install", help="one-shot setup: global command, "
+                                         "24/7 service, models, health check")
+    inst.add_argument("--uninstall", action="store_true",
+                      help="remove the service and the global command")
+    inst.add_argument("--no-service", action="store_true",
+                      help="skip the 24/7 background service")
+    inst.add_argument("--linger", action="store_true",
+                      help="also keep the service alive with no session open")
+    inst.add_argument("--json", action="store_true", help="emit JSON")
+
     exp = sub.add_parser("experience", help="Experience Layer foundation: read-only status")
     exp.add_argument("action", nargs="?", default="status",
                      choices=["status"])
@@ -4085,6 +4095,229 @@ def _doctor_mark(check: Any) -> str:
     return "FAIL" if getattr(check, "required", False) else "WARN"
 
 
+INSTALL_UNITS = (("jarvis.service", "systemd/jarvis.service"),
+                  ("jarvis-api.service", "systemd/jarvis-api.service"))
+
+
+def _install_project_dir() -> Path:
+    """The checkout this code is running from."""
+    return Path(__file__).resolve().parent.parent
+
+
+def _install_run(cmd: list[str], timeout: float = 300.0) -> tuple[int, str]:
+    """Run a command and capture its output. Never raises."""
+    import subprocess as _subprocess
+    try:
+        proc = _subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=timeout)
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    except Exception as exc:
+        return 1, f"{type(exc).__name__}: {exc}"
+
+
+def _install_package() -> tuple[bool, str]:
+    """Make `jarvis` runnable from anywhere (editable install)."""
+    project = _install_project_dir()
+    code, out = _install_run(
+        [sys.executable, "-m", "pip", "install", "-e", str(project),
+         "--user", "--no-deps", "--no-build-isolation"])
+    if code != 0:
+        return False, out.strip()[-400:]
+    return True, f"editable install from {project}"
+
+
+def _install_unit(linger: bool = False) -> tuple[bool, str]:
+    """Install, enable and start the user services. No root needed.
+
+    Two units: the background loop (jarvis.service) and the local API
+    that serves the board, the command centre and the phone link
+    (jarvis-api.service).
+    """
+    import shutil as _shutil
+    if _shutil.which("systemctl") is None:
+        return False, "systemctl not found: no 24/7 service on this host"
+    project = _install_project_dir()
+    target_dir = Path.home() / ".config" / "systemd" / "user"
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return False, f"cannot create {target_dir}: {exc}"
+    for unit_name, template_name in INSTALL_UNITS:
+        template = project / template_name
+        if not template.exists():
+            continue
+        target = target_dir / unit_name
+        try:
+            lines = []
+            for line in template.read_text().splitlines():
+                # The template ships with one machine's path; make it this one.
+                if line.startswith("WorkingDirectory="):
+                    line = f"WorkingDirectory={project}"
+                elif line.startswith("Environment=JARVIS_HOME_DIR="):
+                    line = f"Environment=JARVIS_HOME_DIR={project}"
+                lines.append(line)
+            target.write_text("\n".join(lines) + "\n")
+        except OSError as exc:
+            return False, f"cannot write {target}: {exc}"
+    code, out = _install_run(["systemctl", "--user", "daemon-reload"])
+    if code != 0:
+        return False, out.strip()[-400:]
+    started = []
+    for unit_name, _ in INSTALL_UNITS:
+        code, out = _install_run(["systemctl", "--user", "enable", "--now",
+                                   unit_name])
+        if code != 0:
+            return False, f"{unit_name}: {out.strip()[-300:]}"
+        started.append(unit_name)
+    note = "started " + ", ".join(started)
+    if linger:
+        code, out = _install_run(["loginctl", "enable-linger",
+                                   os.environ.get("USER", "")])
+        note += (" (survives logout)" if code == 0
+                 else " (linger not set: needs an open login session)")
+    return True, note
+
+
+def _install_remove_unit() -> tuple[bool, str]:
+    """Stop, disable and remove the user services."""
+    import shutil as _shutil
+    if _shutil.which("systemctl") is None:
+        return True, "no systemctl on this host: nothing to remove"
+    target_dir = Path.home() / ".config" / "systemd" / "user"
+    removed = []
+    for unit_name, _ in INSTALL_UNITS:
+        _install_run(["systemctl", "--user", "disable", "--now", unit_name])
+        target = target_dir / unit_name
+        try:
+            if target.exists():
+                target.unlink()
+                removed.append(unit_name)
+        except OSError:
+            pass
+    _install_run(["systemctl", "--user", "daemon-reload"])
+    return True, ("removed " + ", ".join(removed) if removed
+                  else "services not installed")
+
+
+def _install_ensure_models(config: Any) -> list[str]:
+    """Make sure a model backend is configured.
+
+    Adds the local Ollama backend when nothing is configured, and the
+    NVIDIA backend when its key already sits in the vault. Selection is
+    left alone: switching models is the operator's call.
+    """
+    from .models.backends import BackendSpec, default_ollama_spec, resolve_key
+    notes: list[str] = []
+    backends = list(config.models.backends or [])
+    names = {str(entry.get("name") or "") for entry in backends}
+    if not backends:
+        backends = [default_ollama_spec(config.models.ollama_host).to_dict()]
+        names.add("ollama")
+        notes.append("added the local Ollama backend")
+    if "nvidia" not in names:
+        spec = BackendSpec(name="nvidia", type="openai",
+                           base_url="https://integrate.api.nvidia.com/v1",
+                           api_key_secret="nvidia_api_key", local=False)
+        if resolve_key(spec, config):
+            spec.models = {
+                "fast": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+                "reasoning": "nvidia/nemotron-3-ultra-550b-a55b",
+                "coding": "nvidia/nemotron-3-ultra-550b-a55b",
+                "vision": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+                "embedding": "nvidia/nemotron-3-embed-1b",
+            }
+            backends.append(spec.to_dict())
+            names.add("nvidia")
+            notes.append("added the NVIDIA backend (key found in the vault)")
+    config.models.backends = backends
+    if notes:
+        try:
+            config.save()
+        except OSError as exc:
+            notes.append(f"could not save config: {exc}")
+    return notes
+
+
+def _install_action(args: Any) -> int:
+    """One-shot setup: global command, 24/7 service, models, health.
+
+    Everything is reversible with `jarvis install --uninstall`. No root
+    is needed: the background service is a *user* systemd unit.
+    """
+    as_json = bool(getattr(args, "json", False))
+    try:
+        config = _load_config(getattr(args, "home", "") or "")
+    except (OSError, ValueError) as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return 1
+
+    steps: list[dict[str, Any]] = []
+
+    def _step(name: str, ok: bool, detail: str) -> None:
+        steps.append({"step": name, "ok": ok, "detail": detail})
+
+    if getattr(args, "uninstall", False):
+        ok, detail = _install_remove_unit()
+        _step("service", ok, detail)
+        payload = {"ok": ok, "mode": "uninstall", "steps": steps}
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print("UNINSTALL")
+            for step in steps:
+                mark = "ok " if step["ok"] else "FAIL"
+                print(f"[{mark}] {step['step']}: {step['detail']}")
+        return 0 if ok else 1
+
+    ok, detail = _install_package()
+    _step("command", ok, detail)
+    notes = _install_ensure_models(config)
+    if notes:
+        _step("models", True, "; ".join(notes))
+    else:
+        _step("models", True, "backends already configured")
+    if not getattr(args, "no_service", False):
+        ok, detail = _install_unit(linger=bool(getattr(args, "linger", False)))
+        _step("service", ok, detail)
+    else:
+        _step("service", True, "skipped (--no-service)")
+
+    from .core.service import check_dependencies
+    checks: list[dict[str, Any]] = []
+    try:
+        checks = [c.to_dict() for c in check_dependencies(config)]
+    except Exception as exc:
+        checks = [{"name": "doctor", "ok": False,
+                   "detail": f"{type(exc).__name__}: {exc}", "required": True}]
+    failed = [c["name"] for c in checks if c.get("required") and not c.get("ok")]
+    payload = {"ok": not failed, "steps": steps, "checks": checks,
+               "failed": failed}
+    if as_json:
+        print(json.dumps(payload, indent=2, default=str))
+    else:
+        print("INSTALL")
+        for step in steps:
+            mark = "ok " if step["ok"] else "FAIL"
+            print(f"[{mark}] {step['step']}: {step['detail']}")
+        for check in checks:
+            if not check.get("required"):
+                continue
+            mark = "ok " if check.get("ok") else "FAIL"
+            print(f"[{mark}] {check['name']}: {check.get('detail', '')}")
+        for check in checks:
+            name = str(check.get("name", ""))
+            if check.get("required") or not name.startswith("backend:"):
+                continue
+            mark = "ok " if check.get("ok") else "warn"
+            print(f"[{mark}] {name}: {check.get('detail', '')}")
+        print("")
+        print("next: `jarvis talk \"hello\"` · `jarvis board --open` "
+              "· `jarvis models list`")
+        if failed:
+            print(f"required checks failed: {', '.join(failed)}")
+    return 0 if not failed else 1
+
+
 def _setup_action(jarvis: Any, args: Any) -> int:
     """Guided first-run checklist. Read-only; exit 1 when any required
     check fails so scripts can gate on it."""
@@ -4175,6 +4408,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "models":
         return _models_action(args)
+
+    if args.command == "install":
+        return _install_action(args)
 
     try:
         jarvis = _make_jarvis(getattr(args, "home", ""))
