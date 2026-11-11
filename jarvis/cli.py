@@ -4538,7 +4538,17 @@ def main(argv: list[str] | None = None) -> int:
         url = f"http://{args.host}:{args.port}/command"
         print(f"command centre: {url}")
         print("live data from `/api/experience` — same token as `serve`.")
-    elif args.command == "office":
+        if bool(getattr(args, "open", False)):
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception as exc:
+                print(f"could not open browser: {type(exc).__name__}")
+                jarvis.close()
+                return 1
+        jarvis.close()
+        return 0
+    if args.command == "office":
         url = f"http://{args.host}:{args.port}/office"
         print(f"office: {url}")
         print("live desks from `/api/experience` — same token as `serve`.")
@@ -5649,16 +5659,18 @@ def main(argv: list[str] | None = None) -> int:
         manager = ServiceManager(jarvis.config)
         jarvis.close()
         if args.command == "start":
-            print(json.dumps(manager.start(), indent=2, default=str))
-            return 0
+            result = manager.start()
+            print(json.dumps(result, indent=2, default=str))
+            return 0 if result.get("ok") else 1
         if args.command == "stop":
-            print(json.dumps(manager.stop(), indent=2, default=str))
-            return 0
+            result = manager.stop()
+            print(json.dumps(result, indent=2, default=str))
+            return 0 if result.get("ok") else 1
         if args.command == "restart":
-            print(json.dumps(manager.restart(), indent=2, default=str))
-            return 0
+            result = manager.restart()
+            print(json.dumps(result, indent=2, default=str))
+            return 0 if result.get("ok") else 1
         checks = check_dependencies(jarvis.config)
-        bad = [c.name for c in checks if not c.ok]
         for check in checks:
             mark = _doctor_mark(check)
             req = " (required)" if check.required else ""
