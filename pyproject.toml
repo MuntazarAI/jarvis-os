@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "torch>=2.15.0",
     "torchvision>=0.18.0",
-    "torchaudio>=2.3.0",
+    "torchaudio>=2.11.1",
     "numpy>=2.4.6",
     "psutil>=7.2.2",
     "pydantic>=2.7.0",
@@ -22,12 +22,12 @@ stt = ["faster-whisper"]
 torch = [
     "torch>=2.15.0",
     "torchvision>=0.18.0",
-    "torchaudio>=2.3.0",
+    "torchaudio>=2.11.1",
 ]
 torch-cuda = [
     "torch>=2.15.0",
     "torchvision>=0.18.0",
-    "torchaudio>=2.3.0",
+    "torchaudio>=2.11.1",
     "nvidia-cuda-runtime-cu12>=12.4.0",
 ]
 training = [
