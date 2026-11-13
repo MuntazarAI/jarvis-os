@@ -672,8 +672,6 @@ class CognitiveSupervisor:
                                                  "NO_PREDICTION"))[:500],
             confidence=prediction_detail.get("confidence"),
             basis=list(prediction_detail.get("basis", []) or []))
-        plan_detail = by_stage.get("plan").detail \
-            if by_stage.get("plan") else {}
         action_detail = self._action_from_record(record)
         outcome.plan = CognitivePlan(
             goal=str(action_detail.get("reason", ""))[:300],

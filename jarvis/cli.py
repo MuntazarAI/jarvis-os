@@ -5676,6 +5676,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "see":
         from .vision.observer import VisionObserver
         observer = VisionObserver(config=jarvis.config)
+        if not args.fast:
+            # The first vision call loads the model: say so, instead of
+            # looking like a hang.
+            print("observing the screen (the first vision call loads the "
+                  "model)…")
         if args.source == "camera":
             obs = observer.see_camera(question=args.ask, scene=not args.fast)
         elif args.source == "file":

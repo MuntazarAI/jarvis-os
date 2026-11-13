@@ -15,6 +15,11 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 
+#: Upper bound for one image inference (the first one loads the vision
+#: tower; on a small CPU that is slow, but it must not hang forever).
+IMAGE_TIMEOUT_S = 180.0
+
+
 @dataclass
 class OllamaConfig:
     host: str = "http://localhost:11434"
@@ -118,8 +123,10 @@ class OllamaClient:
                 payload["images"] = [self._image_b64(p) for p in images]
             except OSError as exc:
                 return {"ok": False, "error": f"unreadable image: {exc}"}
-            # First multimodal inference loads the vision tower; allow longer.
-            timeout = max(timeout or 0.0, 300.0)
+            # First multimodal inference loads the vision tower: allow
+            # longer, but stay bounded so a slow model cannot hang the
+            # caller for minutes.
+            timeout = max(timeout or 0.0, IMAGE_TIMEOUT_S)
         result = self._post("/api/generate", payload, timeout=timeout)
         if not result.get("ok"):
             return result
