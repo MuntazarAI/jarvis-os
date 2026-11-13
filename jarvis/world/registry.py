@@ -109,8 +109,26 @@ class WorldEntity:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "WorldEntity":
+        # Reject malformed records instead of manufacturing placeholder
+        # entities from missing fields.
+        if not isinstance(data, dict):
+            raise TypeError("world entity must be an object")
+
+        for key in ("id", "type", "name"):
+            value = data.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"world entity has invalid {key}")
+
+        for key in ("attributes", "state", "provenance"):
+            if key in data and not isinstance(data[key], dict):
+                raise TypeError(f"world entity {key} must be an object")
+
+        for key in ("uncertainty", "evidence_refs"):
+            if key in data and not isinstance(data[key], list):
+                raise TypeError(f"world entity {key} must be a list")
+
         return cls(**{k: data.get(k, v) for k, v in (
-            ("id", ""), ("type", "related_to"), ("name", ""),
+            ("id", ""), ("type", "event"), ("name", ""),
             ("attributes", {}), ("state", {}),
             ("created_at", 0.0), ("updated_at", 0.0), ("observed_at", 0.0),
             ("provenance", {}), ("confidence", 0.6), ("uncertainty", []),
@@ -576,6 +594,9 @@ class WorldRegistry:
             try:
                 entity = WorldEntity.from_dict(raw)
             except (ValueError, KeyError, TypeError):
+                continue
+            # The persisted dictionary key must agree with the entity ID.
+            if str(eid) != entity.id:
                 continue
             registry.entities[entity.id] = entity
         for rid, raw in (data.get("relations") or {}).items():

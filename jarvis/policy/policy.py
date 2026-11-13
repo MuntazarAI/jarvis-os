@@ -643,18 +643,26 @@ class PolicyEngine:
             pass
 
     def create_approval(self, actor: str, plan: ActionPlan) -> str:
-        """Create a single-use approval token for a high-risk action."""
-        token = hashlib.sha256(f"{actor}{plan.action}{now()}".encode()).hexdigest()[:32]
-        self.approvals[token] = {
-            "actor": actor,
-            "action": plan.action,
-            "args": plan.args,
-            "created": now(),
-            "used": False,
-            "status": "pending",
-            "expires_at": now() + 300.0,  # 5 min TTL
-        }
-        self._persist_approvals()
+        """Create a single-use approval token for a high-risk action.
+
+        The token carries the ``appr-`` prefix the redactors in
+        device/security.py and intelligence/loop.py look for, so a token
+        that reaches a log, a trace or a snapshot is scrubbed like the
+        durable ``apd-`` tokens are.
+        """
+        token = "appr-" + hashlib.sha256(
+            f"{actor}{plan.action}{now()}".encode()).hexdigest()[:32]
+        with self._approval_mutation():
+            self.approvals[token] = {
+                "actor": actor,
+                "action": plan.action,
+                "args": plan.args,
+                "args_hash": self._args_fingerprint(plan.args),
+                "created": now(),
+                "used": False,
+                "status": "pending",
+                "expires_at": now() + 300.0,  # 5 min TTL
+            }
         return token
 
     # Backward compatibility methods for tests
@@ -706,9 +714,8 @@ class PolicyEngine:
         if approved_action != action:
             return False
         # Verify args match (None means empty dict for comparison)
-        approved_args = entry.get("args", entry.get("plan", {}).get("args", {}))
         check_args = args if args is not None else {}
-        if check_args != approved_args:
+        if not self._args_match(entry, check_args):
             return False
         return True
 
@@ -741,9 +748,8 @@ class PolicyEngine:
             if approved_action != action:
                 return False
             # Verify args match (None means empty dict for comparison)
-            approved_args = entry.get("args", entry.get("plan", {}).get("args", {}))
             check_args = args if args is not None else {}
-            if check_args != approved_args:
+            if not self._args_match(entry, check_args):
                 return False
             entry["used"] = True
             entry["status"] = "consumed"
@@ -785,12 +791,21 @@ class PolicyEngine:
         return out
 
     def approved(self, token: str) -> bool:
-        """Legacy: check if approval was approved (not just pending or spent)."""
+        """Legacy: check if approval was approved (not just pending or spent).
+
+        An expired approval is not a valid approval: the TTL is part of
+        the decision, not a hint.
+        """
         full_token = self._find_approval(token)
         if not full_token:
             return False
         entry = self.approvals.get(full_token)
-        return entry and entry.get("status") == "approved" and not entry.get("used")
+        if not entry:
+            return False
+        if entry.get("status") != "approved" or entry.get("used"):
+            return False
+        expires_at = float(entry.get("expires_at") or 0.0)
+        return bool(expires_at) and expires_at > now()
 
     def deny(self, token: str, by: str = "cli", reason: str = "") -> bool:
         """Legacy: deny/consume an approval token."""
@@ -810,20 +825,71 @@ class PolicyEngine:
         return True
 
     def _find_approval(self, token_or_prefix: str) -> str | None:
-        """Find approval token by full token or prefix (4+ chars)."""
+        """Find an approval by full token or unique prefix (4+ chars).
+
+        An ambiguous prefix resolves to nothing: approving the wrong
+        request is worse than asking for the full token.
+        """
         if token_or_prefix in self.approvals:
             return token_or_prefix
         if len(token_or_prefix) >= 4:
-            for token in self.approvals:
-                if token.startswith(token_or_prefix):
-                    return token
+            matches = [token for token in self.approvals
+                       if token.startswith(token_or_prefix)]
+            if len(matches) == 1:
+                return matches[0]
+            return None
         return None
 
+    @classmethod
+    def _args_match(cls, entry: dict[str, Any], args: dict[str, Any]) -> bool:
+        """Do the supplied arguments match the approval's binding?
+
+        The fingerprint is the exact binding and survives a restart; the
+        scrubbed args are what the operator can read.
+        """
+        fingerprint = entry.get("args_hash")
+        if fingerprint:
+            return fingerprint == cls._args_fingerprint(args)
+        if "args" in entry:
+            approved = entry.get("args") or {}
+            return dict(approved) == dict(args or {})
+        # An approval with neither a fingerprint nor args binds to no
+        # arguments at all.
+        return not args
+
+    @staticmethod
+    def _args_fingerprint(args: Any) -> str:
+        """Stable fingerprint of an approval's arguments.
+
+        The raw args can carry credentials, so only the fingerprint
+        reaches disk — the binding check still works across restarts.
+        """
+        try:
+            payload = json.dumps(args, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            payload = repr(args)
+        return hashlib.sha256(payload.encode()).hexdigest()[:32]
+
     def _persist_approvals(self) -> bool:
-        """Persist approvals to durable storage. Returns True on success."""
+        """Persist approvals to durable storage. Returns True on success.
+
+        Raw arguments never reach the file: an approval for a shell
+        command can carry a secret, and the store is plain JSON.
+        """
         path = self._approvals_path()
         if not path:
             return False
+        payload: dict[str, Any] = {}
+        for token, entry in self.approvals.items():
+            row = dict(entry)
+            raw = row.get("args")
+            if raw is not None:
+                # The exact binding lives in the fingerprint; what goes to
+                # disk is the scrubbed view, so a credential inside the
+                # arguments never reaches the store.
+                row["args_hash"] = row.get("args_hash") or self._args_fingerprint(raw)
+                row["args"] = sanitize_approval_args(raw)
+            payload[token] = row
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(prefix=".approvals-",
@@ -831,7 +897,7 @@ class PolicyEngine:
                                        text=True)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    json.dump(self.approvals, handle, indent=2, default=str)
+                    json.dump(payload, handle, indent=2, default=str)
                 os.replace(tmp, path)
                 path.chmod(0o600)
             finally:
@@ -858,6 +924,8 @@ class PolicyEngine:
             if not entry:
                 return False
             if entry.get("used"):
+                return False
+            if entry.get("status") != "approved":
                 return False
             if entry["actor"] != actor:
                 return False

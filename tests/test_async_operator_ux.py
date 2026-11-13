@@ -202,7 +202,7 @@ def test_cli_grants_approvals_commands_areas(tmp_path):
     assert missing.returncode == 1
     bad_approval = _cli(home, "device", "approvals", "approve",
                         "--approval", "apd-nope")
-    assert bad_approval.returncode == 0
+    assert bad_approval.returncode == 1
     assert "cannot approve" in bad_approval.stdout
 
 

@@ -42,7 +42,10 @@ EXPIRED = "expired"
 REVOKED = "revoked"
 DENIED = "denied"
 
-_TERMINAL = frozenset({CONSUMED, EXPIRED, REVOKED, DENIED})
+#: Approval states that end the request. A denial is final: the
+#: request is never re-asked after one of these.
+TERMINAL_STATES = frozenset({CONSUMED, EXPIRED, REVOKED, DENIED})
+_TERMINAL = TERMINAL_STATES
 
 
 class ApprovalError(ValueError):
@@ -465,6 +468,7 @@ class ApprovalStore:
 
 __all__ = [
     "ApprovalStore",
+    "TERMINAL_STATES",
     "ApprovalError",
     "PENDING",
     "APPROVED",

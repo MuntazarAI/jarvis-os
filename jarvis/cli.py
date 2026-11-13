@@ -1414,13 +1414,13 @@ def _integration_action(jarvis: Any, args: Any) -> int:
     as_json = bool(getattr(args, "json", False))
     action = getattr(args, "action", "doctor")
 
-    def _out(payload: Any, text: str) -> int:
+    def _out(payload: Any, text: str, code: int = 0) -> int:
         if as_json:
             print(json.dumps(payload, indent=2, default=str))
         else:
             print(text)
         jarvis.close()
-        return 0
+        return code
 
     if action == "trace":
         from .cognition.trace import trace_cycle
@@ -1484,9 +1484,11 @@ def _integration_action(jarvis: Any, args: Any) -> int:
         checks.append(("Trace", False, f"{type(exc).__name__}"))
     lines = [f"{name:14} {'OK' if ok else 'FAIL'}  {detail}"
              for name, ok, detail in checks]
+    failed = [name for name, ok, _ in checks if not ok]
     return _out({"checks": [{"name": n, "ok": o, "detail": d}
                             for n, o, d in checks]},
-                "INTEGRATION\n" + "\n".join(lines))
+                "INTEGRATION\n" + "\n".join(lines),
+                1 if failed else 0)
 
 
 def _grants_store(home: str) -> Any:
@@ -1676,7 +1678,8 @@ def _approvals_action(jarvis: Any, args: Any) -> int:
         return _out({"approved": ok}, "approved" if ok else
                     "cannot approve", 0 if ok else 1)
     if action == "deny":
-        ok = policy.deny(full, by="cli")
+        ok = policy.deny(full, by="cli",
+                         reason=str(getattr(args, "reason", "") or ""))
         return _out({"denied": ok}, "denied" if ok else
                     "cannot deny", 0 if ok else 1)
     jarvis.close()
@@ -2524,7 +2527,8 @@ def _pi_action(adapter: Any, jarvis: Any, args: Any, _out: Any) -> int:
                  f"{c.get('detail', '')}" for c in checks]
         return _out({"checks": checks},
                     "\n".join(lines) + f"\n{len(checks) - len(failed)}/"
-                    f"{len(checks)} checks passed")
+                    f"{len(checks)} checks passed",
+                    1 if failed else 0)
     if action == "camera":
         provider = _hw.CameraProvider()
         try:
@@ -3223,7 +3227,8 @@ def _device_service_action(svc: Any, adapter: Any, args: Any,
         ok = svc.approve_command(args.approval, by=args.by)
         return _out({"approval_id": args.approval, "approved": ok},
                     f"approved {args.approval}" if ok
-                    else f"cannot approve {args.approval}")
+                    else f"cannot approve {args.approval}",
+                    0 if ok else 1)
     if action == "deny":
         if not args.approval:
             print("usage: jarvis device android deny --approval <token> "
@@ -3234,7 +3239,8 @@ def _device_service_action(svc: Any, adapter: Any, args: Any,
                               reason=args.reason)
         return _out({"approval_id": args.approval, "denied": ok},
                     f"denied {args.approval}" if ok
-                    else f"cannot deny {args.approval}")
+                    else f"cannot deny {args.approval}",
+                    0 if ok else 1)
     if action == "command-status":
         if not args.command_id:
             print("usage: jarvis device android command-status "
@@ -3393,7 +3399,8 @@ def _device_approvals(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
         ok = svc.approve_command(args.approval, by=args.by)
         return _out({"approval_id": args.approval, "approved": ok},
                     f"approved {args.approval[:12]}" if ok
-                    else f"cannot approve {args.approval[:12]}")
+                    else f"cannot approve {args.approval[:12]}",
+                    0 if ok else 1)
     if action == "deny":
         if not args.approval:
             print("usage: jarvis device approvals deny --approval <token|prefix> "
@@ -3404,7 +3411,8 @@ def _device_approvals(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
                               reason=args.reason)
         return _out({"approval_id": args.approval, "denied": ok},
                     f"denied {args.approval[:12]}" if ok
-                    else f"cannot deny {args.approval[:12]}")
+                    else f"cannot deny {args.approval[:12]}",
+                    0 if ok else 1)
     if action == "revoke":
         if not args.approval:
             print("usage: jarvis device approvals revoke --approval <token|prefix> "
@@ -3415,7 +3423,8 @@ def _device_approvals(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
                                   reason=args.reason)
         return _out({"approval_id": args.approval, "revoked": ok},
                     f"revoked {args.approval[:12]}" if ok
-                    else f"cannot revoke {args.approval[:12]}")
+                    else f"cannot revoke {args.approval[:12]}",
+                    0 if ok else 1)
     if action == "watch":
         return _device_approvals_watch(svc, jarvis, args)
     print("device approvals: unknown action "
@@ -3989,9 +3998,18 @@ def _security_action(jarvis: Any, args: Any) -> int:
         if status == "refused":
             lines.append("refused: authorization/target policy not met")
             return _out(result, lines, 2)
-        if status == "unavailable":
+        if status in ("unavailable", "error", "unknown"):
+            # No verdict at all: the tool is missing, the scan failed to
+            # launch, or something aborted it. Not a clean result.
+            lines.append(f"no verdict: {status}")
             return _out(result, lines, 3)
         if status in ("findings", "tool-failed", "timeout"):
+            return _out(result, lines, 1)
+        if str(result.get("verification", "")) != "verified":
+            # A tool claim ("partial") is not a verified result: "no
+            # findings" is absence of findings, never proof of safety.
+            lines.append(f"not verified: "
+                         f"{result.get('verification', 'unknown')}")
             return _out(result, lines, 1)
         return _out(result, lines, 0)
     jarvis.close()
@@ -4393,6 +4411,26 @@ def _task_policy_ok(jarvis: Any) -> bool:
     return True
 
 
+def _home_flag(raw: list[str]) -> tuple[str, str]:
+    """Locate `--home <dir>` anywhere in the argument list.
+
+    The one-shot front door (`jarvis "text"`) never reaches argparse,
+    so a `--home` that is not the first token used to be dropped: the
+    request then ran against the real ~/.jarvis-os. Returns
+    ``(home, error)`` — a missing value is an error, never a silent
+    fallback to the real home.
+    """
+    for index, token in enumerate(raw):
+        if token != "--home":
+            continue
+        value = raw[index + 1] if index + 1 < len(raw) else ""
+        if not value or value.startswith("-"):
+            return "", ("--home needs a directory "
+                        "(e.g. --home /tmp/jarvis-home)")
+        home = value
+    return home, ""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     raw = list(sys.argv[1:] if argv is None else argv)
@@ -4403,7 +4441,13 @@ def main(argv: list[str] | None = None) -> int:
         home = head[1]
         head = head[2:]
     if head and head[0] not in known and not head[0].startswith("-"):
-        return _conductor_oneshot(raw, home=home)
+        # `--home` may sit anywhere in the one-shot form
+        # (`jarvis "text" --home DIR`): argparse never sees it.
+        found, error = _home_flag(raw)
+        if error:
+            print(error, file=sys.stderr)
+            return 2
+        return _conductor_oneshot(raw, home=found)
     args = parser.parse_args(argv)
     if not args.command:
         # Bare `jarvis` drops into the chat: there is no wrong way to
@@ -5643,8 +5687,11 @@ def main(argv: list[str] | None = None) -> int:
                                     scene=not args.fast)
         else:
             obs = observer.see_screen(question=args.ask, scene=not args.fast)
-        if not obs.ok:
-            print("see failed: " + obs.error)
+        # obs.ok only means the capture worked: recognition may still
+        # have found nothing. An empty observation is not a success —
+        # report it and do not file it as a remembered fact.
+        if not obs.ok or obs.error:
+            print("see failed: " + (obs.error or "unknown error"))
             jarvis.close()
             return 1
         fed = observer.feed(obs, world=jarvis.world, palace=jarvis.palace,
@@ -5929,13 +5976,13 @@ def main(argv: list[str] | None = None) -> int:
         fabric = jarvis.device_fabric
         as_json = args.json
 
-        def _out(payload: Any, text: str) -> int:
+        def _out(payload: Any, text: str, code: int = 0) -> int:
             if as_json:
                 print(json.dumps(payload, indent=2, default=str))
             else:
                 print(text)
             jarvis.close()
-            return 0
+            return code
 
         try:
             if args.action == "status":
@@ -6041,12 +6088,17 @@ def main(argv: list[str] | None = None) -> int:
                 result = fabric.route_command("cli", args.device,
                                               args.capability, cmd_args,
                                               approval_token=args.approve)
-                return _out(result, result.get("error", str(result.get("result", ""))))
+                text = result.get("error", str(result.get("result", "")))
+                # A denied or approval-gated command did not happen:
+                # say so with a non-zero exit, not a silent success.
+                ok = bool(result.get("ok")) and not result.get("error")
+                return _out(result, text, 0 if ok else 1)
             # doctor
             result = {"checks": fabric.doctor()}
+            failed = [c for c in result["checks"] if not c.get("ok")]
             return _out(result, "\n".join(
                 f"{c['name']:28} {'ok' if c['ok'] else 'FAIL'}  {c['detail']}"
-                for c in result["checks"]))
+                for c in result["checks"]), 1 if failed else 0)
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"device-fabric: {exc}")
             jarvis.close()
@@ -6057,13 +6109,13 @@ def main(argv: list[str] | None = None) -> int:
         adapter = AndroidNodeAdapter(jarvis.device_fabric)
         as_json = args.json
 
-        def _out(payload: Any, text: str) -> int:
+        def _out(payload: Any, text: str, code: int = 0) -> int:
             if as_json:
                 print(json.dumps(payload, indent=2, default=str))
             else:
                 print(text)
             jarvis.close()
-            return 0
+            return code
 
         if args.area in ("grants", "approvals", "commands", "policy"):
             from .device.service import DeviceCommandService
@@ -6350,13 +6402,13 @@ def main(argv: list[str] | None = None) -> int:
         adapter = PiNodeAdapter(jarvis.device_fabric)
         as_json = args.json
 
-        def _pi_out(payload: Any, text: str) -> int:
+        def _pi_out(payload: Any, text: str, code: int = 0) -> int:
             if as_json:
                 print(json.dumps(payload, indent=2, default=str))
             else:
                 print(text)
             jarvis.close()
-            return 0
+            return code
 
         try:
             return _pi_action(adapter, jarvis, args, _pi_out)

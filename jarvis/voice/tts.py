@@ -14,6 +14,7 @@ handled by callers, lazy model load, singleton-safe via module cache.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -172,14 +173,39 @@ class LocalFallbackTTSProvider(TTSProvider):
 
     @staticmethod
     def _resolve() -> str:
-        if shutil.which("piper"):
+        # espeak needs no voice model and is always present; piper needs
+        # one, so it is only preferred when a model is configured.
+        if os.environ.get("JARVIS_PIPER_MODEL") and shutil.which("piper"):
             return "piper"
         if shutil.which("espeak") or shutil.which("espeak-ng"):
             return "espeak"
+        if shutil.which("piper"):
+            return "piper"
         return "none"
 
     def available(self) -> bool:
         return self.backend != "none"
+
+    def _commands(self, target: Path, text: str) -> list[tuple[list[str], Any]]:
+        """The synthesis commands to try, best first.
+
+        Each entry is (argv, stdin). Both backends write a WAV file:
+        stdout is audio, not text.
+        """
+        commands: list[tuple[list[str], Any]] = []
+        if self.backend == "piper":
+            piper = shutil.which("piper") or "piper"
+            argv = [piper]
+            model = os.environ.get("JARVIS_PIPER_MODEL", "")
+            if model:
+                argv += ["--model", model]
+            argv += ["--output_file", str(target)]
+            # piper reads the text on stdin; it takes no positional text.
+            commands.append((argv, text))
+        espeak = shutil.which("espeak-ng") or shutil.which("espeak")
+        if espeak:
+            commands.append(([espeak, "-w", str(target), text], None))
+        return commands
 
     def synthesize(self, request: TTSRequest,
                    dest: str | Path | None = None) -> TTSResult:
@@ -200,29 +226,23 @@ class LocalFallbackTTSProvider(TTSProvider):
                 request_id=request.request_id, provider=self.name,
                 status="failed", error=f"cannot write {target}: {exc}"[:200],
                 sample_rate=request.sample_rate)
-        try:
-            if self.backend == "piper":
-                cmd = [shutil.which("piper") or "piper", "--output_file",
-                       str(target), request.text[:800]]
-            else:
-                cmd = [shutil.which("espeak-ng") or "espeak", "-w",
-                       str(target), request.text[:800]]
-            proc = subprocess.run(cmd, capture_output=True, timeout=60)
+        text = request.text[:MAX_TTS_CHARS]
+        last_error = "tts failed"
+        for argv, stdin in self._commands(target, text):
+            try:
+                proc = subprocess.run(argv, input=stdin, capture_output=True,
+                                      timeout=60)
+            except (OSError, subprocess.SubprocessError) as exc:
+                last_error = f"{type(exc).__name__}: {exc}"[:200]
+                continue
             latency = round((time.perf_counter() - started) * 1000, 2)
             if proc.returncode != 0:
                 detail = (proc.stderr or b"").decode("utf-8", "replace")
-                return TTSResult(
-                    request_id=request.request_id, provider=self.name,
-                    status="failed",
-                    error=(detail.strip() or "tts failed")[-200:],
-                    sample_rate=request.sample_rate,
-                    latency_ms=latency)
+                last_error = (detail.strip() or "tts failed")[-200:]
+                continue
             if not target.exists() or target.stat().st_size == 0:
-                return TTSResult(
-                    request_id=request.request_id, provider=self.name,
-                    status="failed", error="tts produced no audio file",
-                    sample_rate=request.sample_rate,
-                    latency_ms=latency)
+                last_error = "tts produced no audio file"
+                continue
             return TTSResult(
                 request_id=request.request_id, provider=self.name,
                 status="success", duration_s=0.0,
@@ -230,12 +250,10 @@ class LocalFallbackTTSProvider(TTSProvider):
                 audio_bytes=target.stat().st_size,
                 sample_rate=request.sample_rate, latency_ms=latency,
                 metadata={"backend": self.backend})
-        except (OSError, subprocess.SubprocessError) as exc:
-            return TTSResult(
-                request_id=request.request_id, provider=self.name,
-                status="failed",
-                error=f"{type(exc).__name__}: {exc}"[:200],
-                sample_rate=request.sample_rate)
+        return TTSResult(
+            request_id=request.request_id, provider=self.name,
+            status="failed", error=last_error,
+            sample_rate=request.sample_rate)
 
 
 class ChatterboxTTSProvider(TTSProvider):

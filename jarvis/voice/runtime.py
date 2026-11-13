@@ -40,10 +40,14 @@ def rms(samples: bytes, width: int = 2) -> float:
 def read_wav_mono16(path: str, target_rate: int = 16000) -> tuple[bytes, int]:
     """Return (pcm16 bytes, rate). Only native 16kHz mono is read directly;
     otherwise ffmpeg converts (ffmpeg is required for that path)."""
-    with wave.open(path, "rb") as w:
-        channels, width, rate, n = (w.getnchannels(), w.getsampwidth(),
-                                    w.getframerate(), w.getnframes())
-        raw = w.readframes(n)
+    try:
+        with wave.open(path, "rb") as w:
+            channels, width, rate, n = (w.getnchannels(), w.getsampwidth(),
+                                        w.getframerate(), w.getnframes())
+            raw = w.readframes(n)
+    except wave.Error as exc:
+        # A headerless recording (arecord's default) is not a wav file.
+        raise RuntimeError(f"not a wav file: {path} ({exc})") from exc
     if rate == target_rate and channels == 1 and width == 2:
         return raw, rate
     if shutil.which("ffmpeg") is None:
@@ -162,7 +166,8 @@ class MicRecorder:
         if shutil.which("arecord"):
             try:
                 proc = subprocess.run(
-                    ["arecord", "-q", "-f", "S16_LE", "-r", str(self.rate),
+                    ["arecord", "-q", "-t", "wav", "-f", "S16_LE",
+                     "-r", str(self.rate),
                      "-c", "1", "-d", str(int(seconds)), dest],
                     capture_output=True, text=True, timeout=seconds + 10)
                 if proc.returncode == 0 and Path(dest).exists():

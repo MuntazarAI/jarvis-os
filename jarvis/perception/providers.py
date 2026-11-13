@@ -20,6 +20,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ..core.protected import PROTECTED_NAMES, PROTECTED_PATHS, is_protected
+
 from .contract import (
     MAX_DIMENSION_PX,
     MAX_FILE_BYTES,
@@ -432,26 +434,17 @@ class FileProvider(PerceptionProvider):
 
     #: Credential stores and equivalent are never readable, even when
     #: explicitly requested (fail closed; observing them would launder
-    #: secrets into memory/world through summaries).
-    BLOCKED_PATHS = ("/etc/shadow", "/etc/sudoers", "/etc/gshadow",
-                     "/etc/master.passwd")
-    BLOCKED_NAMES = ("id_rsa", "id_ed25519", "id_ecdsa", ".pem", ".key",
-                     ".p12", ".pfx", "secrets.json", ".env", ".netrc",
-                     "_history", "credentials.json", "cookies.sqlite",
-                     "Login Data", "keystore", "wallet.dat")
+    #: secrets into memory/world through summaries). The canonical list
+    #: lives in jarvis/core/protected.py so the tool layer refuses the
+    #: same files.
+    BLOCKED_PATHS = PROTECTED_PATHS
+    BLOCKED_NAMES = PROTECTED_NAMES
 
     @classmethod
     def _refuse_sensitive(cls, resolved: Path, original: str) -> None:
-        text = str(resolved)
-        for blocked in cls.BLOCKED_PATHS:
-            if text == blocked or text.startswith(blocked + "/"):
-                raise PerceptionError(
-                    f"refusing credential store: {original}")
-        name = resolved.name
-        for blocked in cls.BLOCKED_NAMES:
-            if blocked in name:
-                raise PerceptionError(
-                    f"refusing credential store: {original}")
+        reason = is_protected(resolved)
+        if reason:
+            raise PerceptionError(f"refusing credential store: {original}")
 
     def capabilities(self) -> dict[str, Any]:
         return {"text": True, "json": True, "csv": True, "markdown": True,

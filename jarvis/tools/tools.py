@@ -157,6 +157,12 @@ def _fail(tool: str, error: str) -> ToolResult:
 def filesystem_read(path: str, max_bytes: int = 65536) -> ToolResult:
     try:
         target = Path(path).expanduser().resolve()
+        # Credential stores are never readable: a file read must not
+        # become a vault key or an approval token.
+        from ..core.protected import is_protected
+        blocked = is_protected(target)
+        if blocked:
+            return _fail("filesystem_read", f"refusing {blocked}: {path}")
         if not target.exists():
             return _fail("filesystem_read", f"not found: {path}")
         if target.is_dir():
@@ -427,7 +433,8 @@ def code_security_scan(target: str = ".") -> ToolResult:
 def default_registry() -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(Tool(ToolSpec("filesystem_read", "Read a file or list a directory",
-                               RiskLevel.SAFE, 10.0, ["fs.read"]), filesystem_read))
+                               RiskLevel.SAFE, 10.0, ["fs.read"],
+                               sensitive_output=True), filesystem_read))
     reg.register(Tool(ToolSpec("filesystem_write", "Write text to a file",
                                 RiskLevel.MEDIUM, 10.0, ["fs.write"]), filesystem_write))
     reg.register(Tool(ToolSpec("filesystem_move", "Move one file into an existing directory",

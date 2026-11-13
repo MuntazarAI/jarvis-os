@@ -9,7 +9,9 @@ Rules: read-only (no POST route), defensive (any failing subsystem
 contributes an explicit `unknown` marker, the snapshot never raises),
 and secret-scrubbed (tokens/keys never enter the payload). The page
 itself carries no authority: same token gate as the API, token kept
-in sessionStorage, sent as a header, never in URLs.
+in sessionStorage, sent as a header for REST, and — because a browser
+cannot set headers on a WebSocket upgrade — as a `?token=` parameter
+on the live feed (same as the experience page).
 """
 
 from __future__ import annotations
@@ -400,8 +402,12 @@ let el = document.getElementById("tick");
 function note(t) { el.innerHTML = "<div>" + esc(t) + "</div>"; }
 function connect() {
 let proto = location.protocol === "https:" ? "wss" : "ws";
-let ws; try { ws = new WebSocket(proto + "://" + location.host +
-location.pathname.replace(/board.*$/, "")); }
+let base = location.pathname.replace(/board.*$/, "");
+// A browser cannot set headers on a WebSocket upgrade, so the token
+// rides in the query string (same as the experience page). Without it
+// the handshake is refused and the feed never connects.
+let qs = token ? "?token=" + encodeURIComponent(token) : "";
+let ws; try { ws = new WebSocket(proto + "://" + location.host + base + qs); }
 catch (e) { note("live feed unavailable — retrying…");
 setTimeout(connect, 5000); return; }
 ws.onopen = () => note("live — waiting for events…");
