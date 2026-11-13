@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "JARVIS — Personal AI Operating System"
 requires-python = ">=3.11"
 dependencies = [
-    "torch>=2.3.0",
+    "torch>=2.15.0",
     "torchvision>=0.18.0",
     "torchaudio>=2.3.0",
     "numpy>=2.4.6",
@@ -20,18 +20,18 @@ llm = ["ollama"]
 tts = ["piper-tts"]
 stt = ["faster-whisper"]
 torch = [
-    "torch>=2.3.0",
+    "torch>=2.15.0",
     "torchvision>=0.18.0",
     "torchaudio>=2.3.0",
 ]
 torch-cuda = [
-    "torch>=2.3.0",
+    "torch>=2.15.0",
     "torchvision>=0.18.0",
     "torchaudio>=2.3.0",
     "nvidia-cuda-runtime-cu12>=12.4.0",
 ]
 training = [
-    "torch>=2.3.0",
+    "torch>=2.15.0",
     "torchvision>=0.18.0",
     "tensorboard>=2.16.0",
     "wandb>=0.17.0",
@@ -39,7 +39,7 @@ training = [
     "peft>=0.11.0",
 ]
 distributed = [
-    "torch>=2.3.0",
+    "torch>=2.15.0",
     "torchvision>=0.18.0",
     "torch-distributed>=0.1.0",
     "ray>=2.35.0",
