@@ -27,7 +27,7 @@ httpx>=0.26.0
 pyyaml>=6.0.3
 
 # Security
-cryptography>=42.0.0
+cryptography>=50.0.2
 
 # Testing
 pytest>=7.4.0
