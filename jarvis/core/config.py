@@ -374,6 +374,9 @@ class JarvisConfig:
             errors.append("memory.decay_half_life_days must be > 0")
         if self.models.embedding_dim < 8:
             errors.append("models.embedding_dim must be >= 8")
+        if self.memory.consolidate_every_cycles < 1:
+            # The cycle counter does a modulo by this: 0 kills every cycle.
+            errors.append("memory.consolidate_every_cycles must be >= 1")
         if self.server.port < 1 or self.server.port > 65535:
             errors.append("server.port out of range")
         if self.service.interval_s < 30.0:

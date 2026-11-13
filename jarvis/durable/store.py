@@ -37,6 +37,7 @@ class TaskStore:
         self._tasks: dict[str, Task] = {}
         self._loaded_mtime: float = 0.0
         self.corrupt: str = ""
+        self.quarantined_path: str = ""
         self.load()
 
     @property
@@ -65,7 +66,14 @@ class TaskStore:
             yield
             return
         try:
-            with open(path, "a+b") as handle:
+            handle = open(path, "a+b")
+        except OSError as exc:
+            # Fail closed: a store that cannot be locked must not be
+            # mutated, or two writers lose each other's tasks.
+            raise TaskStoreError(
+                f"cannot lock task store: {exc}") from exc
+        try:
+            with handle:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
                 try:
                     yield
@@ -74,8 +82,9 @@ class TaskStore:
                         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
                     except OSError:
                         pass
-        except OSError:
-            yield
+        except OSError as exc:
+            raise TaskStoreError(
+                f"cannot lock task store: {exc}") from exc
 
     def load(self) -> int:
         path = self.path
@@ -88,13 +97,16 @@ class TaskStore:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             self.corrupt = f"{type(exc).__name__}"
+            self._quarantine()
             return 0
         if not isinstance(raw, dict):
             self.corrupt = "root not an object"
+            self._quarantine()
             return 0
         version = raw.get("version", 0)
         if version != SCHEMA_VERSION:
             self.corrupt = f"unsupported version {version}"
+            self._quarantine()
             return 0
         loaded = 0
         for tid, item in (raw.get("tasks") or {}).items():
@@ -144,10 +156,37 @@ class TaskStore:
         if mtime != self._loaded_mtime:
             self.load()
 
+    def _quarantine(self) -> None:
+        """Preserve the corrupt file before anything can overwrite it.
+
+        The bytes are evidence: overwriting them with an empty store
+        would destroy every task that was in there.
+        """
+        path = self.path
+        if path is None or not path.exists():
+            return
+        if self.quarantined_path:
+            return
+        try:
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            target = path.with_name(f"{path.name}.corrupt-{stamp}")
+            if target.exists():
+                return
+            target.write_bytes(path.read_bytes())
+            self.quarantined_path = str(target)
+        except OSError:
+            self.quarantined_path = ""
+
     def save(self) -> None:
         path = self.path
         if path is None:
             return
+        if self.corrupt:
+            # The store on disk is unreadable: writing an empty store
+            # over it would throw away every task it held.
+            raise TaskStoreError(
+                f"task store is corrupt ({self.corrupt}); "
+                f"refusing to overwrite it")
         payload = {"version": SCHEMA_VERSION,
                    "tasks": {tid: task.to_dict() for tid, task in
                              list(self._tasks.items())[:self.max_tasks]}}

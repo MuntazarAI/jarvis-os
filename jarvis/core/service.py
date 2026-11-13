@@ -142,7 +142,7 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
     checks.append(HealthCheck("screen-reader:atspi", atspi_ok, atspi_detail))
     try:
         from ..geospatial.live import LiveIntelligenceService
-        home = str(config.paths.home) if config else ""
+        home = str(cfg.paths.home)
         live_checks = LiveIntelligenceService(home=home or ".").doctor()
         for item in live_checks:
             checks.append(HealthCheck(
@@ -154,7 +154,7 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
     try:
         from ..device.fabric import DeviceFabric
         from ..policy.policy import PolicyEngine
-        home = str(config.paths.home) if config else ""
+        home = str(cfg.paths.home)
         fabric_checks = DeviceFabric(
             home=home or ".", policy=PolicyEngine(config)).doctor()
         for item in fabric_checks:
@@ -168,7 +168,7 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
         from ..device.android import AndroidNodeAdapter
         from ..device.fabric import DeviceFabric
         from ..policy.policy import PolicyEngine
-        home = str(config.paths.home) if config else ""
+        home = str(cfg.paths.home)
         adapter = AndroidNodeAdapter(DeviceFabric(
             home=home or ".", policy=PolicyEngine(config)))
         for item in adapter.doctor():
@@ -213,7 +213,7 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
                                   required=False))
     try:
         from ..device.android_transport import read_host_status
-        home = str(config.paths.home) if config else ""
+        home = str(cfg.paths.home)
         info = read_host_status(home or ".")
         if info.get("running") and info.get("live"):
             checks.append(HealthCheck(

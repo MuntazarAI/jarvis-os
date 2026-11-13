@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from collections import deque
 from dataclasses import dataclass, field as dc_field, asdict
 from pathlib import Path
@@ -197,22 +199,61 @@ class StateTracker:
         return out
 
     def save(self, path: str | Path) -> Path:
+        """Write the state file atomically.
+
+        A half-written file must never be left behind: a crash during
+        the write would otherwise make every later load fail.
+        """
         target = Path(path)
-        target.write_text(json.dumps({
+        payload = json.dumps({
             "snapshots": [s.to_dict() for s in self.history],
             "changes": [c.to_dict() for c in self.changes],
             "saved_at": now(),
-        }, default=str, indent=2))
+        }, default=str, indent=2)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".state-", dir=str(target.parent),
+                                   text=True)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, target)
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
         return target
 
     def load(self, path: str | Path) -> int:
-        data = json.loads(Path(path).read_text())
+        """Load the state file. A malformed record is skipped, not fatal.
+
+        Corrupt state must not take the world down: the good records
+        are kept and the bad ones are counted.
+        """
+        try:
+            data = json.loads(Path(path).read_text())
+        except (OSError, ValueError):
+            self.history.clear()
+            self.changes.clear()
+            return 0
+        if not isinstance(data, dict):
+            self.history.clear()
+            self.changes.clear()
+            return 0
         self.history.clear()
         self.changes.clear()
-        for raw in data.get("snapshots", []):
-            self.history.append(StateSnapshot.from_dict(raw))
-        for raw in data.get("changes", []):
-            self.changes.append(StateChange.from_dict(raw))
+        for raw in data.get("snapshots", []) or []:
+            try:
+                self.history.append(StateSnapshot.from_dict(raw))
+            except (ValueError, KeyError, TypeError, AttributeError):
+                continue
+        for raw in data.get("changes", []) or []:
+            try:
+                self.changes.append(StateChange.from_dict(raw))
+            except (ValueError, KeyError, TypeError, AttributeError):
+                continue
         return len(self.history)
 
 
@@ -224,6 +265,8 @@ def compare_snapshots(older: StateSnapshot, newer: StateSnapshot) -> list[StateC
         if _is_unknown(old) or _is_unknown(new):
             continue  # unknown is not evidence of anything
         if domain == "apps":
+            if not isinstance(old, list) or not isinstance(new, list):
+                continue  # unknown shape is not evidence of anything
             out.extend(_diff_sets("application", set(old), set(new),
                                   newer.timestamp, "opened", "closed"))
         elif domain == "network":
