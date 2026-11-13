@@ -228,10 +228,16 @@ class Supervisor:
         self.on_step = on_step
         self.tasks: dict[str, Task] = {}
         self.delegations: list[dict[str, Any]] = []
+        #: A long-lived process must not grow without bound.
+        self.max_tasks = 200
+        self.max_delegations = 500
 
     def submit(self, goal: str, priority: int = 5) -> Task:
         task = Task(goal=goal, priority=priority)
         self.tasks[task.task_id] = task
+        if len(self.tasks) > self.max_tasks:
+            for task_id in list(self.tasks)[:len(self.tasks) - self.max_tasks]:
+                self.tasks.pop(task_id, None)
         return task
 
     def run_task(self, task_id: str, timeout_steps: int = 50) -> Task:
@@ -265,6 +271,8 @@ class Supervisor:
             results[sid] = outcome
             self.delegations.append({"task_id": task.task_id, "step": sid,
                                      "agent": agent.name, "ok": bool(outcome.get("ok"))})
+            if len(self.delegations) > self.max_delegations:
+                del self.delegations[:-self.max_delegations]
             if not outcome.get("ok"):
                 agent.tasks_failed += 1
                 agent.state = "idle"

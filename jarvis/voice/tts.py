@@ -217,8 +217,13 @@ class LocalFallbackTTSProvider(TTSProvider):
                 sample_rate=request.sample_rate)
         # Both backends write a WAV file; stdout is audio, not text, so
         # the file is the only sane transport.
-        target = Path(str(dest)) if dest else Path(
-            tempfile.mkdtemp(prefix="jarvis-tts-")) / "speech.wav"
+        scratch = None
+        if dest:
+            target = Path(str(dest))
+        else:
+            # A temporary directory that is cleaned up with the file.
+            scratch = tempfile.mkdtemp(prefix="jarvis-tts-")
+            target = Path(scratch) / "speech.wav"
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -228,6 +233,8 @@ class LocalFallbackTTSProvider(TTSProvider):
                 sample_rate=request.sample_rate)
         text = request.text[:MAX_TTS_CHARS]
         last_error = "tts failed"
+        # `scratch` is removed with the file: a caller that asks for no
+        # destination does not get a directory per synthesis.
         for argv, stdin in self._commands(target, text):
             try:
                 proc = subprocess.run(argv, input=stdin, capture_output=True,
@@ -250,6 +257,13 @@ class LocalFallbackTTSProvider(TTSProvider):
                 audio_bytes=target.stat().st_size,
                 sample_rate=request.sample_rate, latency_ms=latency,
                 metadata={"backend": self.backend})
+        if scratch:
+            try:
+                for leftover in Path(scratch).glob("*"):
+                    leftover.unlink(missing_ok=True)
+                Path(scratch).rmdir()
+            except OSError:
+                pass
         return TTSResult(
             request_id=request.request_id, provider=self.name,
             status="failed", error=last_error,

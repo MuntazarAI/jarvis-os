@@ -87,8 +87,9 @@ class MessageBus:
     def publish(self, message: AgentMessage) -> AgentMessage:
         self._history.append(message)
         if len(self._history) > self._max:
-            del self._history[:len(self._history) - self._max]
-            self.dropped += 1
+            over = len(self._history) - self._max
+            del self._history[:over]
+            self.dropped += over
         targets = list(self._subs.get(message.recipient, []))
         if message.recipient != "broadcast":
             targets += list(self._subs.get("broadcast", []))

@@ -241,8 +241,14 @@ class JsonFileWorldStore:
         if self.quarantined_path:
             return
         try:
-            # Microsecond stamp + pid avoids same-second collisions when two
-            # store instances load the same corrupt file in one test run.
+            # One quarantine copy per store file: a process that reloads
+            # the store on every tick must not write a new full copy
+            # each time.
+            existing = sorted(self.path.parent.glob(
+                f"{self.path.name}.corrupt-*"))
+            if existing:
+                self.quarantined_path = str(existing[0])
+                return
             stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{int(time.time_ns() % 1_000_000):06d}-p{os.getpid()}"
             target = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
             if target.exists():

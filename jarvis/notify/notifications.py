@@ -93,6 +93,9 @@ class LogBackend:
 
     name = "log"
 
+    #: The log file is capped: an append-only file grows forever.
+    MAX_LOG_BYTES = 1024 * 1024
+
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
         self.sent: list[Notification] = []
@@ -100,12 +103,26 @@ class LogBackend:
     def available(self) -> bool:
         return True
 
+    def _trim(self) -> None:
+        """Keep the log file bounded: drop the oldest lines when it grows."""
+        if self.path is None:
+            return
+        try:
+            if self.path.stat().st_size <= self.MAX_LOG_BYTES:
+                return
+            lines = self.path.read_text(encoding="utf-8").splitlines()
+            keep = lines[-max(1, len(lines) // 2):]
+            self.path.write_text("\n".join(keep) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+
     def send(self, notification: Notification) -> bool:
         notification.delivered_by.append(self.name)
         self.sent.append(notification)
         if self.path is not None:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
+                self._trim()
                 with open(self.path, "a", encoding="utf-8") as handle:
                     handle.write(json.dumps(notification.to_dict(),
                                             default=str) + "\n")

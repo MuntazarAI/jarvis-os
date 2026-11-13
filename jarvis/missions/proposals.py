@@ -177,5 +177,8 @@ def score_proposal(urgency: float, relevance: float, novelty: float,
     }
     if recurrence:
         factors["recurrence"] = max(0.0, min(1.0, recurrence))
-    total = sum(factors.values()) / len(factors)
+    # A weighted mean divides by the sum of the weights, not by the
+    # number of factors: unequal weights otherwise bias the score.
+    weight_sum = sum(bounded.values()) or 1.0
+    total = sum(factors.values()) / weight_sum
     return round(max(0.0, min(1.0, total)), 4), factors

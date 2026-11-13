@@ -200,6 +200,29 @@ class CodingLoop:
         run["steps"]["inspect"] = {"hits": len(hits)}
         plan = self.jarvis.supervisor.planner.plan(goal)
         run["steps"]["plan"] = {"steps": len(plan)}
+        # Every tool call goes through the policy gate: the coding loop
+        # is no exception, and a command it builds from model output is
+        # exactly the kind of thing the gate exists for.
+        from ..core.types import ActionPlan
+        plan = ActionPlan(action="terminal_run run project tests",
+                          args={"command": test_command, "timeout": 300.0},
+                          required_permissions=["exec"])
+        # The coding loop acts as the coder role: it is a coding action,
+        # and that role's grants decide whether it may run a command.
+        decision = self.jarvis.policy.evaluate("coder", plan)
+        if not decision.allow:
+            run["steps"]["test"] = {"ok": False,
+                                    "tail": "blocked: " + "; ".join(decision.reasons)}
+            run["ok"] = False
+            self.runs.append(run)
+            return run
+        if decision.requires_approval:
+            token = self.jarvis.policy.request_approval("coder", plan, decision)
+            run["steps"]["test"] = {"ok": False, "needs_approval": token,
+                                    "tail": "needs approval"}
+            run["ok"] = False
+            self.runs.append(run)
+            return run
         results = self.jarvis.tools.call(
             "terminal_run", command=test_command, timeout=300.0)
         run["steps"]["test"] = {"ok": results.ok,

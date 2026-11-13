@@ -694,7 +694,10 @@ class CognitiveSupervisor:
         result_detail = by_stage.get("act").detail \
             if by_stage.get("act") else {}
         outcome.result = CognitiveResult(
-            ok=bool(result_detail.get("ok", record.ok)),
+            # A cycle that ran no stage is not a success: an empty
+            # record (a paused loop) must not be reported as one.
+            ok=bool(result_detail.get("ok", record.ok
+                                      if record.stages else False)),
             output=result_detail.get("output", result_detail.get("result")),
             error=str(result_detail.get("error", ""))[:500],
             correlation_id=record.cycle_id)

@@ -57,6 +57,8 @@ class VisionObserver:
         self.consent = consent
         self.config = config or JarvisConfig()
         self.history: list[VisionObservation] = []
+        #: A long-lived watcher must not grow without bound.
+        self.max_history = 100
 
     def status(self) -> dict[str, Any]:
         return {"screen": self.captures.available(),
@@ -118,6 +120,8 @@ class VisionObserver:
             obs = VisionObservation(source="camera", path=dest, ok=False,
                                     error=shot.get("error", "capture failed"))
             self.history.append(obs)
+        if len(self.history) > self.max_history:
+            del self.history[:-self.max_history]
             return obs
         return self._finish("camera", dest, question, scene=scene)
 
@@ -130,6 +134,8 @@ class VisionObserver:
             obs = VisionObservation(source="screen", path=dest, ok=False,
                                     error=shot.get("error", "capture failed"))
             self.history.append(obs)
+        if len(self.history) > self.max_history:
+            del self.history[:-self.max_history]
             return obs
         return self._finish("screen", dest, question, scene=scene)
 
@@ -153,6 +159,8 @@ class VisionObserver:
                                 ok=True,  # capture succeeded; recognition may be empty
                                 error="" if recognized else "nothing recognized")
         self.history.append(obs)
+        if len(self.history) > self.max_history:
+            del self.history[:-self.max_history]
         return obs
 
     @staticmethod

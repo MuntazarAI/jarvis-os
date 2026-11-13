@@ -767,11 +767,23 @@ class SecurityManager:
             return {"ok": False, "status": "denied",
                     "detail": "approval rejected, spent, or misbound"}
 
-        new_lines = list(current)
-        new_lines[line_no - 1] = replacement_line
-        new_text = "\n".join(new_lines)
-        if path.read_text(encoding="utf-8").endswith("\n"):
-            new_text += "\n"
+        # Replace only the approved line, byte for byte: rewriting the
+        # whole file would reformat every other line (and turn CRLF into
+        # LF), which is more than the operator approved.
+        raw_lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        if line_no > len(raw_lines):
+            return {"ok": False, "status": "stale_proposal",
+                    "detail": "recorded line is out of range"}
+        original = raw_lines[line_no - 1]
+        if original.endswith("\r\n"):
+            terminator = "\r\n"
+        elif original.endswith("\n"):
+            terminator = "\n"
+        else:
+            terminator = ""
+        new_text = ("".join(raw_lines[:line_no - 1])
+                    + replacement_line + terminator
+                    + "".join(raw_lines[line_no:]))
         after = _sha256(new_text.encode("utf-8"))
         try:
             before_stat = path.stat()
