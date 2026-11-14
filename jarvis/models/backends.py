@@ -44,7 +44,9 @@ class BackendSpec:
     base_url: str = ""
     models: dict[str, str] = field(default_factory=dict)
     api_key_env: str = ""
-    api_key_secret: str = ""
+    #: The NAME of the vault secret / env var holding the key.
+    #: It is a reference, never the key itself.
+    api_key_ref: str = ""
     local: bool = True
     enabled: bool = True
     timeout: float = 120.0
@@ -87,7 +89,8 @@ class BackendSpec:
             base_url=str(data.get("base_url") or "").strip(),
             models=models,
             api_key_env=str(data.get("api_key_env") or "").strip(),
-            api_key_secret=str(data.get("api_key_secret") or "").strip(),
+            api_key_ref=str(data.get("api_key_secret")
+                             or data.get("api_key_ref") or "").strip(),
             local=bool(local),
             enabled=bool(data.get("enabled", True)),
             timeout=float(data.get("timeout") or 120.0),
@@ -99,14 +102,14 @@ class BackendSpec:
         return {"name": self.name, "type": self.type,
                 "base_url": self.base_url, "models": dict(self.models),
                 "api_key_env": self.api_key_env,
-                "api_key_secret": self.api_key_secret, "local": self.local,
+                "api_key_secret": self.api_key_ref, "local": self.local,
                 "enabled": self.enabled, "timeout": self.timeout,
                 "latency_ms": self.latency_ms, "headers": dict(self.headers)}
 
     @property
     def has_key(self) -> bool:
         """True when a key source is configured (never the key itself)."""
-        return bool(self.api_key_env or self.api_key_secret)
+        return bool(self.api_key_env or self.api_key_ref)
 
 
 def default_ollama_spec(host: str = "http://localhost:11434") -> BackendSpec:
@@ -143,10 +146,10 @@ def resolve_key(spec: BackendSpec, config: Any = None) -> str:
     The value is returned to the caller and nowhere else: it is not
     written to config, logs, health output or snapshots.
     """
-    if spec.api_key_secret and config is not None:
+    if spec.api_key_ref and config is not None:
         try:
             from ..security.security import SecretVault
-            value = SecretVault(config.paths.home).get(spec.api_key_secret)
+            value = SecretVault(config.paths.home).get(spec.api_key_ref)
             if value:
                 return value
         except Exception:
@@ -154,6 +157,26 @@ def resolve_key(spec: BackendSpec, config: Any = None) -> str:
     if spec.api_key_env:
         return os.environ.get(spec.api_key_env, "")
     return ""
+
+
+def key_present(spec: BackendSpec, config: Any = None) -> bool:
+    """Is a key available for this backend?
+
+    The value is never read: for the vault this asks whether the slot
+    exists, for the environment whether the variable is set. A caller
+    that only needs "is there a key" never handles the secret itself.
+    """
+    if spec.api_key_ref:
+        if config is None:
+            return False
+        try:
+            from ..security.security import SecretVault
+            return spec.api_key_ref in SecretVault(config.paths.home).names()
+        except Exception:
+            return False
+    if spec.api_key_env:
+        return bool(os.environ.get(spec.api_key_env, ""))
+    return False
 
 
 def build_client(spec: BackendSpec, config: Any = None) -> Any | None:

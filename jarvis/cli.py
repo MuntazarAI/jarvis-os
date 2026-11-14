@@ -716,9 +716,9 @@ def _models_text(report: dict[str, Any]) -> str:
         lines.append(f"removed {report['removed']} backend(s): {report.get('name', '')}")
     if report.get("kind"):
         lines.append(f"{report['kind']} -> {report.get('target')}")
-    if report.get("secret"):
+    if report.get("vault_slot"):
         lines.append(f"stored API key for '{report.get('backend')}' "
-                     f"as vault secret '{report['secret']}'")
+                     f"as vault slot '{report['vault_slot']}'")
     for backend in report.get("backends", []):
         if not isinstance(backend, dict) or "alive" not in backend:
             continue
@@ -727,7 +727,8 @@ def _models_text(report: dict[str, Any]) -> str:
         scope = "local" if backend.get("local") else "remote"
         lines.append(f"{name} [{backend.get('type', '?')}, {scope}] "
                      f"{state} — {backend.get('available_models', backend.get('model_count', 0))} models"
-                     f" — key: {backend.get('key', 'none')}")
+                     f" — auth: {backend.get('auth', 'none')}"
+                     f" ({backend.get('auth_source', 'none')})")
         for kind, model_id in (backend.get("models") or {}).items():
             lines.append(f"    {kind:10s} {model_id}")
         if backend.get("probe_ok"):
@@ -790,22 +791,26 @@ def _models_action(args: Any) -> int:
                     alive = bool(available) or client.alive()
                 except Exception:
                     alive = False
-            key_source = ""
-            if spec.api_key_secret:
-                key_source = "vault:" + spec.api_key_secret
+            # Report WHERE a credential comes from and whether one is
+            # there. The value is never read, and the slot name is not
+            # printed: it is a reference, not information the operator
+            # needs.
+            auth_source = "none"
+            if spec.api_key_ref:
+                auth_source = "vault"
             elif spec.api_key_env:
-                key_source = "env:" + spec.api_key_env
-            key_state = "none"
+                auth_source = "env"
+            auth_state = "none"
             if spec.has_key:
-                from .models.backends import resolve_key
-                key_state = "present" if resolve_key(spec, config) else "missing"
+                from .models.backends import key_present
+                auth_state = "present" if key_present(spec, config) else "missing"
             backends.append({
                 "name": spec.name, "type": spec.type,
                 "base_url": spec.base_url, "local": spec.local,
                 "enabled": spec.enabled, "models": spec.models,
                 "alive": alive, "available_models": len(available),
-                "key": key_state,
-                "key_source": key_source,
+                "auth": auth_state,
+                "auth_source": auth_source,
             })
         return _out({"backends": backends,
                      "selection": {kind: f"{name}:{model}" for kind, (name, model)
@@ -958,7 +963,7 @@ def _models_action(args: Any) -> int:
         name = str(getattr(args, "target", "") or "").strip()
         if not name:
             return _out({"error": "backend name required"}, 2)
-        secret = str(getattr(args, "value", "") or "").strip() or f"{name}_api_key"
+        slot = str(getattr(args, "value", "") or "").strip() or f"{name}_api_key"
         try:
             import getpass
             if sys.stdin.isatty():
@@ -973,15 +978,15 @@ def _models_action(args: Any) -> int:
                          2)
         from .security.security import SecretVault
         vault = SecretVault(config.paths.home)
-        vault.put(secret, key)
+        vault.put(slot, key)
         entries = [e for e in config.models.backends
                    if str(e.get("name") or "") == name]
         for entry in entries:
-            entry["api_key_secret"] = secret
+            entry["api_key_secret"] = slot
         if entries:
             config.models.backends = entries
             config.save()
-        return _out({"ok": True, "backend": name, "secret": secret,
+        return _out({"ok": True, "backend": name, "vault_slot": slot,
                      "wired": bool(entries)})
 
     return _out({"error": f"unknown action '{action}'"}, 2)
@@ -4267,7 +4272,7 @@ def _install_ensure_models(config: Any) -> list[str]:
     NVIDIA backend when its key already sits in the vault. Selection is
     left alone: switching models is the operator's call.
     """
-    from .models.backends import BackendSpec, default_ollama_spec, resolve_key
+    from .models.backends import BackendSpec, default_ollama_spec, key_present
     notes: list[str] = []
     backends = list(config.models.backends or [])
     names = {str(entry.get("name") or "") for entry in backends}
@@ -4279,7 +4284,7 @@ def _install_ensure_models(config: Any) -> list[str]:
         spec = BackendSpec(name="nvidia", type="openai",
                            base_url="https://integrate.api.nvidia.com/v1",
                            api_key_secret="nvidia_api_key", local=False)
-        if resolve_key(spec, config):
+        if key_present(spec, config):
             spec.models = {
                 "fast": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
                 "reasoning": "nvidia/nemotron-3-ultra-550b-a55b",
