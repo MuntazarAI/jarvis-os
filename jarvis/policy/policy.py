@@ -573,7 +573,8 @@ class PolicyEngine:
             decision.risk_level = RiskLevel.HIGH if decision.risk < 0.85 else RiskLevel.DESTRUCTIVE
             decision.requires_approval = True
             decision.reasons.append(
-                f"actor '{actor}' lacks permissions: {missing}")
+                f"missing permissions for actor '{actor}' "
+                f"(lacks permissions: {missing})")
             decision.mitigations.append("grant required permissions")
 
         # The tool's declared risk floors the text assessment: a tool

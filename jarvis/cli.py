@@ -1680,8 +1680,10 @@ def _approvals_action(jarvis: Any, args: Any) -> int:
             lines.append(f"{a['approval_id']:16} {a['actor']:12} "
                          f"{a['action'][:40]:42} {a['status']}")
             if a.get("args"):
+                from .policy.policy import sanitize_approval_args
+                safe_args = sanitize_approval_args(a["args"])
                 lines.append("  args=" + json.dumps(
-                    a["args"], sort_keys=True, default=str)[:300])
+                    safe_args, sort_keys=True, default=str)[:300])
         return _out({"approvals": found},
                     "APPROVALS\n" + "\n".join(lines) or "no approvals")
     full = _resolve_policy_token(policy, getattr(args, "token", ""))

@@ -103,6 +103,8 @@ class PolicyConfig:
     rate_limit_window_s: float = 60.0
     proactivity: str = "assisted"
     quiet_hours: list[int] = field(default_factory=lambda: list(range(23, 7)))
+    rate_limit_calls: int = 30
+    rate_limit_window_s: float = 60.0
 
 
 @dataclass
