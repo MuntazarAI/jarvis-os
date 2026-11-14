@@ -380,7 +380,7 @@ def test_doctor_reports_voice(tmp_path):
     # Exit code reflects required host deps (ollama etc.), not voice:
     # voice checks are informational, so only assert their presence.
     for key in ("voice:provider", "voice:reference", "voice:output",
-                "voice:stt", "voice:vad", "voice:wake"):
+                "voice:stt", "voice:vad", "voice:wake", "voice:engine"):
         assert key in proc.stdout, key
     assert "sk-" not in proc.stdout
 

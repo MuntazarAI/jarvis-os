@@ -286,6 +286,13 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
         except Exception:
             cb_health = {}
         cb_mode = str(cb_health.get("mode", ""))
+        engine_ready = provider.available()
+        if engine_ready:
+            engine_detail = f"{provider.name}: ready"
+            if provider.name == "chatterbox" and cb_mode:
+                engine_detail += f" ({cb_mode})"
+        else:
+            engine_detail = f"{provider.name}: not installed"
         out = output_for(getattr(voice, "playback_backend", "auto")
                          if voice else "auto")
         try:
@@ -315,15 +322,9 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
             f"{ref_path} ({ref.get('format', ref.get('error', ''))})",
             required=False))
         checks.append(HealthCheck(
-            "voice:engine", provider.available(),
-            f"{provider.name}: "
-            + (cb_mode or "not installed")
-            + (" (import ok)" if cb_mode == "direct"
-               else " (persistent worker via ~/.config/jarvis/chatterbox-venv)"
-               if cb_mode == "persistent"
-               else " (bridge via ~/.config/jarvis/chatterbox-venv)"
-               if cb_mode == "bridge"
-               else " (run `jarvis voice voices` to install a voice)"),
+            "voice:engine", engine_ready,
+            engine_detail + ("" if engine_ready else
+                             " (run `jarvis voice voices`)"),
             required=False))
         checks.append(HealthCheck(
             "voice:model", True,
