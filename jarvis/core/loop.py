@@ -400,7 +400,7 @@ class Jarvis:
         stored_summary, _ = _redact(text[:120])
         self.palace.store_episode(
             f"{understanding.intent}: {stored_summary} → {stored_outcome[:160]}",
-            room="Experiences", importance=0.4,
+            room="Experiences", importance=0.4, kind="trace",
             related_entities=extract_entities(text)[:6],
             metadata={"correlation": corr, "confidence": understanding.intent_confidence,
                         "session_id": session_id},
@@ -479,6 +479,13 @@ class Jarvis:
         scored: list[tuple[float, str]] = []
         for memory, score in recalled:
             if memory.tier == "conversation":
+                continue
+            if memory.tier == "episodic" or \
+                    getattr(memory, "kind", "") == "trace":
+                # An episode or a cycle trace records what happened
+                # ("question: X -> answered"). It is an audit record,
+                # never the answer to a question. Facts the operator
+                # gave live in the semantic tier.
                 continue
             overlap = query_words & {t for t in tokenize(memory.content)
                                      if t not in self.STOPWORDS}
