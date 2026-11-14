@@ -142,7 +142,9 @@ def test_jarvis_voice_profile_defaults():
 def test_voice_config_defaults_and_env(monkeypatch):
     from jarvis.core.config import JarvisConfig
     cfg = JarvisConfig()
-    assert cfg.voice.tts_provider == "chatterbox"
+    # "auto" picks the best installed local voice engine; the cloud
+    # engine is never automatic.
+    assert cfg.voice.tts_provider == "auto"
     assert cfg.voice.retain_audio is False
     assert cfg.voice.retain_transcripts is False
     assert cfg.voice.queue_max >= 1

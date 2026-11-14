@@ -273,8 +273,8 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
         from ..voice.setup import verify_reference
         from ..voice.tts import provider_for
         voice = getattr(config, "voice", None) if config else None
-        provider_name = getattr(voice, "tts_provider", "chatterbox") \
-            if voice else "chatterbox"
+        provider_name = getattr(voice, "tts_provider", "auto") \
+            if voice else "auto"
         cfg = voice.__dict__ if voice is not None else {}
         provider = provider_for(provider_name, cfg)
         ref_path = getattr(voice, "reference_audio", "") if voice \
@@ -315,15 +315,15 @@ def check_dependencies(config: JarvisConfig | None = None) -> list[HealthCheck]:
             f"{ref_path} ({ref.get('format', ref.get('error', ''))})",
             required=False))
         checks.append(HealthCheck(
-            "voice:chatterbox", provider.available(),
-            f"{cb_mode or 'missing'}: "
-            + ("import ok" if cb_mode == "direct"
-               else "persistent worker via ~/.config/jarvis/chatterbox-venv"
+            "voice:engine", provider.available(),
+            f"{provider.name}: "
+            + (cb_mode or "not installed")
+            + (" (import ok)" if cb_mode == "direct"
+               else " (persistent worker via ~/.config/jarvis/chatterbox-venv)"
                if cb_mode == "persistent"
-               else "bridge via ~/.config/jarvis/chatterbox-venv"
+               else " (bridge via ~/.config/jarvis/chatterbox-venv)"
                if cb_mode == "bridge"
-               else "NOT AVAILABLE (isolated venv missing; see "
-                    "docs/VOICE_AUDIO_INTELLIGENCE.md)"),
+               else " (run `jarvis voice voices` to install a voice)"),
             required=False))
         checks.append(HealthCheck(
             "voice:model", True,

@@ -468,7 +468,8 @@ def build_parser() -> argparse.ArgumentParser:
     voice = sub.add_parser("voice", help="JARVIS voice: status, setup, test, benchmark")
     voice.add_argument("action", nargs="?", default="status",
                        choices=["status", "setup", "test", "benchmark",
-                                "say", "diagnostics", "worker", "profile"])
+                                "say", "diagnostics", "worker", "profile",
+                                "voices", "runtime"])
     voice.add_argument("--style", default="",
                        help="speaking style for profile/say "
                             "(normal|warning|error|confirmation|uncertain)")
@@ -481,6 +482,13 @@ def build_parser() -> argparse.ArgumentParser:
                        help="reference audio path override for setup")
     voice.add_argument("--text", default="Good evening. How can I assist you?",
                        help="text for voice say/test")
+    voice.add_argument("--install", default="",
+                       choices=["", "piper", "kokoro"],
+                       help="download a voice engine's assets "
+                            "(with: voice voices)")
+    voice.add_argument("--name", default="",
+                       help="voice name to install (with: voice voices "
+                            "--install piper)")
     voice.add_argument("--no-play", action="store_true",
                        help="synthesize without playback")
     voice.add_argument("--json", action="store_true",
@@ -2276,6 +2284,55 @@ def _voice_action(jarvis: Any, args: Any) -> int:
                  f"saved: {saved or '(defaults)'}",
                  f"effective style: {payload['effective_style']}"]
         return _out(payload, "\n".join(lines))
+    if action == "voices":
+        from .voice.voice_assets import (DEFAULT_PIPER_VOICE, PIPER_VOICES,
+                                         engine_status, install_kokoro_assets,
+                                         install_piper_voice)
+        install = str(getattr(args, "install", "") or "")
+        if install:
+            if install == "piper":
+                name = str(getattr(args, "name", "") or "") or \
+                    DEFAULT_PIPER_VOICE
+                result = install_piper_voice(name)
+            else:
+                result = install_kokoro_assets()
+            payload = {"installed": install, **result}
+            code = 0 if result.get("ok") else 1
+            if as_json:
+                print(json.dumps(payload, indent=2, default=str))
+            else:
+                print(("voice installed: " if result.get("ok")
+                       else "voice install FAILED: ") +
+                      json.dumps(result, default=str))
+            jarvis.close()
+            return code
+        payload = engine_status()
+        payload["installable_voices"] = sorted(PIPER_VOICES)
+        payload["default_voice"] = DEFAULT_PIPER_VOICE
+        lines = ["VOICE ENGINES"]
+        for engine in ("piper", "kokoro", "edge", "chatterbox"):
+            info = payload.get(engine, {})
+            mark = "ready " if info.get("available") else "no    "
+            detail = info.get("voice") or info.get("model") or \
+                info.get("binary") or ""
+            note = " (cloud: the text leaves this machine)" \
+                if info.get("cloud") else ""
+            lines.append(f"[{mark}] {engine:10s} {detail}{note}")
+        lines.append(f"default voice: {DEFAULT_PIPER_VOICE}")
+        lines.append("install one: jarvis voice voices --install piper")
+        return _out(payload, "\n".join(lines))
+    if action == "runtime":
+        from .voice.runtime_setup import install_runtime
+        result = install_runtime()
+        code = 0 if result.get("ok") else 1
+        if as_json:
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            print(("voice runtime ready: " if result.get("ok")
+                   else "voice runtime FAILED: ") +
+                  json.dumps(result, default=str))
+        jarvis.close()
+        return code
     if action == "status":
         from .voice.output import output_for
         from .voice.setup import verify_reference
@@ -2289,6 +2346,7 @@ def _voice_action(jarvis: Any, args: Any) -> int:
             (f" ({tts_mode})" if tts_mode else "")
         payload = {"enabled": cfg.enabled,
                    "provider": cfg.tts_provider,
+                   "engine": provider.name,
                    "profile": cfg.profile,
                    "reference": {"path": cfg.reference_audio,
                                  **ref},
@@ -2300,10 +2358,11 @@ def _voice_action(jarvis: Any, args: Any) -> int:
                    "retain_audio": cfg.retain_audio,
                    "retain_transcripts": cfg.retain_transcripts}
         lines = [f"Provider: {cfg.tts_provider}",
+                 f"Engine: {provider.name}",
                  f"Profile: {cfg.profile}",
                  f"Reference: {'OK' if ref.get('ok') else 'MISSING'} "
                  f"({cfg.reference_audio})",
-                 f"Chatterbox: {tts_state}",
+                 f"Voice: {tts_state}",
                  f"Output: {getattr(out, 'backend', out.name)}",
                  f"STT: faster-whisper (independent of TTS)"]
         return _out(payload, "VOICE\n" + "\n".join(lines))
@@ -4335,6 +4394,41 @@ def _install_ensure_models(config: Any) -> list[str]:
     return notes
 
 
+def _install_voice(config: Any = None) -> tuple[bool, str]:
+    """Make JARVIS able to speak: voice runtime + a British male voice.
+
+    Also moves a config that still pins the old default ("chatterbox")
+    to "auto", so the best installed local voice is used.
+    """
+    from .voice.runtime_setup import install_runtime, runtime_ready
+    from .voice.voice_assets import (DEFAULT_PIPER_VOICE, install_piper_voice,
+                                     piper_installed)
+    notes: list[str] = []
+    if not runtime_ready():
+        result = install_runtime()
+        if not result.get("ok"):
+            return False, ("voice runtime not ready: " +
+                           str(result.get("error", ""))[:160] +
+                           " — run `jarvis voice runtime`")
+        notes.append("voice runtime created")
+    if not piper_installed():
+        result = install_piper_voice(DEFAULT_PIPER_VOICE)
+        if not result.get("ok"):
+            return False, ("voice download failed: " +
+                           str(result.get("error", ""))[:160])
+        notes.append(f"British voice {DEFAULT_PIPER_VOICE} installed")
+    try:
+        voice = getattr(config, "voice", None)
+        if voice is not None and getattr(voice, "tts_provider", "") in \
+                ("chatterbox", "auto", ""):
+            voice.tts_provider = "auto"
+            config.save()
+            notes.append("voice provider set to auto")
+    except (OSError, AttributeError) as exc:
+        notes.append(f"config not updated: {type(exc).__name__}")
+    return True, "; ".join(notes) or "voice ready"
+
+
 def _install_action(args: Any) -> int:
     """One-shot setup: global command, 24/7 service, models, health.
 
@@ -4373,6 +4467,8 @@ def _install_action(args: Any) -> int:
         _step("models", True, "; ".join(notes))
     else:
         _step("models", True, "backends already configured")
+    ok, detail = _install_voice(config)
+    _step("voice", ok, detail)
     if not getattr(args, "no_service", False):
         ok, detail = _install_unit(linger=bool(getattr(args, "linger", False)))
         _step("service", ok, detail)
@@ -4409,7 +4505,7 @@ def _install_action(args: Any) -> int:
             print(f"[{mark}] {name}: {check.get('detail', '')}")
         print("")
         print("next: `jarvis talk \"hello\"` · `jarvis board --open` "
-              "· `jarvis models list`")
+              "· `jarvis models list` · `jarvis voice voices`")
         if failed:
             print(f"required checks failed: {', '.join(failed)}")
     return 0 if not failed else 1

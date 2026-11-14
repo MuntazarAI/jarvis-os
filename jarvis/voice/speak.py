@@ -1,10 +1,11 @@
 """Response → TTS → playback wiring (5.1).
 
 Cognition finishes first; only the final response text enters this
-module. Priority: Chatterbox JARVIS voice → existing local fallback
-(espeak/piper) → text-only. TTS never executes tools/devices/memory;
-it synthesizes text and optionally plays audio. Bounded text, bounded
-outputs, transient audio unless retention is explicitly enabled.
+module. Priority: the configured voice engine (Kokoro / Piper /
+Chatterbox / espeak) → local fallback → text-only. TTS never executes
+tools/devices/memory; it synthesizes text and optionally plays audio.
+Bounded text, bounded outputs, transient audio unless retention is
+explicitly enabled.
 """
 
 from __future__ import annotations
@@ -15,28 +16,21 @@ from typing import Any
 
 from .output import FakeAudioOutput, output_for
 from .telemetry import TELEMETRY
-from .tts import (ChatterboxTTSProvider, FakeTTSProvider,
-                  LocalFallbackTTSProvider, TTSRequest, provider_for)
+from .tts import LocalFallbackTTSProvider, TTSRequest, provider_for
 from .voice_profile import jarvis_profile, render_style
 
 
 def resolve_tts(config: Any = None, provider_name: str = ""):
+    """The TTS provider for this configuration.
+
+    One resolver, shared with the rest of the system: `tts.py`
+    owns the provider list, this module only picks the name.
+    """
     cfg = config or {}
     get = (lambda k, d="": getattr(cfg, k, d)
            if not isinstance(cfg, dict) else cfg.get(k, d))
-    name = provider_name or str(get("tts_provider", "chatterbox"))
-    if name == "fake":
-        return FakeTTSProvider()
-    if name == "chatterbox":
-        return ChatterboxTTSProvider(
-            model=str(get("model", "chatterbox-turbo")),
-            reference_audio=str(get("reference_audio", "")),
-            python_executable=str(get("chatterbox_python", "")),
-            persistent=bool(get("persistent", True)))
-    if name in ("local-fallback", "espeak", "piper"):
-        return LocalFallbackTTSProvider()
-    from .tts import UnavailableTTSProvider
-    return UnavailableTTSProvider(f"unknown TTS provider: {name}")
+    name = provider_name or str(get("tts_provider", "auto"))
+    return provider_for(name, cfg)
 
 
 def speak_text(text: str, *, config: Any = None,
@@ -88,7 +82,8 @@ def speak_text(text: str, *, config: Any = None,
         pass
     if not result.ok:
         primary_error = result.error
-        fallback = LocalFallbackTTSProvider()
+        fallback = LocalFallbackTTSProvider(
+            piper_model=str(get("piper_model", "")))
         if primary.name != fallback.name and fallback.available():
             # Synthesize to the same file so the fallback can be played
             # like any other voice, not just reported.
