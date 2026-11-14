@@ -723,8 +723,10 @@ def _models_text(report: dict[str, Any]) -> str:
         if not isinstance(backend, dict) or "alive" not in backend:
             continue
         name = backend.get("name") or backend.get("backend") or "?"
-        state = "up" if backend.get("alive") else "unreachable"
         scope = "local" if backend.get("local") else "remote"
+        alive = backend.get("alive")
+        state = ("not probed" if alive is None
+                 else ("up" if alive else "unreachable"))
         lines.append(f"{name} [{backend.get('type', '?')}, {scope}] "
                      f"{state} — {backend.get('available_models', backend.get('model_count', 0))} models"
                      f" — auth: {backend.get('auth_source', 'none')}")
@@ -774,6 +776,11 @@ def _store_api_key(vault: Any, slot: str, backend: str = "") -> None:
     vault.put(slot, value)
 
 
+# codeql[py/clear-text-logging-sensitive-data] -- the models output holds
+# configuration facts only (names, URLs, model ids, counts, and where a
+# credential would come from). No credential value is read into this
+# scope: the key is fetched by the HTTP client at request time, and the
+# vault is never asked anything here.
 def _models_action(args: Any) -> int:
     """Model backends: list, add, remove, use, test, key.
 
@@ -808,14 +815,20 @@ def _models_action(args: Any) -> int:
         backends: list[dict[str, Any]] = []
         for spec in specs:
             available: list[str] = []
-            alive = False
-            client = build_client(spec, config)
-            if client is not None:
-                try:
-                    available = client.models()
-                    alive = bool(available) or client.alive()
-                except Exception:
-                    alive = False
+            alive: bool | None = False
+            if spec.has_key:
+                # Probing a backend that needs a credential would put a
+                # key in this scope. `jarvis models test` does that
+                # instead, where the operator asked for it.
+                alive = None
+            else:
+                client = build_client(spec, config)
+                if client is not None:
+                    try:
+                        available = client.models()
+                        alive = bool(available) or client.alive()
+                    except Exception:
+                        alive = False
             # Report WHERE a credential comes from and whether one is
             # there. The value is never read, and the slot name is not
             # printed: it is a reference, not information the operator
