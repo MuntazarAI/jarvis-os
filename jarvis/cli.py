@@ -239,6 +239,8 @@ def build_parser() -> argparse.ArgumentParser:
     dev.add_argument("--owner", default="", help="owner for register")
     dev.add_argument("--capability", default="",
                      help="capability list (comma-separated) for declare")
+    dev.add_argument("--usable-by", dest="usable_by", default="*",
+                     help="who may use a granted capability ('*' = any agent)")
     dev.add_argument("--report", default="",
                      help="JSON permission report for permissions")
     dev.add_argument("--command", dest="node_command", default="",
@@ -3247,13 +3249,16 @@ def _device_service_action(svc: Any, adapter: Any, args: Any,
             return 2
         try:
             result = svc.grants.grant(args.device, args.capability,
+                                      actor=getattr(args, "usable_by", "*"),
                                       by=args.by, reason=args.reason)
         except ValueError as exc:
             print(f"device: {exc}")
             jarvis.close()
             return 1
+        scope = result.get("actor", "*")
         return _out(result, f"granted {result['grant_id']} "
-                            f"{args.device} {args.capability}")
+                            f"{args.device} {args.capability} "
+                            f"(usable by: {scope})")
     if action == "suspend":
         if not args.device:
             print("usage: jarvis device android suspend --device <id> "
@@ -3390,12 +3395,14 @@ def _device_grants(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
             return 2
         try:
             result = svc.grants.grant(args.device, args.capability,
+                                      actor=getattr(args, "usable_by", "*"),
                                       by=args.by, reason=args.reason)
         except ValueError as exc:
             print(f"device: {exc}")
             jarvis.close()
             return 1
-        return _out(result, f"granted {result['grant_id']}")
+        return _out(result, f"granted {result['grant_id']} "
+                            f"(usable by: {result.get('actor', '*')})")
     if action == "revoke":
         if not (args.device and args.capability):
             print("usage: jarvis device grants revoke --device <id> "

@@ -26,15 +26,30 @@ def rms(samples: bytes, width: int = 2) -> float:
     """Root-mean-square energy of one PCM frame."""
     if not samples:
         return 0.0
-    fmt = "<" + ("h" * (len(samples) // 2)) if width == 2 else "b" * len(samples)
+    # One value per frame: 16-bit samples are signed shorts, anything
+    # wider is read as unsigned bytes of the right width.
+    count = len(samples) // max(1, width)
+    if count <= 0:
+        return 0.0
+    if width == 2:
+        fmt = "<" + "h" * count
+    else:
+        fmt = "<" + "B" * (count * width)
     try:
-        values = struct.unpack(fmt, samples[: len(samples) // width * width])
+        values = struct.unpack(fmt, samples[: count * width])
     except struct.error:
         return 0.0
     if not values:
         return 0.0
-    scale = 32768.0 if width == 2 else 128.0
-    return (sum((v / scale) ** 2 for v in values) / len(values)) ** 0.5
+    if width == 2:
+        scale = 32768.0
+        levels = [v / scale for v in values]
+    else:
+        # Wider frames are read as raw bytes: the energy is the mean of
+        # the squared byte values.
+        scale = 255.0
+        levels = [b / scale for b in samples[: count * width]]
+    return (sum((v * v) for v in levels) / len(levels)) ** 0.5
 
 
 def read_wav_mono16(path: str, target_rate: int = 16000) -> tuple[bytes, int]:
