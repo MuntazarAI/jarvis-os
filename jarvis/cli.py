@@ -727,8 +727,7 @@ def _models_text(report: dict[str, Any]) -> str:
         scope = "local" if backend.get("local") else "remote"
         lines.append(f"{name} [{backend.get('type', '?')}, {scope}] "
                      f"{state} — {backend.get('available_models', backend.get('model_count', 0))} models"
-                     f" — auth: {backend.get('auth', 'none')}"
-                     f" ({backend.get('auth_source', 'none')})")
+                     f" — auth: {backend.get('auth_source', 'none')}")
         for kind, model_id in (backend.get("models") or {}).items():
             lines.append(f"    {kind:10s} {model_id}")
         if backend.get("probe_ok"):
@@ -824,16 +823,14 @@ def _models_action(args: Any) -> int:
                 auth_source = "vault"
             elif spec.api_key_env_ref:
                 auth_source = "env"
-            auth_state = "none"
-            if spec.has_key:
-                from .models.backends import key_present
-                auth_state = "present" if key_present(spec, config) else "missing"
             backends.append({
                 "name": spec.name, "type": spec.type,
                 "base_url": spec.base_url, "local": spec.local,
                 "enabled": spec.enabled, "models": spec.models,
                 "alive": alive, "available_models": len(available),
-                "auth": auth_state,
+                # Where a credential would come from. Whether one is
+                # actually there is answered by `jarvis models test`,
+                # which asks the provider itself.
                 "auth_source": auth_source,
             })
         return _out({"backends": backends,
@@ -4289,7 +4286,7 @@ def _install_ensure_models(config: Any) -> list[str]:
     NVIDIA backend when its key already sits in the vault. Selection is
     left alone: switching models is the operator's call.
     """
-    from .models.backends import BackendSpec, default_ollama_spec, key_present
+    from .models.backends import BackendSpec, default_ollama_spec
     notes: list[str] = []
     backends = list(config.models.backends or [])
     names = {str(entry.get("name") or "") for entry in backends}
@@ -4298,20 +4295,23 @@ def _install_ensure_models(config: Any) -> list[str]:
         names.add("ollama")
         notes.append("added the local Ollama backend")
     if "nvidia" not in names:
+        # The NVIDIA preset is offered, but never switched on and never
+        # probed for a key here: adding a provider is the operator's
+        # call (`jarvis models add nvidia`, then `jarvis models use`).
         spec = BackendSpec(name="nvidia", type="openai",
                            base_url="https://integrate.api.nvidia.com/v1",
                            api_key_ref="nvidia_api_key", local=False)
-        if key_present(spec, config):
-            spec.models = {
-                "fast": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-                "reasoning": "nvidia/nemotron-3-ultra-550b-a55b",
-                "coding": "nvidia/nemotron-3-ultra-550b-a55b",
-                "vision": "nvidia/nemotron-3.5-super-vl-120b-a12b",
-                "embedding": "nvidia/nemotron-3-embed-1b",
-            }
-            backends.append(spec.to_dict())
-            names.add("nvidia")
-            notes.append("added the NVIDIA backend (key found in the vault)")
+        spec.models = {
+            "fast": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            "reasoning": "nvidia/nemotron-3-ultra-550b-a55b",
+            "coding": "nvidia/nemotron-3-ultra-550b-a55b",
+            "vision": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+            "embedding": "nvidia/nemotron-3-embed-1b",
+        }
+        backends.append(spec.to_dict())
+        names.add("nvidia")
+        notes.append("added the NVIDIA backend preset — enable it with "
+                     "`jarvis models use <kind> nvidia`")
     config.models.backends = backends
     if notes:
         try:
