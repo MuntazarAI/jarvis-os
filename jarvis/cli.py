@@ -135,9 +135,9 @@ def build_parser() -> argparse.ArgumentParser:
     mod.add_argument("--base-url", default="", help="backend base URL")
     mod.add_argument("--model", action="append", default=[],
                      help="kind=model-id (repeatable)")
-    mod.add_argument("--api-key-env", default="",
+    mod.add_argument("--api-key-env", dest="api_key_env_ref", default="",
                      help="environment variable that holds the API key")
-    mod.add_argument("--api-key-secret", default="",
+    mod.add_argument("--api-key-secret", dest="api_key_ref", default="",
                      help="vault secret that holds the API key")
     mod.add_argument("--timeout", type=float, default=0.0,
                      help="backend timeout in seconds (0 = default)")
@@ -820,7 +820,7 @@ def _models_action(args: Any) -> int:
             auth_source = "none"
             if spec.api_key_ref:
                 auth_source = "vault"
-            elif spec.api_key_env:
+            elif spec.api_key_env_ref:
                 auth_source = "env"
             auth_state = "none"
             if spec.has_key:
@@ -856,10 +856,10 @@ def _models_action(args: Any) -> int:
             models[kind] = model_id
         entry: dict[str, Any] = {"name": name, "type": args.type,
                                  "base_url": args.base_url, "models": models}
-        if args.api_key_env:
-            entry["api_key_env"] = args.api_key_env
-        if args.api_key_secret:
-            entry["api_key_secret"] = args.api_key_secret
+        if args.api_key_env_ref:
+            entry["api_key_env"] = args.api_key_env_ref
+        if args.api_key_ref:
+            entry["api_key_secret"] = args.api_key_ref
         if args.local:
             entry["local"] = True
         if args.remote:
@@ -4296,7 +4296,7 @@ def _install_ensure_models(config: Any) -> list[str]:
     if "nvidia" not in names:
         spec = BackendSpec(name="nvidia", type="openai",
                            base_url="https://integrate.api.nvidia.com/v1",
-                           api_key_secret="nvidia_api_key", local=False)
+                           api_key_ref="nvidia_api_key", local=False)
         if key_present(spec, config):
             spec.models = {
                 "fast": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",

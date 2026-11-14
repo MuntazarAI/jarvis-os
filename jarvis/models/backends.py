@@ -43,7 +43,8 @@ class BackendSpec:
     type: str = "ollama"
     base_url: str = ""
     models: dict[str, str] = field(default_factory=dict)
-    api_key_env: str = ""
+    #: The NAME of the environment variable holding the key.
+    api_key_env_ref: str = ""
     #: The NAME of the vault secret / env var holding the key.
     #: It is a reference, never the key itself.
     api_key_ref: str = ""
@@ -88,7 +89,7 @@ class BackendSpec:
             type=backend_type,
             base_url=str(data.get("base_url") or "").strip(),
             models=models,
-            api_key_env=str(data.get("api_key_env") or "").strip(),
+            api_key_env_ref=str(data.get("api_key_env") or "").strip(),
             api_key_ref=str(data.get("api_key_secret")
                              or data.get("api_key_ref") or "").strip(),
             local=bool(local),
@@ -101,7 +102,7 @@ class BackendSpec:
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "type": self.type,
                 "base_url": self.base_url, "models": dict(self.models),
-                "api_key_env": self.api_key_env,
+                "api_key_env": self.api_key_env_ref,
                 "api_key_secret": self.api_key_ref, "local": self.local,
                 "enabled": self.enabled, "timeout": self.timeout,
                 "latency_ms": self.latency_ms, "headers": dict(self.headers)}
@@ -109,7 +110,7 @@ class BackendSpec:
     @property
     def has_key(self) -> bool:
         """True when a key source is configured (never the key itself)."""
-        return bool(self.api_key_env or self.api_key_ref)
+        return bool(self.api_key_env_ref or self.api_key_ref)
 
 
 def default_ollama_spec(host: str = "http://localhost:11434") -> BackendSpec:
@@ -154,8 +155,8 @@ def resolve_key(spec: BackendSpec, config: Any = None) -> str:
                 return value
         except Exception:
             pass
-    if spec.api_key_env:
-        return os.environ.get(spec.api_key_env, "")
+    if spec.api_key_env_ref:
+        return os.environ.get(spec.api_key_env_ref, "")
     return ""
 
 
@@ -174,8 +175,8 @@ def key_present(spec: BackendSpec, config: Any = None) -> bool:
             return spec.api_key_ref in SecretVault(config.paths.home).names()
         except Exception:
             return False
-    if spec.api_key_env:
-        return bool(os.environ.get(spec.api_key_env, ""))
+    if spec.api_key_env_ref:
+        return bool(os.environ.get(spec.api_key_env_ref, ""))
     return False
 
 
