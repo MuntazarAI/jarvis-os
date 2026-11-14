@@ -160,6 +160,17 @@ def resolve_key(spec: BackendSpec, config: Any = None) -> str:
     return ""
 
 
+def key_provider(spec: BackendSpec, config: Any = None) -> Any:
+    """A callable that fetches the key when it is needed.
+
+    The value is read at request time, so the caller that wires the
+    backend never holds it.
+    """
+    def _fetch() -> str:
+        return resolve_key(spec, config)
+    return _fetch
+
+
 def key_present(spec: BackendSpec, config: Any = None) -> bool:
     """Is a key available for this backend?
 
@@ -192,10 +203,10 @@ def build_client(spec: BackendSpec, config: Any = None) -> Any | None:
             return None
         return OpenAICompatClient(
             base_url=spec.base_url,
-            api_key=resolve_key(spec, config),
             timeout=spec.timeout,
             default_model=spec.models.get("fast", ""),
-            headers=spec.headers)
+            headers=spec.headers,
+            key_provider=key_provider(spec, config))
     return None
 
 

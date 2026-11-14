@@ -33,12 +33,26 @@ class OpenAICompatClient:
 
     def __init__(self, base_url: str, api_key: str = "", timeout: float = 120.0,
                  default_model: str = "",
-                 headers: dict[str, str] | None = None) -> None:
+                 headers: dict[str, str] | None = None,
+                 key_provider: Any = None) -> None:
         self.base_url = (base_url or "").rstrip("/")
         self.api_key = api_key or ""
         self.timeout = timeout
         self.default_model = default_model
         self.headers = dict(headers or {})
+        #: Fetched at request time, so no caller ever holds the value.
+        self._key_provider = key_provider
+
+    def _current_key(self) -> str:
+        """The key for this request, or "" when there is none."""
+        if self.api_key:
+            return self.api_key
+        if self._key_provider is None:
+            return ""
+        try:
+            return str(self._key_provider() or "")
+        except Exception:
+            return ""
 
     # -- transport ---------------------------------------------------------
     def _request(self, method: str, path: str,
@@ -49,8 +63,9 @@ class OpenAICompatClient:
         headers = {"Accept": "application/json"}
         if data is not None:
             headers["Content-Type"] = "application/json"
-        if self.api_key:
-            headers["Authorization"] = "Bearer " + self.api_key
+        key = self._current_key()
+        if key:
+            headers["Authorization"] = "Bearer " + key
         headers.update(self.headers)
         req = urllib.request.Request(url, data=data, headers=headers,
                                      method=method)
