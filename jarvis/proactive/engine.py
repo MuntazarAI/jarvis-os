@@ -784,17 +784,6 @@ class ProactiveEngine:
         """Attach a notification dispatcher (see jarvis.notify)."""
         self._notifier = notifier
 
-    def _maybe_notify(self, decision: ProactiveDecision,
-                      candidate: AttentionCandidate) -> None:
-        if self._notifier is None:
-            return
-        if decision.decision not in (DECISION_INFORM, DECISION_ASK):
-            return
-        try:
-            self._notifier.deliver_decision(self, decision, candidate)
-        except Exception:
-            pass
-
     # -- overrides ----------------------------------------------------
     def set_override(self, key: str, value: Any) -> dict[str, Any]:
         """Explicit user setting. Unknown keys rejected, never inferred."""

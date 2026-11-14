@@ -122,6 +122,45 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("devices", help="capability snapshot: voice, vision, computer, models")
 
+    mod = sub.add_parser("models", help="model backends: list, add, remove, "
+                                       "use, test, key")
+    mod.add_argument("action", nargs="?", default="list",
+                     choices=["list", "add", "remove", "use", "test", "key"])
+    mod.add_argument("target", nargs="?", default="",
+                     help="backend name (add/remove/test/key) or kind (use)")
+    mod.add_argument("value", nargs="?", default="",
+                     help="backend[:model] for use")
+    mod.add_argument("--type", default="openai",
+                     choices=["ollama", "openai"], help="backend protocol")
+    mod.add_argument("--base-url", default="", help="backend base URL")
+    mod.add_argument("--model", action="append", default=[],
+                     help="kind=model-id (repeatable)")
+    mod.add_argument("--api-key-env", dest="api_key_env_ref", default="",
+                     help="environment variable that holds the API key")
+    mod.add_argument("--api-key-secret", dest="api_key_ref", default="",
+                     help="vault secret that holds the API key")
+    mod.add_argument("--timeout", type=float, default=0.0,
+                     help="backend timeout in seconds (0 = default)")
+    mod.add_argument("--local", action="store_true",
+                     help="treat the backend as local (data never leaves)")
+    mod.add_argument("--remote", action="store_true",
+                     help="treat the backend as remote (data leaves the machine)")
+    mod.add_argument("--allow-remote", action="store_true",
+                     help="with 'use': also turn policy.local_only off")
+    mod.add_argument("--probe", action="store_true",
+                     help="with 'test': send one real prompt to the backend")
+    mod.add_argument("--json", action="store_true", help="emit JSON")
+
+    inst = sub.add_parser("install", help="one-shot setup: global command, "
+                                         "24/7 service, models, health check")
+    inst.add_argument("--uninstall", action="store_true",
+                      help="remove the service and the global command")
+    inst.add_argument("--no-service", action="store_true",
+                      help="skip the 24/7 background service")
+    inst.add_argument("--linger", action="store_true",
+                      help="also keep the service alive with no session open")
+    inst.add_argument("--json", action="store_true", help="emit JSON")
+
     exp = sub.add_parser("experience", help="Experience Layer foundation: read-only status")
     exp.add_argument("action", nargs="?", default="status",
                      choices=["status"])
@@ -456,6 +495,8 @@ def build_parser() -> argparse.ArgumentParser:
                                 "changes", "refresh", "research",
                                 "briefing", "health", "diagnostics",
                                 "topics"])
+    world.add_argument("query", nargs="?", default="",
+                       help="what to search/research (same as --text)")
     world.add_argument("--text", default="",
                        help="query for search/research/briefing")
     world.add_argument("--topic", default="",
@@ -654,12 +695,322 @@ def _conductor_oneshot(raw: list[str], home: str = "") -> int:
         jarvis.close()
 
 
+def _load_config(home: str = "") -> JarvisConfig:
+    """Config for a home: CLI home > env > config.json > defaults."""
+    return JarvisConfig.load(home or None)
+
+
 def _make_jarvis(home: str) -> Jarvis:
-    config = JarvisConfig()
-    config.apply_env_overrides()
-    if home:
-        config.paths.home = Path(home)
-    return Jarvis(config=config)
+    return Jarvis(config=_load_config(home))
+
+
+def _models_text(report: dict[str, Any]) -> str:
+    """Human-readable rendering of the models report."""
+    lines: list[str] = []
+    if report.get("added"):
+        added = report["added"]
+        lines.append(f"added backend '{added['name']}' [{added['type']}]")
+        for kind, model_id in (added.get("models") or {}).items():
+            lines.append(f"    {kind:10s} {model_id}")
+    if "removed" in report:
+        lines.append(f"removed {report['removed']} backend(s): {report.get('name', '')}")
+    if report.get("kind"):
+        lines.append(f"{report['kind']} -> {report.get('target')}")
+    if report.get("vault_slot"):
+        lines.append(f"stored API key for '{report.get('backend')}' "
+                     f"as vault slot '{report['vault_slot']}'")
+    for backend in report.get("backends", []):
+        if not isinstance(backend, dict) or "alive" not in backend:
+            continue
+        name = backend.get("name") or backend.get("backend") or "?"
+        scope = "local" if backend.get("local") else "remote"
+        state = "up" if backend.get("alive") else "unreachable"
+        lines.append(f"{name} [{backend.get('type', '?')}, {scope}] "
+                     f"{state} — {backend.get('available_models', backend.get('model_count', 0))} models"
+                     f" — auth: {backend.get('auth_source', 'none')}")
+        for kind, model_id in (backend.get("models") or {}).items():
+            lines.append(f"    {kind:10s} {model_id}")
+        if backend.get("probe_ok"):
+            lines.append(f"    probe: {backend.get('probe_text', '')[:80]}")
+    selection = report.get("selection")
+    if isinstance(selection, dict) and selection:
+        lines.append("selection:")
+        for kind, target in selection.items():
+            lines.append(f"    {kind:10s} {target}")
+    elif "selection" in report:
+        lines.append("selection: (none — the first healthy backend wins)")
+    if "local_only" in report and report["local_only"] is not None:
+        lines.append(f"local_only: {report['local_only']}"
+                     + ("  (remote backends blocked)"
+                        if report["local_only"] else "  (remote backends allowed)"))
+    for warning in report.get("warnings", []):
+        lines.append(f"warning: {warning}")
+    if report.get("error"):
+        lines.append(f"error: {report['error']}")
+    return "\n".join(lines) or "ok"
+
+
+def _store_api_key(vault: Any, slot: str, backend: str = "") -> None:
+    """Read one API key and put it in the vault.
+
+    Reading and storing live together on purpose: the value never
+    reaches a scope that prints anything, so it cannot leak into a log,
+    a report or an error message. Failure is raised, not returned —
+    a return value would carry the read back to the caller.
+    """
+    import getpass
+    try:
+        if sys.stdin.isatty():
+            value = getpass.getpass(
+                f"API key for {backend or 'backend'}: ").strip()
+        else:
+            value = sys.stdin.readline().strip()
+    except Exception:
+        # from None: the original failure carries the read, and must
+        # not travel back to a scope that prints.
+        raise ValueError("could not read the key") from None
+    if not value:
+        raise ValueError("no key read")
+    vault.put(slot, value)
+
+
+# codeql[py/clear-text-logging-sensitive-data] -- the models output holds
+# configuration facts only (names, URLs, model ids, counts, and where a
+# credential would come from). No credential value is read into this
+# scope: the key is fetched by the HTTP client at request time, and the
+# vault is never asked anything here.
+def _models_action(args: Any) -> int:
+    """Model backends: list, add, remove, use, test, key.
+
+    Reads and writes the models section of config.json. API keys live in
+    the encrypted vault, never in config and never in argv (argv is
+    visible to every process on the machine).
+    """
+    from .core.config import MODEL_KINDS
+    from .models.backends import (build_client, configured_backends,
+                                  resolve_selection, selection_targets)
+
+    as_json = bool(getattr(args, "json", False))
+    action = getattr(args, "action", "list") or "list"
+
+    def _out(payload: dict[str, Any], code: int = 0) -> int:
+        if as_json:
+            # codeql[py/clear-text-logging-sensitive-data]
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            # codeql[py/clear-text-logging-sensitive-data]
+            print(_models_text(payload))
+        return code
+
+    try:
+        config = _load_config(getattr(args, "home", "") or "")
+    except (OSError, ValueError) as exc:
+        return _out({"ok": False, "error": f"config: {exc}"}, 1)
+
+    if action == "list":
+        specs = configured_backends(config)
+        selection = resolve_selection(config)
+        backends: list[dict[str, Any]] = []
+        for spec in specs:
+            available: list[str] = []
+            alive = False
+            client = build_client(spec, config)
+            if client is not None:
+                try:
+                    available = client.models()
+                    alive = bool(available) or client.alive()
+                except Exception:
+                    alive = False
+            # Report WHERE a credential comes from and whether one is
+            # there. The value is never read, and the slot name is not
+            # printed: it is a reference, not information the operator
+            # needs.
+            auth_source = "none"
+            if spec.api_key_ref:
+                auth_source = "vault"
+            elif spec.api_key_env_ref:
+                auth_source = "env"
+            backends.append({
+                "name": spec.name, "type": spec.type,
+                "base_url": spec.base_url, "local": spec.local,
+                "enabled": spec.enabled, "models": spec.models,
+                "alive": alive, "available_models": len(available),
+                # Where a credential would come from. Whether one is
+                # actually there is answered by `jarvis models test`,
+                # which asks the provider itself.
+                "auth_source": auth_source,
+            })
+        return _out({"backends": backends,
+                     "selection": {kind: f"{name}:{model}" for kind, (name, model)
+                                   in selection.items()},
+                     "raw_selection": selection_targets(config),
+                     "local_only": config.policy.local_only,
+                     "kinds": list(MODEL_KINDS)})
+
+    if action == "add":
+        name = str(getattr(args, "target", "") or "").strip()
+        if not name:
+            return _out({"error": "backend name required"}, 2)
+        models: dict[str, str] = {}
+        for item in getattr(args, "model", []) or []:
+            kind, _, model_id = str(item).partition("=")
+            kind = kind.strip().lower()
+            model_id = model_id.strip()
+            if kind not in MODEL_KINDS or not model_id:
+                return _out({"error": f"bad --model '{item}' "
+                                      "(use kind=model-id)"}, 2)
+            models[kind] = model_id
+        entry: dict[str, Any] = {"name": name, "type": args.type,
+                                 "base_url": args.base_url, "models": models}
+        if args.api_key_env_ref:
+            entry["api_key_env"] = args.api_key_env_ref
+        if args.api_key_ref:
+            entry["api_key_secret"] = args.api_key_ref
+        if args.local:
+            entry["local"] = True
+        if args.remote:
+            entry["local"] = False
+        if args.type == "ollama" and not entry["base_url"]:
+            entry["base_url"] = config.models.ollama_host
+        if args.type == "openai" and not entry["base_url"]:
+            return _out({"error": "--base-url required for openai backends"}, 2)
+        if getattr(args, "timeout", 0.0):
+            entry["timeout"] = float(args.timeout)
+        entries = [e for e in config.models.backends
+                   if str(e.get("name") or "") != name]
+        if not entries and not config.models.backends:
+            # The local Ollama backend is implicit until something is
+            # configured: make it explicit so it stays available.
+            from .models.backends import default_ollama_spec
+            entries = [default_ollama_spec(
+                config.models.ollama_host).to_dict()]
+        entries.append(entry)
+        config.models.backends = entries
+        config.save()
+        return _out({"ok": True, "added": entry, "configured": entries})
+
+    if action == "remove":
+        name = str(getattr(args, "target", "") or "").strip()
+        before = len(config.models.backends)
+        config.models.backends = [e for e in config.models.backends
+                                  if str(e.get("name") or "") != name]
+        removed = before - len(config.models.backends)
+        for kind, target in list(config.models.selection.items()):
+            if str(target).split(":", 1)[0].strip() == name:
+                config.models.selection.pop(kind, None)
+        config.save()
+        from .models.backends import resolve_selection
+        resolved = {k: f"{name}:{model}"
+                    for k, (name, model) in resolve_selection(config).items()}
+        return _out({"ok": True, "removed": removed, "name": name,
+                     "configured": config.models.backends,
+                     "selection": resolved})
+
+    if action == "use":
+        kind = str(getattr(args, "target", "") or "").strip().lower()
+        value = str(getattr(args, "value", "") or "").strip()
+        if kind not in MODEL_KINDS:
+            return _out({"error": f"kind must be one of "
+                                  f"{', '.join(MODEL_KINDS)}"}, 2)
+        if not value:
+            return _out({"error": "backend or backend:model required"}, 2)
+        backend_name, _, model_id = value.partition(":")
+        backend_name = backend_name.strip()
+        model_id = model_id.strip()
+        specs = {s.name: s for s in configured_backends(config)}
+        spec = specs.get(backend_name)
+        if spec is None:
+            return _out({"error": f"unknown backend '{backend_name}'"}, 2)
+        if not model_id:
+            model_id = spec.models.get(kind, "")
+        if not model_id:
+            return _out({"error": f"backend '{backend_name}' has no model "
+                                  f"for '{kind}'"}, 2)
+        config.models.selection[kind] = value
+        warnings: list[str] = []
+        if not spec.local and config.policy.local_only:
+            if getattr(args, "allow_remote", False):
+                config.policy.local_only = False
+            else:
+                warnings.append(
+                    "policy.local_only is on: this backend stays unused. "
+                    "Re-run with --allow-remote to turn it off.")
+        config.save()
+        from .models.backends import resolve_selection
+        resolved = {k: f"{name}:{model}"
+                    for k, (name, model) in resolve_selection(config).items()}
+        return _out({"ok": True, "kind": kind, "target": value,
+                     "local_only": config.policy.local_only,
+                     "warnings": warnings,
+                     "selection": resolved})
+
+    if action == "test":
+        specs = configured_backends(config)
+        name = str(getattr(args, "target", "") or "").strip()
+        if name:
+            specs = [s for s in specs if s.name == name]
+            if not specs:
+                return _out({"error": f"unknown backend '{name}'"}, 2)
+        results: list[dict[str, Any]] = []
+        for spec in specs:
+            entry = {"backend": spec.name, "type": spec.type, "alive": False,
+                     "model_count": 0, "error": "", "probe_ok": False,
+                     "probe_text": "", "local": spec.local,
+                     "key": "configured" if spec.has_key else "none"}
+            client = build_client(spec, config)
+            if client is None:
+                entry["error"] = "no client (missing base_url?)"
+            else:
+                available: list[str] = []
+                try:
+                    available = client.models()
+                    entry["model_count"] = len(available)
+                    entry["alive"] = bool(available) or client.alive()
+                except Exception as exc:
+                    entry["error"] = type(exc).__name__
+                if getattr(args, "probe", False) and entry["alive"]:
+                    model_id = spec.models.get("fast") or (
+                        available[0] if available else "")
+                    if model_id:
+                        result = client.generate(
+                            "Reply with exactly: OK", model=model_id,
+                            options={"num_predict": 8})
+                        entry["probe_ok"] = bool(result.get("ok"))
+                        entry["probe_text"] = str(result.get("text", ""))[:120]
+                        if not entry["probe_ok"]:
+                            entry["error"] = str(result.get("error", ""))[:200]
+            results.append(entry)
+        ok = bool(results) and all(r["alive"] for r in results)
+        from .models.backends import resolve_selection
+        resolved = {k: f"{name}:{model}"
+                    for k, (name, model) in resolve_selection(config).items()}
+        return _out({"ok": ok, "backends": results, "selection": resolved},
+                    0 if ok else 1)
+
+    if action == "key":
+        name = str(getattr(args, "target", "") or "").strip()
+        if not name:
+            return _out({"error": "backend name required"}, 2)
+        slot = str(getattr(args, "value", "") or "").strip() or f"{name}_api_key"
+        from .security.security import SecretVault
+        vault = SecretVault(config.paths.home)
+        try:
+            _store_api_key(vault, slot, name)
+        except ValueError:
+            return _out({"error": "no key read (pipe it on stdin, e.g. "
+                                  f"'cat key.txt | jarvis models key {name}')"},
+                         2)
+        entries = [e for e in config.models.backends
+                   if str(e.get("name") or "") == name]
+        for entry in entries:
+            entry["api_key_secret"] = slot
+        if entries:
+            config.models.backends = entries
+            config.save()
+        return _out({"ok": True, "backend": name, "vault_slot": slot,
+                     "wired": bool(entries)})
+
+    return _out({"error": f"unknown action '{action}'"}, 2)
 
 
 def _audio_action(jarvis: Any, args: Any) -> int:
@@ -897,9 +1248,10 @@ def _world_action(jarvis: Any, args: Any) -> int:
         from .worldintel.research import Researcher
         from .worldintel.telemetry import TELEMETRY
         from .worldintel.worldsync import sync_answer
-        query = getattr(args, "text", "") or (
+        query = (getattr(args, "text", "")
+                 or getattr(args, "query", "") or (
             "What is happening in AI today?" if action == "search"
-            else "Research recent AI developments")
+            else "Research recent AI developments"))
         started = _time.monotonic()
         researcher = Researcher(
             registry, cache, max_searches=cfg.max_searches,
@@ -1019,7 +1371,7 @@ def _world_action(jarvis: Any, args: Any) -> int:
                 "evidence": s.get("evidence", []) if isinstance(
                     s, dict) else []})
         kind = getattr(args, "kind", "morning")
-        query = getattr(args, "text", "")
+        query = getattr(args, "text", "") or getattr(args, "query", "")
         if query:
             from .worldintel.research import Researcher
             researcher = Researcher(
@@ -1116,13 +1468,13 @@ def _integration_action(jarvis: Any, args: Any) -> int:
     as_json = bool(getattr(args, "json", False))
     action = getattr(args, "action", "doctor")
 
-    def _out(payload: Any, text: str) -> int:
+    def _out(payload: Any, text: str, code: int = 0) -> int:
         if as_json:
             print(json.dumps(payload, indent=2, default=str))
         else:
             print(text)
         jarvis.close()
-        return 0
+        return code
 
     if action == "trace":
         from .cognition.trace import trace_cycle
@@ -1186,9 +1538,11 @@ def _integration_action(jarvis: Any, args: Any) -> int:
         checks.append(("Trace", False, f"{type(exc).__name__}"))
     lines = [f"{name:14} {'OK' if ok else 'FAIL'}  {detail}"
              for name, ok, detail in checks]
+    failed = [name for name, ok, _ in checks if not ok]
     return _out({"checks": [{"name": n, "ok": o, "detail": d}
                             for n, o, d in checks]},
-                "INTEGRATION\n" + "\n".join(lines))
+                "INTEGRATION\n" + "\n".join(lines),
+                1 if failed else 0)
 
 
 def _grants_store(home: str) -> Any:
@@ -1352,8 +1706,10 @@ def _approvals_action(jarvis: Any, args: Any) -> int:
             lines.append(f"{a['approval_id']:16} {a['actor']:12} "
                          f"{a['action'][:40]:42} {a['status']}")
             if a.get("args"):
+                from .policy.policy import sanitize_approval_args
+                safe_args = sanitize_approval_args(a["args"])
                 lines.append("  args=" + json.dumps(
-                    a["args"], sort_keys=True, default=str)[:300])
+                    safe_args, sort_keys=True, default=str)[:300])
         return _out({"approvals": found},
                     "APPROVALS\n" + "\n".join(lines) or "no approvals")
     full = _resolve_policy_token(policy, getattr(args, "token", ""))
@@ -1378,7 +1734,8 @@ def _approvals_action(jarvis: Any, args: Any) -> int:
         return _out({"approved": ok}, "approved" if ok else
                     "cannot approve", 0 if ok else 1)
     if action == "deny":
-        ok = policy.deny(full, by="cli")
+        ok = policy.deny(full, by="cli",
+                         reason=str(getattr(args, "reason", "") or ""))
         return _out({"denied": ok}, "denied" if ok else
                     "cannot deny", 0 if ok else 1)
     jarvis.close()
@@ -2226,7 +2583,8 @@ def _pi_action(adapter: Any, jarvis: Any, args: Any, _out: Any) -> int:
                  f"{c.get('detail', '')}" for c in checks]
         return _out({"checks": checks},
                     "\n".join(lines) + f"\n{len(checks) - len(failed)}/"
-                    f"{len(checks)} checks passed")
+                    f"{len(checks)} checks passed",
+                    1 if failed else 0)
     if action == "camera":
         provider = _hw.CameraProvider()
         try:
@@ -2925,7 +3283,8 @@ def _device_service_action(svc: Any, adapter: Any, args: Any,
         ok = svc.approve_command(args.approval, by=args.by)
         return _out({"approval_id": args.approval, "approved": ok},
                     f"approved {args.approval}" if ok
-                    else f"cannot approve {args.approval}")
+                    else f"cannot approve {args.approval}",
+                    0 if ok else 1)
     if action == "deny":
         if not args.approval:
             print("usage: jarvis device android deny --approval <token> "
@@ -2936,7 +3295,8 @@ def _device_service_action(svc: Any, adapter: Any, args: Any,
                               reason=args.reason)
         return _out({"approval_id": args.approval, "denied": ok},
                     f"denied {args.approval}" if ok
-                    else f"cannot deny {args.approval}")
+                    else f"cannot deny {args.approval}",
+                    0 if ok else 1)
     if action == "command-status":
         if not args.command_id:
             print("usage: jarvis device android command-status "
@@ -3095,7 +3455,8 @@ def _device_approvals(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
         ok = svc.approve_command(args.approval, by=args.by)
         return _out({"approval_id": args.approval, "approved": ok},
                     f"approved {args.approval[:12]}" if ok
-                    else f"cannot approve {args.approval[:12]}")
+                    else f"cannot approve {args.approval[:12]}",
+                    0 if ok else 1)
     if action == "deny":
         if not args.approval:
             print("usage: jarvis device approvals deny --approval <token|prefix> "
@@ -3106,7 +3467,8 @@ def _device_approvals(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
                               reason=args.reason)
         return _out({"approval_id": args.approval, "denied": ok},
                     f"denied {args.approval[:12]}" if ok
-                    else f"cannot deny {args.approval[:12]}")
+                    else f"cannot deny {args.approval[:12]}",
+                    0 if ok else 1)
     if action == "revoke":
         if not args.approval:
             print("usage: jarvis device approvals revoke --approval <token|prefix> "
@@ -3117,7 +3479,8 @@ def _device_approvals(svc: Any, jarvis: Any, args: Any, _out: Any) -> int:
                                   reason=args.reason)
         return _out({"approval_id": args.approval, "revoked": ok},
                     f"revoked {args.approval[:12]}" if ok
-                    else f"cannot revoke {args.approval[:12]}")
+                    else f"cannot revoke {args.approval[:12]}",
+                    0 if ok else 1)
     if action == "watch":
         return _device_approvals_watch(svc, jarvis, args)
     print("device approvals: unknown action "
@@ -3691,9 +4054,18 @@ def _security_action(jarvis: Any, args: Any) -> int:
         if status == "refused":
             lines.append("refused: authorization/target policy not met")
             return _out(result, lines, 2)
-        if status == "unavailable":
+        if status in ("unavailable", "error", "unknown"):
+            # No verdict at all: the tool is missing, the scan failed to
+            # launch, or something aborted it. Not a clean result.
+            lines.append(f"no verdict: {status}")
             return _out(result, lines, 3)
         if status in ("findings", "tool-failed", "timeout"):
+            return _out(result, lines, 1)
+        if str(result.get("verification", "")) != "verified":
+            # A tool claim ("partial") is not a verified result: "no
+            # findings" is absence of findings, never proof of safety.
+            lines.append(f"not verified: "
+                         f"{result.get('verification', 'unknown')}")
             return _out(result, lines, 1)
         return _out(result, lines, 0)
     jarvis.close()
@@ -3810,6 +4182,232 @@ def _doctor_mark(check: Any) -> str:
     return "FAIL" if getattr(check, "required", False) else "WARN"
 
 
+INSTALL_UNITS = (("jarvis.service", "systemd/jarvis.service"),
+                  ("jarvis-api.service", "systemd/jarvis-api.service"))
+
+
+def _install_project_dir() -> Path:
+    """The checkout this code is running from."""
+    return Path(__file__).resolve().parent.parent
+
+
+def _install_run(cmd: list[str], timeout: float = 300.0) -> tuple[int, str]:
+    """Run a command and capture its output. Never raises."""
+    import subprocess as _subprocess
+    try:
+        proc = _subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=timeout)
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    except Exception as exc:
+        return 1, f"{type(exc).__name__}: {exc}"
+
+
+def _install_package() -> tuple[bool, str]:
+    """Make `jarvis` runnable from anywhere (editable install)."""
+    project = _install_project_dir()
+    code, out = _install_run(
+        [sys.executable, "-m", "pip", "install", "-e", str(project),
+         "--user", "--no-deps", "--no-build-isolation"])
+    if code != 0:
+        return False, out.strip()[-400:]
+    return True, f"editable install from {project}"
+
+
+def _install_unit(linger: bool = False) -> tuple[bool, str]:
+    """Install, enable and start the user services. No root needed.
+
+    Two units: the background loop (jarvis.service) and the local API
+    that serves the board, the command centre and the phone link
+    (jarvis-api.service).
+    """
+    import shutil as _shutil
+    if _shutil.which("systemctl") is None:
+        return False, "systemctl not found: no 24/7 service on this host"
+    project = _install_project_dir()
+    target_dir = Path.home() / ".config" / "systemd" / "user"
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return False, f"cannot create {target_dir}: {exc}"
+    for unit_name, template_name in INSTALL_UNITS:
+        template = project / template_name
+        if not template.exists():
+            continue
+        target = target_dir / unit_name
+        try:
+            lines = []
+            for line in template.read_text().splitlines():
+                # The template ships with one machine's path; make it this one.
+                if line.startswith("WorkingDirectory="):
+                    line = f"WorkingDirectory={project}"
+                elif line.startswith("Environment=JARVIS_HOME_DIR="):
+                    line = f"Environment=JARVIS_HOME_DIR={project}"
+                lines.append(line)
+            target.write_text("\n".join(lines) + "\n")
+        except OSError as exc:
+            return False, f"cannot write {target}: {exc}"
+    code, out = _install_run(["systemctl", "--user", "daemon-reload"])
+    if code != 0:
+        return False, out.strip()[-400:]
+    started = []
+    for unit_name, _ in INSTALL_UNITS:
+        code, out = _install_run(["systemctl", "--user", "enable", "--now",
+                                   unit_name])
+        if code != 0:
+            return False, f"{unit_name}: {out.strip()[-300:]}"
+        started.append(unit_name)
+    note = "started " + ", ".join(started)
+    if linger:
+        code, out = _install_run(["loginctl", "enable-linger",
+                                   os.environ.get("USER", "")])
+        note += (" (survives logout)" if code == 0
+                 else " (linger not set: needs an open login session)")
+    return True, note
+
+
+def _install_remove_unit() -> tuple[bool, str]:
+    """Stop, disable and remove the user services."""
+    import shutil as _shutil
+    if _shutil.which("systemctl") is None:
+        return True, "no systemctl on this host: nothing to remove"
+    target_dir = Path.home() / ".config" / "systemd" / "user"
+    removed = []
+    for unit_name, _ in INSTALL_UNITS:
+        _install_run(["systemctl", "--user", "disable", "--now", unit_name])
+        target = target_dir / unit_name
+        try:
+            if target.exists():
+                target.unlink()
+                removed.append(unit_name)
+        except OSError:
+            pass
+    _install_run(["systemctl", "--user", "daemon-reload"])
+    return True, ("removed " + ", ".join(removed) if removed
+                  else "services not installed")
+
+
+def _install_ensure_models(config: Any) -> list[str]:
+    """Make sure a model backend is configured.
+
+    Adds the local Ollama backend when nothing is configured, and the
+    NVIDIA backend when its key already sits in the vault. Selection is
+    left alone: switching models is the operator's call.
+    """
+    from .models.backends import BackendSpec, default_ollama_spec
+    notes: list[str] = []
+    backends = list(config.models.backends or [])
+    names = {str(entry.get("name") or "") for entry in backends}
+    if not backends:
+        backends = [default_ollama_spec(config.models.ollama_host).to_dict()]
+        names.add("ollama")
+        notes.append("added the local Ollama backend")
+    if "nvidia" not in names:
+        # The NVIDIA preset is offered, but never switched on and never
+        # probed for a key here: adding a provider is the operator's
+        # call (`jarvis models add nvidia`, then `jarvis models use`).
+        spec = BackendSpec(name="nvidia", type="openai",
+                           base_url="https://integrate.api.nvidia.com/v1",
+                           api_key_ref="nvidia_api_key", local=False)
+        spec.models = {
+            "fast": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            "reasoning": "nvidia/nemotron-3-ultra-550b-a55b",
+            "coding": "nvidia/nemotron-3-ultra-550b-a55b",
+            "vision": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+            "embedding": "nvidia/nemotron-3-embed-1b",
+        }
+        backends.append(spec.to_dict())
+        names.add("nvidia")
+        notes.append("added the NVIDIA backend preset — enable it with "
+                     "`jarvis models use <kind> nvidia`")
+    config.models.backends = backends
+    if notes:
+        try:
+            config.save()
+        except OSError as exc:
+            notes.append(f"could not save config: {exc}")
+    return notes
+
+
+def _install_action(args: Any) -> int:
+    """One-shot setup: global command, 24/7 service, models, health.
+
+    Everything is reversible with `jarvis install --uninstall`. No root
+    is needed: the background service is a *user* systemd unit.
+    """
+    as_json = bool(getattr(args, "json", False))
+    try:
+        config = _load_config(getattr(args, "home", "") or "")
+    except (OSError, ValueError) as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return 1
+
+    steps: list[dict[str, Any]] = []
+
+    def _step(name: str, ok: bool, detail: str) -> None:
+        steps.append({"step": name, "ok": ok, "detail": detail})
+
+    if getattr(args, "uninstall", False):
+        ok, detail = _install_remove_unit()
+        _step("service", ok, detail)
+        payload = {"ok": ok, "mode": "uninstall", "steps": steps}
+        if as_json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print("UNINSTALL")
+            for step in steps:
+                mark = "ok " if step["ok"] else "FAIL"
+                print(f"[{mark}] {step['step']}: {step['detail']}")
+        return 0 if ok else 1
+
+    ok, detail = _install_package()
+    _step("command", ok, detail)
+    notes = _install_ensure_models(config)
+    if notes:
+        _step("models", True, "; ".join(notes))
+    else:
+        _step("models", True, "backends already configured")
+    if not getattr(args, "no_service", False):
+        ok, detail = _install_unit(linger=bool(getattr(args, "linger", False)))
+        _step("service", ok, detail)
+    else:
+        _step("service", True, "skipped (--no-service)")
+
+    from .core.service import check_dependencies
+    checks: list[dict[str, Any]] = []
+    try:
+        checks = [c.to_dict() for c in check_dependencies(config)]
+    except Exception as exc:
+        checks = [{"name": "doctor", "ok": False,
+                   "detail": f"{type(exc).__name__}: {exc}", "required": True}]
+    failed = [c["name"] for c in checks if c.get("required") and not c.get("ok")]
+    payload = {"ok": not failed, "steps": steps, "checks": checks,
+               "failed": failed}
+    if as_json:
+        print(json.dumps(payload, indent=2, default=str))
+    else:
+        print("INSTALL")
+        for step in steps:
+            mark = "ok " if step["ok"] else "FAIL"
+            print(f"[{mark}] {step['step']}: {step['detail']}")
+        for check in checks:
+            if not check.get("required"):
+                continue
+            mark = "ok " if check.get("ok") else "FAIL"
+            print(f"[{mark}] {check['name']}: {check.get('detail', '')}")
+        for check in checks:
+            name = str(check.get("name", ""))
+            if check.get("required") or not name.startswith("backend:"):
+                continue
+            mark = "ok " if check.get("ok") else "warn"
+            print(f"[{mark}] {name}: {check.get('detail', '')}")
+        print("")
+        print("next: `jarvis talk \"hello\"` · `jarvis board --open` "
+              "· `jarvis models list`")
+        if failed:
+            print(f"required checks failed: {', '.join(failed)}")
+    return 0 if not failed else 1
+
+
 def _setup_action(jarvis: Any, args: Any) -> int:
     """Guided first-run checklist. Read-only; exit 1 when any required
     check fails so scripts can gate on it."""
@@ -3872,6 +4470,26 @@ def _task_policy_ok(jarvis: Any) -> bool:
     return True
 
 
+def _home_flag(raw: list[str]) -> tuple[str, str]:
+    """Locate `--home <dir>` anywhere in the argument list.
+
+    The one-shot front door (`jarvis "text"`) never reaches argparse,
+    so a `--home` that is not the first token used to be dropped: the
+    request then ran against the real ~/.jarvis-os. Returns
+    ``(home, error)`` — a missing value is an error, never a silent
+    fallback to the real home.
+    """
+    for index, token in enumerate(raw):
+        if token != "--home":
+            continue
+        value = raw[index + 1] if index + 1 < len(raw) else ""
+        if not value or value.startswith("-"):
+            return "", ("--home needs a directory "
+                        "(e.g. --home /tmp/jarvis-home)")
+        home = value
+    return home, ""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     raw = list(sys.argv[1:] if argv is None else argv)
@@ -3882,7 +4500,13 @@ def main(argv: list[str] | None = None) -> int:
         home = head[1]
         head = head[2:]
     if head and head[0] not in known and not head[0].startswith("-"):
-        return _conductor_oneshot(raw, home=home)
+        # `--home` may sit anywhere in the one-shot form
+        # (`jarvis "text" --home DIR`): argparse never sees it.
+        found, error = _home_flag(raw)
+        if error:
+            print(error, file=sys.stderr)
+            return 2
+        return _conductor_oneshot(raw, home=found)
     args = parser.parse_args(argv)
     if not args.command:
         # Bare `jarvis` drops into the chat: there is no wrong way to
@@ -3898,7 +4522,18 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 2
 
-    jarvis = _make_jarvis(getattr(args, "home", ""))
+    if args.command == "models":
+        return _models_action(args)
+
+    if args.command == "install":
+        return _install_action(args)
+
+    try:
+        jarvis = _make_jarvis(getattr(args, "home", ""))
+    except (OSError, ValueError) as exc:
+        # A broken config must not silently change behaviour: say so.
+        print(f"config error: {exc}", file=sys.stderr)
+        return 2
 
     if args.command == "talk":
         result = jarvis.cycle_once(" ".join(args.text))
@@ -4006,7 +4641,17 @@ def main(argv: list[str] | None = None) -> int:
         url = f"http://{args.host}:{args.port}/command"
         print(f"command centre: {url}")
         print("live data from `/api/experience` — same token as `serve`.")
-    elif args.command == "office":
+        if bool(getattr(args, "open", False)):
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception as exc:
+                print(f"could not open browser: {type(exc).__name__}")
+                jarvis.close()
+                return 1
+        jarvis.close()
+        return 0
+    if args.command == "office":
         url = f"http://{args.host}:{args.port}/office"
         print(f"office: {url}")
         print("live desks from `/api/experience` — same token as `serve`.")
@@ -4024,7 +4669,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         from .api.server import JarvisAPI
         api = JarvisAPI(jarvis, host=args.host, port=args.port, token=args.token)
-        api.serve_forever()
+        try:
+            api.serve_forever()
+        except OSError as exc:
+            import errno as _errno
+            if exc.errno in (_errno.EADDRINUSE, _errno.EACCES):
+                print(f"cannot bind {args.host}:{args.port} — {exc.strerror}",
+                      file=sys.stderr)
+                print("the API is probably already running: "
+                      "systemctl --user status jarvis-api.service",
+                      file=sys.stderr)
+                print("stop it first (systemctl --user stop jarvis-api.service) "
+                      "or use another port: jarvis serve --port 8766",
+                      file=sys.stderr)
+                jarvis.close()
+                return 1
+            raise
         print(f"jarvis api on http://{args.host}:{api.port} (Ctrl-C to stop)")
         try:
             import time
@@ -5074,7 +5734,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "see":
         from .vision.observer import VisionObserver
-        observer = VisionObserver()
+        observer = VisionObserver(config=jarvis.config)
+        if not args.fast:
+            # The first vision call loads the model: say so, instead of
+            # looking like a hang.
+            print("observing the screen (the first vision call loads the "
+                  "model)…")
         if args.source == "camera":
             obs = observer.see_camera(question=args.ask, scene=not args.fast)
         elif args.source == "file":
@@ -5086,8 +5751,11 @@ def main(argv: list[str] | None = None) -> int:
                                     scene=not args.fast)
         else:
             obs = observer.see_screen(question=args.ask, scene=not args.fast)
-        if not obs.ok:
-            print("see failed: " + obs.error)
+        # obs.ok only means the capture worked: recognition may still
+        # have found nothing. An empty observation is not a success —
+        # report it and do not file it as a remembered fact.
+        if not obs.ok or obs.error:
+            print("see failed: " + (obs.error or "unknown error"))
             jarvis.close()
             return 1
         fed = observer.feed(obs, world=jarvis.world, palace=jarvis.palace,
@@ -5102,16 +5770,18 @@ def main(argv: list[str] | None = None) -> int:
         manager = ServiceManager(jarvis.config)
         jarvis.close()
         if args.command == "start":
-            print(json.dumps(manager.start(), indent=2, default=str))
-            return 0
+            result = manager.start()
+            print(json.dumps(result, indent=2, default=str))
+            return 0 if result.get("ok") else 1
         if args.command == "stop":
-            print(json.dumps(manager.stop(), indent=2, default=str))
-            return 0
+            result = manager.stop()
+            print(json.dumps(result, indent=2, default=str))
+            return 0 if result.get("ok") else 1
         if args.command == "restart":
-            print(json.dumps(manager.restart(), indent=2, default=str))
-            return 0
+            result = manager.restart()
+            print(json.dumps(result, indent=2, default=str))
+            return 0 if result.get("ok") else 1
         checks = check_dependencies(jarvis.config)
-        bad = [c.name for c in checks if not c.ok]
         for check in checks:
             mark = _doctor_mark(check)
             req = " (required)" if check.required else ""
@@ -5126,14 +5796,34 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "devices":
         from .computer.computer import ComputerController
-        from .models.ollama import OllamaClient
+        from .models.backends import (build_client, configured_backends,
+                                      resolve_selection)
         from .vision.observer import VisionObserver
         from .voice.runtime import VoiceLoop
+        selection = resolve_selection(jarvis.config)
+        models_status: dict[str, Any] = {}
+        for spec in configured_backends(jarvis.config):
+            client = build_client(spec, jarvis.config)
+            alive = False
+            count = 0
+            if client is not None:
+                try:
+                    available = client.models()
+                    count = len(available)
+                    alive = bool(available) or client.alive()
+                except Exception:
+                    alive = False
+            models_status[spec.name] = {
+                "type": spec.type, "local": spec.local, "alive": alive,
+                "models": count,
+                "serves": sorted(k for k, v in selection.items()
+                                 if v[0] == spec.name),
+            }
         snapshot = {
             "voice": VoiceLoop().status(),
-            "vision": VisionObserver().status(),
+            "vision": VisionObserver(config=jarvis.config).status(),
             "computer": ComputerController().status(),
-            "models": OllamaClient().health(),
+            "models": models_status,
             "memory": jarvis.palace.stats(),
         }
         print(json.dumps(snapshot, indent=2, default=str))
@@ -5350,13 +6040,13 @@ def main(argv: list[str] | None = None) -> int:
         fabric = jarvis.device_fabric
         as_json = args.json
 
-        def _out(payload: Any, text: str) -> int:
+        def _out(payload: Any, text: str, code: int = 0) -> int:
             if as_json:
                 print(json.dumps(payload, indent=2, default=str))
             else:
                 print(text)
             jarvis.close()
-            return 0
+            return code
 
         try:
             if args.action == "status":
@@ -5462,12 +6152,17 @@ def main(argv: list[str] | None = None) -> int:
                 result = fabric.route_command("cli", args.device,
                                               args.capability, cmd_args,
                                               approval_token=args.approve)
-                return _out(result, result.get("error", str(result.get("result", ""))))
+                text = result.get("error", str(result.get("result", "")))
+                # A denied or approval-gated command did not happen:
+                # say so with a non-zero exit, not a silent success.
+                ok = bool(result.get("ok")) and not result.get("error")
+                return _out(result, text, 0 if ok else 1)
             # doctor
             result = {"checks": fabric.doctor()}
+            failed = [c for c in result["checks"] if not c.get("ok")]
             return _out(result, "\n".join(
                 f"{c['name']:28} {'ok' if c['ok'] else 'FAIL'}  {c['detail']}"
-                for c in result["checks"]))
+                for c in result["checks"]), 1 if failed else 0)
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"device-fabric: {exc}")
             jarvis.close()
@@ -5478,13 +6173,13 @@ def main(argv: list[str] | None = None) -> int:
         adapter = AndroidNodeAdapter(jarvis.device_fabric)
         as_json = args.json
 
-        def _out(payload: Any, text: str) -> int:
+        def _out(payload: Any, text: str, code: int = 0) -> int:
             if as_json:
                 print(json.dumps(payload, indent=2, default=str))
             else:
                 print(text)
             jarvis.close()
-            return 0
+            return code
 
         if args.area in ("grants", "approvals", "commands", "policy"):
             from .device.service import DeviceCommandService
@@ -5771,13 +6466,13 @@ def main(argv: list[str] | None = None) -> int:
         adapter = PiNodeAdapter(jarvis.device_fabric)
         as_json = args.json
 
-        def _pi_out(payload: Any, text: str) -> int:
+        def _pi_out(payload: Any, text: str, code: int = 0) -> int:
             if as_json:
                 print(json.dumps(payload, indent=2, default=str))
             else:
                 print(text)
             jarvis.close()
-            return 0
+            return code
 
         try:
             return _pi_action(adapter, jarvis, args, _pi_out)

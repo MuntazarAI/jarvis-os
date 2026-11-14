@@ -19,6 +19,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
+from .legacy import LegacyWorldAPI, WorldEntity
 from ..cognition.world_model import (
     WorldState,
     WorldObject,
@@ -91,7 +92,7 @@ class WorldModelSnapshot:
         }
 
 
-class WorldModel:
+class WorldModel(LegacyWorldAPI):
     """Unified World Model - M30 Completion.
 
     Integrates all world model components into a cohesive system:
@@ -274,10 +275,14 @@ class WorldModel:
         confidence: float = 0.5,
         event_type: str = "observation",
         related_objects: list[str] | None = None,
-    ) -> str:
+        location: str = "",
+        participants: list[str] | None = None,
+    ) -> Any:
         """Record an event in the world model.
 
-        Convenience method that auto-generates an event ID.
+        Convenience method that auto-generates an event ID. ``location``
+        and ``participants`` are the older event fields; they are kept
+        on the event so callers that set them still see them.
         """
         import time as _time
         event_id = f"event-{hashlib.sha256(f'{description}|{timestamp or _time.time()}'.encode()).hexdigest()[:8]}"
@@ -306,12 +311,24 @@ class WorldModel:
             metadata={"event_id": event_id, "description": description},
         )
 
+        # The older event shape carried a location and participants.
+        if location:
+            setattr(event, "location", location)
+        if participants:
+            setattr(event, "participants", list(participants))
         self.stats["events_added"] += 1
-        return event_id
+        return event
 
-    def timeline(self) -> list[WorldEvent]:
-        """Get all events sorted by timestamp."""
-        return sorted(self.event_model.events.values(), key=lambda e: e.timestamp)
+    def timeline(self, start: float | None = None,
+                 end: float | None = None) -> list[WorldEvent]:
+        """Get all events sorted by timestamp, optionally windowed."""
+        events = sorted(self.event_model.events.values(),
+                        key=lambda e: e.timestamp)
+        if start is not None:
+            events = [e for e in events if e.timestamp >= start]
+        if end is not None:
+            events = [e for e in events if e.timestamp <= end]
+        return events
 
     def timeline_gaps(self) -> list[dict[str, Any]]:
         """Detect temporal gaps in the event timeline.
@@ -338,16 +355,27 @@ class WorldModel:
         self,
         room: str,
         state: dict[str, Any],
-    ) -> None:
-        """Record room state."""
-        if not hasattr(self, "_rooms"):
-            self._rooms: dict[str, dict[str, Any]] = {}
-        prev_state = self._rooms.get(room, {}).get("state", {})
-        self._rooms[room] = {
+        sensor: str = "",
+    ) -> dict[str, Any]:
+        """Record room state. Returns what was recorded."""
+        previous = self._rooms.get(room, {})
+        prev_state = previous.get("state", {})
+        history = list(previous.get("history", []))[-9:]
+        observed_at = self.now()
+        record = {
+            "room": room,
             "state": state,
+            "objects": state,  # the older name for the same thing
+            "sensor": sensor,
             "timestamp": time.time(),
+            # The skewed clock, so an adjusted world model reports
+            # adjusted room timestamps.
+            "observed_at": observed_at,
             "prev_state": prev_state,
         }
+        record["history"] = [*history, {"at": observed_at, "objects": state}]
+        self._rooms[room] = record
+        return record
 
     def room_diff(self, room: str) -> dict[str, Any]:
         """Get diff for a room compared to previous state."""
@@ -373,11 +401,19 @@ class WorldModel:
         }
 
     def snapshot(self) -> dict[str, Any]:
-        """Create a snapshot of the current world model state."""
+        """Create a snapshot of the current world model state.
+
+        The entity/timeline/rooms keys are the older view of the same
+        state, kept so the memory bridge can diff against it.
+        """
         return {
             "objects": {k: v.to_dict() for k, v in self.object_model.objects.items()},
             "events": {k: v.to_dict() for k, v in self.event_model.events.items()},
             "timestamp": time.time(),
+            "entities": [e.to_dict() for e in self.entities()],
+            "timeline": [e.to_dict() for e in self.timeline()],
+            "rooms": {name: dict(state) for name, state in self._rooms.items()},
+            "captured_at": self.now(),
         }
 
     def restore(self, snapshot: dict[str, Any]) -> None:
@@ -751,7 +787,17 @@ class WorldModel:
         )
 
         self.stats["events_added"] += 1
-        return event_id
+        # The older API returned the entity for the observation.
+        entity = self.upsert(
+            getattr(observation, "kind", "observation"),
+            str(getattr(observation, "source", "user")),
+            content=description,
+            modality=str(getattr(observation, "modality", "")),
+            last_seen=getattr(observation, "timestamp", None),
+        )
+        return entity
+
+    def sync_to_memory(self) -> int:
         """Sync world model state to persistent memory."""
         synced = 0
 

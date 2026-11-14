@@ -1,0 +1,39 @@
+[Unit]
+Description=JARVIS-OS local API + status board (user instance)
+Documentation=https://github.com/MuntazarAI/jarvis-os/blob/main/docs/API.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Project checkout; adjust JARVIS_HOME_DIR for your machine.
+Environment=JARVIS_HOME_DIR=%h/Projects/jarvis-os
+WorkingDirectory=%h/Projects/jarvis-os
+# Localhost only. POST routes actuate — the server gates them on its own
+# token; keep the bind address on loopback so nothing is reachable from
+# the network.
+ExecStart=/usr/bin/python3 -m jarvis.cli serve --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=5
+# Bounded restarts: 5 tries in 10 minutes, then stay down for humans.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+
+# --- Hardening (same review as jarvis.service) ---
+NoNewPrivileges=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryMax=2G
+TasksMax=64
+# ProtectSystem/ProtectHome omitted on purpose: the service legitimately
+# reads its state dir, the checkout and the model cache.
+
+[Install]
+# Starts after user login. `loginctl enable-linger $USER` keeps it alive
+# with no session open — that is your explicit choice, not the default.
+WantedBy=default.target

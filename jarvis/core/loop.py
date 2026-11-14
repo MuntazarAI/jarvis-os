@@ -364,10 +364,13 @@ class Jarvis:
         # Tool history length is captured so verification can tell which
         # tool results belong to this cycle.
         tool_calls_before = len(self.tools.history)
+        # The budget is per cycle, not per process: a long-lived JARVIS
+        # must not stop being able to act after 24 lifetime tool calls.
+        used_this_cycle = len(self.tools.history) - tool_calls_before
         if (understanding.intent == "command" and not blocked
                 and not assessment.requires_approval and not handled
                 and route.act not in NON_ACTING
-                and len(self.tools.history) < self.config.cognitive.tool_budget):
+                and used_this_cycle < self.config.cognitive.tool_budget):
             actions, tools_used = self._act(reason_text, actions, tools_used)
             response += self._summarize_actions(actions)
 

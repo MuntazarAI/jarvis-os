@@ -9,19 +9,36 @@ import json
 import os
 import secrets
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    _HAS_CRYPTOGRAPHY = True
+except Exception:
+    _HAS_CRYPTOGRAPHY = False
 
 from ..core.types import new_id, now
 
 
 def _xor(data: bytes, key: bytes) -> bytes:
+    """Legacy XOR cipher for backward compatibility only."""
     return bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
 
 
 class SecretVault:
-    """Local encrypted-at-rest store. Key from env or generated (0600 file)."""
+    """Local encrypted-at-rest store with AES-GCM (preferred) or legacy XOR+HMAC.
+
+    - Key sourced from env `JARVIS_VAULT_KEY` or generated file (0600).
+    - AES-GCM used when `cryptography` is available; otherwise falls back to
+      XOR+HMAC for compatibility with existing blobs.
+    - All blobs are authenticated; tampered blobs raise ValueError.
+    - Access is logged with actor, timestamp, and operation type.
+    """
+
+    VAULT_VERSION = 2  # v1 = XOR+HMAC, v2 = AES-GCM
 
     def __init__(self, home: Path | str) -> None:
         self.home = Path(home)
@@ -29,7 +46,7 @@ class SecretVault:
         self.key_file = self.home / ".vault.key"
         self.store_file = self.home / "secrets.json"
         self._lock = threading.RLock()
-        self.key = self._load_or_create_key()
+        self._key = self._load_or_create_key()
         self._secrets: dict[str, dict[str, Any]] = self._load()
         self.access_log: list[dict[str, Any]] = []
 
@@ -63,62 +80,178 @@ class SecretVault:
             except OSError:
                 pass
 
-    def _seal(self, plaintext: str) -> str:
+    def _seal_aesgcm(self, plaintext: str) -> str:
+        """Encrypt with AES-GCM (256-bit key, 96-bit nonce)."""
+        nonce = secrets.token_bytes(12)
+        aead = AESGCM(self._key)
+        sealed = aead.encrypt(nonce, plaintext.encode(), None)
+        # Store: version(1) | nonce(12) | ciphertext+tag
+        blob = bytes([self.VAULT_VERSION]) + nonce + sealed
+        return base64.b64encode(blob).decode()
+
+    def _open_aesgcm(self, blob: str) -> str:
+        """Decrypt AES-GCM blob, verifying authentication tag."""
+        raw = base64.b64decode(blob)
+        if not raw:
+            raise ValueError("empty blob")
+        version = raw[0]
+        if version != self.VAULT_VERSION:
+            raise ValueError(f"unsupported vault version: {version}")
+        if len(raw) < 1 + 12 + 16:  # version + nonce + min tag
+            raise ValueError("blob too short")
+        nonce = raw[1:13]
+        sealed = raw[13:]
+        aead = AESGCM(self._key)
+        return aead.decrypt(nonce, sealed, None).decode()
+
+    def _seal_legacy(self, plaintext: str) -> str:
+        """Legacy XOR + HMAC-SHA256 for backward compatibility."""
         raw = plaintext.encode()
-        sealed = _xor(raw, self.key)
-        mac = hmac.new(self.key, sealed, hashlib.sha256).hexdigest()
+        sealed = _xor(raw, self._key)
+        mac = hmac.new(self._key, sealed, hashlib.sha256).hexdigest()
         return base64.b64encode(sealed).decode() + "." + mac
 
-    def _open(self, blob: str) -> str:
+    def _open_legacy(self, blob: str) -> str:
+        """Legacy XOR + HMAC open."""
         try:
             encoded, mac = blob.rsplit(".", 1)
         except ValueError:
-            raise ValueError("corrupt secret blob")
+            raise ValueError("corrupt legacy blob")
         sealed = base64.b64decode(encoded)
-        if not hmac.compare_digest(mac, hmac.new(self.key, sealed, hashlib.sha256).hexdigest()):
+        if not hmac.compare_digest(mac, hmac.new(self._key, sealed, hashlib.sha256).hexdigest()):
             raise ValueError("secret integrity check failed")
-        return _xor(sealed, self.key).decode()
+        return _xor(sealed, self._key).decode()
+
+    def _seal(self, plaintext: str) -> str:
+        if _HAS_CRYPTOGRAPHY:
+            return self._seal_aesgcm(plaintext)
+        return self._seal_legacy(plaintext)
+
+    def _open(self, blob: str) -> str:
+        # Detect format: AES-GCM blobs are base64 without '.' and start with version byte
+        if _HAS_CRYPTOGRAPHY and "." not in blob:
+            try:
+                return self._open_aesgcm(blob)
+            except Exception:
+                # Fall through to legacy if somehow corrupted
+                pass
+        return self._open_legacy(blob)
+
+    def _log(self, op: str, name: str, actor: str, ok: bool, detail: str = "") -> None:
+        self.access_log.append({
+            "op": op,
+            "name": name,
+            "actor": actor,
+            "at": now(),
+            "ok": ok,
+            "detail": detail[:200],
+        })
+        # Bound the log
+        if len(self.access_log) > 1000:
+            self.access_log = self.access_log[-1000:]
 
     def put(self, name: str, value: str, expires_in: float | None = None) -> None:
         with self._lock:
+            if not name or len(name) > 256:
+                raise ValueError("invalid secret name")
+            if len(value) > 65536:
+                raise ValueError("secret value too large")
             self._secrets[name] = {
                 "blob": self._seal(value),
                 "created": now(),
                 "expires_at": now() + expires_in if expires_in else None,
+                "version": self.VAULT_VERSION,
             }
             self._save()
+            self._log("put", name, "jarvis", True)
 
     def get(self, name: str, actor: str = "jarvis") -> str | None:
         with self._lock:
             entry = self._secrets.get(name)
             if not entry:
+                self._log("get", name, actor, False, "not found")
                 return None
             if entry.get("expires_at") and entry["expires_at"] <= now():
                 del self._secrets[name]
                 self._save()
+                self._log("get", name, actor, False, "expired")
                 return None
-            value = self._open(entry["blob"])
-            self.access_log.append({"name": name, "actor": actor, "at": now()})
-            return value
+            try:
+                value = self._open(entry["blob"])
+                self._log("get", name, actor, True)
+                return value
+            except Exception as exc:
+                self._log("get", name, actor, False, f"decrypt failed: {type(exc).__name__}")
+                raise
 
     def delete(self, name: str) -> bool:
         with self._lock:
             if name not in self._secrets:
+                self._log("delete", name, "jarvis", False, "not found")
                 return False
             del self._secrets[name]
             self._save()
+            self._log("delete", name, "jarvis", True)
             return True
 
     def rotate(self, name: str, value: str) -> bool:
         with self._lock:
             if name not in self._secrets:
+                self._log("rotate", name, "jarvis", False, "not found")
                 return False
             self.put(name, value)
+            self._log("rotate", name, "jarvis", True)
             return True
+
+    def rotate_key(self, new_key: bytes | None = None) -> int:
+        """Re-encrypt all secrets with a new master key.
+
+        Returns the number of secrets rotated. Caller must ensure the
+        new key is stored in `JARVIS_VAULT_KEY` or `.vault.key` before
+        next vault instantiation.
+        """
+        if new_key is None:
+            new_key = secrets.token_bytes(32)
+        old_key = self._key
+        self._key = new_key
+        count = 0
+        with self._lock:
+            for name, entry in list(self._secrets.items()):
+                try:
+                    # Decrypt with old key
+                    blob = entry["blob"]
+                    if _HAS_CRYPTOGRAPHY and "." not in blob:
+                        # AES-GCM
+                        raw = base64.b64decode(blob)
+                        nonce = raw[1:13]
+                        sealed = raw[13:]
+                        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                        aead = AESGCM(old_key)
+                        plaintext = aead.decrypt(nonce, sealed, None).decode()
+                    else:
+                        # Legacy
+                        encoded, mac = blob.rsplit(".", 1)
+                        sealed = base64.b64decode(encoded)
+                        if not hmac.compare_digest(mac, hmac.new(old_key, sealed, hashlib.sha256).hexdigest()):
+                            raise ValueError("integrity check failed")
+                        plaintext = _xor(sealed, old_key).decode()
+                    # Re-encrypt with new key
+                    entry["blob"] = self._seal(plaintext)
+                    entry["version"] = self.VAULT_VERSION
+                    count += 1
+                except Exception:
+                    # Leave corrupted entry alone
+                    continue
+            self._save()
+        return count
 
     def names(self) -> list[str]:
         with self._lock:
             return sorted(self._secrets)
+
+    def audit_log(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self.access_log[-limit:])
 
 
 @dataclass

@@ -39,6 +39,8 @@ class HypothesisEngine:
         self.limit = limit
         self.active: dict[str, Hypothesis] = {}
         self.history: list[Hypothesis] = []
+        #: A long-lived process must not grow without bound.
+        self.max_history = 200
 
     def propose(self, claim: str, prior: float = 0.4, assumptions: list[str] | None = None) -> Hypothesis:
         hyp = Hypothesis(
@@ -49,6 +51,8 @@ class HypothesisEngine:
         )
         self.active[hyp.hypothesis_id] = hyp
         self.history.append(hyp)
+        if len(self.history) > self.max_history:
+            del self.history[:-self.max_history]
         if len(self.active) > self.limit:
             oldest = min(self.active.values(), key=lambda h: h.created_at)
             self.active.pop(oldest.hypothesis_id, None)

@@ -149,7 +149,14 @@ class DeviceGrantStore:
     def grant(self, device_id: str, capability: str, *,
               actor: str = "*", by: str = "",
               reason: str = "", ttl_s: float = 0.0) -> dict[str, Any]:
-        """Authorize actor/capability on device. Returns the record."""
+        """Authorize actor/capability on device. Returns the record.
+
+        ``actor`` says who may use the capability; ``by`` says who made
+        the grant. "*" means any actor — the CLI asks the operator for it
+        explicitly so a wide grant is a decision, not an accident. A
+        grant bound to one actor also satisfies the global
+        ``device.<capability>`` permission for that actor only.
+        """
         if not device_id:
             raise GrantError("device_id is required")
         capability = validate_grant_capability(capability)

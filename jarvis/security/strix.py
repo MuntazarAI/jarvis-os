@@ -141,14 +141,18 @@ def run_scan(target: str, *, mode: str = "quick",
                            "re-run with --yes to confirm you own this "
                            "target or have explicit written permission")
         if policy is not None:
-            check = getattr(policy, "_emergency_stop", None)
+            check = getattr(policy, "emergency_stop_engaged", None)
+            if not callable(check):
+                check = getattr(policy, "_emergency_stop", None)
             if callable(check):
                 try:
                     if check():
                         return _refuse(result, started,
                                        "emergency stop engaged")
                 except Exception:
-                    pass
+                    # Fail closed: an unreadable stop blocks the scan.
+                    return _refuse(result, started,
+                                   "emergency stop engaged")
         binary = strix_binary()
         if mode not in SCAN_MODES:
             return _refuse(result, started,

@@ -182,10 +182,14 @@ class HierarchicalPlanner:
                       goal.success_criteria[:MAX_SUBGOALS]]
         steps: list[PlanStep] = []
         for index, objective in enumerate(objectives):
-            action = self._action_for(objective, context)
+            planned = self._action_for(objective, context) or {}
+            args = dict(planned.get("args") or {})
+            # Keep the objective as metadata, but carry the action the
+            # planner chose: a step without one has nothing to execute.
+            args.setdefault("objective", objective[:120])
             steps.append(PlanStep(
-                name=objective[:120], kind="action",
-                args={"objective": objective[:120]},
+                name=planned.get("action") or objective[:120], kind="action",
+                args=args,
                 depends_on=[index - 1] if index else [],
                 expected=f"{objective} observed complete",
                 reversible=True))

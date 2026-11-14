@@ -71,6 +71,7 @@ def speak_text(text: str, *, config: Any = None,
         cfg_weight=float(get("cfg_weight", 0.5) or 0.5),
         correlation_id=correlation_id)
     primary = resolve_tts(cfg, provider_name)
+    primary_error = ""
     dest_dir = Path(str(workdir)) / "tts"
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / f"{request.request_id}.wav"
@@ -86,9 +87,12 @@ def speak_text(text: str, *, config: Any = None,
         # Transient by default: keep path for playback, caller cleans.
         pass
     if not result.ok:
+        primary_error = result.error
         fallback = LocalFallbackTTSProvider()
         if primary.name != fallback.name and fallback.available():
-            again = fallback.synthesize(request, None)
+            # Synthesize to the same file so the fallback can be played
+            # like any other voice, not just reported.
+            again = fallback.synthesize(request, dest)
             TELEMETRY.record("voice.tts", status="ok" if again.ok
                              else "failed",
                              latency_ms=again.latency_ms,
@@ -96,17 +100,15 @@ def speak_text(text: str, *, config: Any = None,
                              correlation_id=correlation_id,
                              detail="local-fallback")
             if again.ok:
-                return {"ok": True, "provider": again.provider,
-                        "spoken_aloud": False,
-                        "response_text": rendered,
-                        "tts_id": request.request_id,
-                        "fallback": True,
-                        "primary_error": result.error,
-                        "correlation_id": correlation_id}
-        return {"ok": False, "provider": primary.name,
-                "error": result.error, "spoken_aloud": False,
-                "response_text": rendered, "tts_id": request.request_id,
-                "correlation_id": correlation_id}
+                result = again
+                primary = fallback
+                mode = str((result.metadata or {}).get("mode", primary.name))
+        if not result.ok:
+            return {"ok": False, "provider": primary.name,
+                    "error": result.error, "spoken_aloud": False,
+                    "response_text": rendered, "tts_id": request.request_id,
+                    "primary_error": primary_error,
+                    "correlation_id": correlation_id}
     if not play:
         return {"ok": True, "provider": result.provider,
                 "mode": mode,
@@ -114,6 +116,8 @@ def speak_text(text: str, *, config: Any = None,
                 "audio_path": result.audio_path,
                 "duration_s": result.duration_s,
                 "tts_id": request.request_id,
+                "fallback": bool(primary_error),
+                "primary_error": primary_error,
                 "correlation_id": correlation_id}
     sink = output or output_for(str(get("playback_backend", "auto")))
     if isinstance(sink, str):
@@ -147,6 +151,8 @@ def speak_text(text: str, *, config: Any = None,
             "tts_id": request.request_id,
             "playback": played.backend if played.ok
             else played.error,
+            "fallback": bool(primary_error),
+            "primary_error": primary_error,
             "latency_ms": total_ms, "correlation_id": correlation_id}
 
 

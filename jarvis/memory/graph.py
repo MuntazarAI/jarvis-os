@@ -91,6 +91,9 @@ class KnowledgeGraph:
             self._conn.commit()
 
     # -- nodes -----------------------------------------------------------
+    #: Node history is capped: a hot node must not grow a single blob.
+    MAX_NODE_HISTORY = 100
+
     def upsert_node(
         self,
         name: str,
@@ -119,6 +122,8 @@ class KnowledgeGraph:
                 history = json.loads(row["history"] or "[]")
                 version = row["version"] + 1
                 history.append({"version": version, "at": ts, "kind": kind, "attributes": attributes})
+                if len(history) > self.MAX_NODE_HISTORY:
+                    del history[:-self.MAX_NODE_HISTORY]
                 self._conn.execute(
                     "UPDATE nodes SET kind = ?, attributes = ?, confidence = MAX(confidence, ?),"
                     " last_seen = ?, version = ?, history = ? WHERE name = ?",

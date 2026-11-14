@@ -672,8 +672,6 @@ class CognitiveSupervisor:
                                                  "NO_PREDICTION"))[:500],
             confidence=prediction_detail.get("confidence"),
             basis=list(prediction_detail.get("basis", []) or []))
-        plan_detail = by_stage.get("plan").detail \
-            if by_stage.get("plan") else {}
         action_detail = self._action_from_record(record)
         outcome.plan = CognitivePlan(
             goal=str(action_detail.get("reason", ""))[:300],
@@ -694,7 +692,10 @@ class CognitiveSupervisor:
         result_detail = by_stage.get("act").detail \
             if by_stage.get("act") else {}
         outcome.result = CognitiveResult(
-            ok=bool(result_detail.get("ok", record.ok)),
+            # A cycle that ran no stage is not a success: an empty
+            # record (a paused loop) must not be reported as one.
+            ok=bool(result_detail.get("ok", record.ok
+                                      if record.stages else False)),
             output=result_detail.get("output", result_detail.get("result")),
             error=str(result_detail.get("error", ""))[:500],
             correlation_id=record.cycle_id)

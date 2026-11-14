@@ -11,6 +11,12 @@ from typing import Any
 
 DEFAULT_HOME = Path(os.environ.get("JARVIS_HOME", Path.home() / ".jarvis-os"))
 
+#: The kinds of work a model can be selected for.
+MODEL_KINDS = ("fast", "reasoning", "coding", "vision", "embedding")
+
+#: Supported model backend protocols.
+MODEL_BACKEND_TYPES = ("ollama", "openai")
+
 
 @dataclass
 class PathsConfig:
@@ -92,8 +98,13 @@ class PolicyConfig:
     local_only: bool = True
     record_audit: bool = True
     emergency_stop_file: str = "EMERGENCY_STOP"
+    emergency_stop: bool = False
+    rate_limit_calls: int = 30
+    rate_limit_window_s: float = 60.0
     proactivity: str = "assisted"
     quiet_hours: list[int] = field(default_factory=lambda: list(range(23, 7)))
+    rate_limit_calls: int = 30
+    rate_limit_window_s: float = 60.0
 
 
 @dataclass
@@ -109,6 +120,12 @@ class ModelConfig:
     ollama_host: str = "http://localhost:11434"
     llm_timeout: float = 120.0
     llm_max_tokens: int = 512
+    #: Configured model providers. Empty means "the local Ollama daemon".
+    #: Each entry: {name, type, base_url, models, api_key_env,
+    #: api_key_secret, local, enabled}. See jarvis/models/backends.py.
+    backends: list[dict[str, Any]] = field(default_factory=list)
+    #: Which backend answers which kind: {fast: "backend:model", ...}.
+    selection: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -308,15 +325,28 @@ class JarvisConfig:
         return target
 
     @classmethod
-    def load(cls) -> "JarvisConfig":
+    def load(cls, home: str | Path | None = None) -> "JarvisConfig":
+        """Load config from the given home (default: JARVIS_HOME or ~).
+
+        Precedence: explicit home > JARVIS_HOME env > config.json >
+        dataclass defaults. Environment overrides are applied last so an
+        operator can always steer a live system without editing files.
+        """
         cfg = cls()
+        cfg.apply_env_overrides()
+        if home:
+            cfg.paths.home = Path(home)
         path = cfg.config_file
         if path.exists():
             try:
-                cfg = cls.from_dict(json.loads(path.read_text()))
-            except (json.JSONDecodeError, OSError):
+                loaded = cls.from_dict(json.loads(path.read_text()))
+                loaded.paths.home = cfg.paths.home
+                cfg = loaded
+            except (json.JSONDecodeError, OSError, ValueError, TypeError):
                 pass
         cfg.apply_env_overrides()
+        if home:
+            cfg.paths.home = Path(home)
         cfg.validate()
         return cfg
 
@@ -334,6 +364,9 @@ class JarvisConfig:
         cloud = os.environ.get("JARVIS_CLOUD")
         if cloud is not None:
             self.models.cloud_enabled = cloud.lower() in ("1", "true", "yes")
+        ollama_host = os.environ.get("JARVIS_OLLAMA_HOST")
+        if ollama_host:
+            self.models.ollama_host = ollama_host
         ref = os.environ.get("JARVIS_VOICE_REFERENCE")
         if ref:
             self.voice.reference_audio = ref
@@ -358,6 +391,9 @@ class JarvisConfig:
             errors.append("memory.decay_half_life_days must be > 0")
         if self.models.embedding_dim < 8:
             errors.append("models.embedding_dim must be >= 8")
+        if self.memory.consolidate_every_cycles < 1:
+            # The cycle counter does a modulo by this: 0 kills every cycle.
+            errors.append("memory.consolidate_every_cycles must be >= 1")
         if self.server.port < 1 or self.server.port > 65535:
             errors.append("server.port out of range")
         if self.service.interval_s < 30.0:
@@ -372,6 +408,21 @@ class JarvisConfig:
             errors.append("service.max_log_bytes must be >= 65536")
         if not 1 <= self.service.max_log_files <= 20:
             errors.append("service.max_log_files must be 1..20")
+        for kind in self.models.selection:
+            if kind not in MODEL_KINDS:
+                errors.append(f"models.selection: unknown kind '{kind}' "
+                              f"(use {', '.join(MODEL_KINDS)})")
+        for entry in self.models.backends:
+            if not isinstance(entry, dict):
+                errors.append("models.backends entries must be mappings")
+                continue
+            name = str(entry.get("name") or "").strip()
+            if not name:
+                errors.append("models.backends entry needs a name")
+            backend_type = str(entry.get("type") or "ollama").strip().lower()
+            if backend_type not in MODEL_BACKEND_TYPES:
+                errors.append(f"models.backends '{name}': unknown type "
+                              f"'{backend_type}'")
         if self.logging.max_log_bytes < 65536:
             errors.append("logging.max_log_bytes must be >= 65536")
         if not 1 <= self.logging.max_log_files <= 20:

@@ -21,10 +21,22 @@ from urllib.parse import urlparse
 
 from .claims import Claim
 
+def _host_of(url: str) -> str:
+    """The host of a URL without a leading "www.".
+
+    ``lstrip("www.")`` strips a *set of characters*, so "wikipedia.org"
+    became "ikipedia.org" and "w3.org" became "3.org".
+    """
+    host = urlparse(url).netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
 
 def _domain(url: str) -> str:
     try:
-        return urlparse(url).netloc.lower().lstrip("www.")
+        return _host_of(url)
     except ValueError:
         return ""
 

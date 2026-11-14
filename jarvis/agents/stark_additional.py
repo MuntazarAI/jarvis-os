@@ -515,12 +515,6 @@ STARK_AI_ADDITIONS.append(
             "raw screenshots never stored",
         ),
         roles=(("computer", "observe"),),
-        team="perception",
-        may_act=True,
-        max_tool_calls=4,
-        max_seconds=45.0,
-        dispatchable=True,
-        signature="I'm right here with you.",
     ),
 )
 
@@ -564,12 +558,6 @@ STARK_AI_ADDITIONS.append(
             "raw screenshots never stored",
         ),
         roles=(("computer", "observe"),),
-        team="perception",
-        may_act=True,
-        max_tool_calls=4,
-        max_seconds=45.0,
-        dispatchable=True,
-        signature="I'm right here with you.",
     ),
 )
 
@@ -613,11 +601,5 @@ STARK_AI_ADDITIONS.append(
             "raw screenshots never stored",
         ),
         roles=(("computer", "observe"),),
-        team="perception",
-        may_act=True,
-        max_tool_calls=4,
-        max_seconds=45.0,
-        dispatchable=True,
-        signature="I'm right here with you.",
     ),
 )

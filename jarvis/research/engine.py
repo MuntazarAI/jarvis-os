@@ -53,6 +53,18 @@ class ResearchReport:
                 "citations": self.citations,
                 "confidence": round(self.confidence, 3)}
 
+def _host_of(url: str) -> str:
+    """The host of a URL without a leading "www.".
+
+    ``lstrip("www.")`` strips a *set of characters*, so "wikipedia.org"
+    became "ikipedia.org" and "w3.org" became "3.org".
+    """
+    host = urlparse(url).netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
 
 class ResearchEngine:
     def __init__(self, browser: BrowserAgent | None = None,
@@ -75,7 +87,7 @@ class ResearchEngine:
 
     @classmethod
     def credibility(cls, url: str, words: int = 0) -> tuple[float, list[str]]:
-        host = urlparse(url).netloc.lower().lstrip("www.")
+        host = _host_of(url)
         notes: list[str] = []
         if not url.startswith("https://"):
             return 0.2, ["not https"]

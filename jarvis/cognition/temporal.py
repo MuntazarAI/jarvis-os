@@ -72,7 +72,10 @@ class Timeline:
         ordered = self.order()
         out: list[dict[str, Any]] = []
         for first, second in zip(ordered, ordered[1:]):
-            if second.at < first.at:
+            # After sorting, the second event never starts before the
+            # first: overlap means starting inside the first event's
+            # duration.
+            if second.at < first.at + max(first.duration_s, 0.0):
                 relation = "overlap"
             elif second.at - first.at <= max(first.duration_s, 1.0):
                 relation = "during"

@@ -12,6 +12,10 @@ from typing import Any
 from ..core.loop import Jarvis
 from ..policy.policy import sanitize_approval_args
 
+#: Hard cap on a request body. The API takes small JSON documents;
+#: anything larger is a client bug or an attack, never a real request.
+MAX_BODY_BYTES = 64 * 1024
+
 
 def _bearer_ok(provided: str, expected: str) -> bool:
     import hmac
@@ -611,7 +615,30 @@ class JarvisAPI:
                 self.wfile.write(body)
 
             def do_POST(self) -> None:  # noqa: N802
-                length = int(self.headers.get("Content-Length", "0") or 0)
+                raw_length = self.headers.get("Content-Length", "0") or "0"
+                try:
+                    length = int(raw_length)
+                except (TypeError, ValueError):
+                    # A malformed header is a client bug: answer 400
+                    # instead of dying inside the handler (which the
+                    # client would see as a dropped connection).
+                    self._headers(400)
+                    self.wfile.write(json.dumps(
+                        {"error": "invalid Content-Length"}).encode())
+                    return
+                if length < 0:
+                    self._headers(400)
+                    self.wfile.write(json.dumps(
+                        {"error": "invalid Content-Length"}).encode())
+                    return
+                if length > MAX_BODY_BYTES:
+                    # Refuse before reading: never allocate a body the
+                    # client asked us to hold in memory.
+                    self._headers(413)
+                    self.wfile.write(json.dumps({
+                        "error": "request body too large",
+                        "max_bytes": MAX_BODY_BYTES}).encode())
+                    return
                 body = self.rfile.read(length) if length else b""
                 code, payload = api.handle("POST", self.path, body,
                                            {k.lower(): v for k, v in self.headers.items()})

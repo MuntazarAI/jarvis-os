@@ -35,8 +35,8 @@ def _scrub(value: Any) -> Any:
                 and "credential" not in k.lower()}
     if isinstance(value, list):
         return [_scrub(v) for v in value]
-    if isinstance(value, str) and len(value) > 200:
-        return value[:200] + "…[truncated]"
+    # Content length is bounded at input time, not by rewriting what was
+    # stored: a silently truncated goal comes back as the real goal.
     return value
 
 

@@ -48,7 +48,13 @@ def _restricted_import(name, globals=None, locals=None, fromlist=(), level=0):
         # Check parent package
         parent = name.split('.')[0]
         if parent not in ALLOWED_IMPORTS:
-            raise ImportError(f"Import of '{name}' not in allowlist")
+            # A private module of an allowed package is allowed too: the
+            # interpreter imports helpers like _contextvars lazily, and
+            # blocking them breaks ordinary code on some Python versions.
+            public = name.lstrip('_').split('.')[0]
+            if not (name.startswith('_') and not name.startswith('__')
+                    and public in ALLOWED_IMPORTS):
+                raise ImportError(f"Import of '{name}' not in allowlist")
     return _original_import(name, globals, locals, fromlist, level)
 
 builtins.__import__ = _restricted_import

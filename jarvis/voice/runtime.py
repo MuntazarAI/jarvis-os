@@ -40,24 +40,37 @@ def rms(samples: bytes, width: int = 2) -> float:
 def read_wav_mono16(path: str, target_rate: int = 16000) -> tuple[bytes, int]:
     """Return (pcm16 bytes, rate). Only native 16kHz mono is read directly;
     otherwise ffmpeg converts (ffmpeg is required for that path)."""
-    with wave.open(path, "rb") as w:
-        channels, width, rate, n = (w.getnchannels(), w.getsampwidth(),
-                                    w.getframerate(), w.getnframes())
-        raw = w.readframes(n)
+    try:
+        with wave.open(path, "rb") as w:
+            channels, width, rate, n = (w.getnchannels(), w.getsampwidth(),
+                                        w.getframerate(), w.getnframes())
+            raw = w.readframes(n)
+    except wave.Error as exc:
+        # A headerless recording (arecord's default) is not a wav file.
+        raise RuntimeError(f"not a wav file: {path} ({exc})") from exc
     if rate == target_rate and channels == 1 and width == 2:
         return raw, rate
     if shutil.which("ffmpeg") is None:
         raise RuntimeError(f"unsupported wav format ({rate}Hz/{channels}ch) "
                            "and ffmpeg is missing for conversion")
     out = path + ".16k.wav"
-    proc = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", path,
-                           "-ar", str(target_rate), "-ac", "1",
-                           "-c:a", "pcm_s16le", out],
-                          capture_output=True, text=True, timeout=60)
-    if proc.returncode != 0 or not Path(out).exists():
-        raise RuntimeError(f"ffmpeg conversion failed: {proc.stderr[-300:]}")
-    with wave.open(out, "rb") as w:
-        return w.readframes(w.getnframes()), target_rate
+    try:
+        proc = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", path,
+                               "-ar", str(target_rate), "-ac", "1",
+                               "-c:a", "pcm_s16le", out],
+                              capture_output=True, text=True, timeout=60)
+        if proc.returncode != 0 or not Path(out).exists():
+            raise RuntimeError(
+                f"ffmpeg conversion failed: {proc.stderr[-300:]}")
+        with wave.open(out, "rb") as w:
+            return w.readframes(w.getnframes()), target_rate
+    finally:
+        # The converted file is a byproduct: it must not pile up next to
+        # the recording.
+        try:
+            Path(out).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 # -- VAD -------------------------------------------------------------------------
@@ -162,7 +175,8 @@ class MicRecorder:
         if shutil.which("arecord"):
             try:
                 proc = subprocess.run(
-                    ["arecord", "-q", "-f", "S16_LE", "-r", str(self.rate),
+                    ["arecord", "-q", "-t", "wav", "-f", "S16_LE",
+                     "-r", str(self.rate),
                      "-c", "1", "-d", str(int(seconds)), dest],
                     capture_output=True, text=True, timeout=seconds + 10)
                 if proc.returncode == 0 and Path(dest).exists():
@@ -199,12 +213,14 @@ class MicRecorder:
         while elapsed < max_seconds:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 part = tmp.name
-            result = self.record(poll_seconds, part)
-            if not result.get("ok"):
-                return result
             try:
+                result = self.record(poll_seconds, part)
+                if not result.get("ok"):
+                    return result
                 pcm, _ = read_wav_mono16(part)
             finally:
+                # The chunk is temporary: it goes away whether the
+                # recording worked or not.
                 Path(part).unlink(missing_ok=True)
             chunks.append(pcm)
             elapsed += poll_seconds

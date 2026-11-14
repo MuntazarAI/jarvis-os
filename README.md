@@ -177,10 +177,27 @@ The system is designed to preserve context across tasks while keeping observatio
 | 🌐 Research | Browser/research workflows with source-aware reasoning |
 | 🎙️ Voice | Offline STT, TTS, VAD, wake-word architecture |
 | 👁️ Vision | Camera/screen perception with resource-aware fast/slow paths |
-| 🧩 Model routing | Local-first model selection and fallback chains |
+| 🧩 Model routing | Pluggable backends — local Ollama, NVIDIA NIM, any OpenAI-compatible server — with per-kind selection and fallback chains |
 | ⚙️ Tasks | Workflows, triggers, retries, checkpoints, branches, and cancellation |
+| 🛰️ 24/7 service | Two user systemd units: the background loop, and the local API that serves the board |
 | 📡 API | REST + WebSocket interfaces |
 | 📊 Verification | Tests, doctor checks, benchmarks, and failure isolation |
+
+---
+
+## System inventory
+
+Counts come from the code, not from a roadmap:
+
+| 🤖 Agent roles | 🤖 Stark roster | 🔲 DOT templates | 🤖 AI bots | 🧠 Fly-brain neurons |
+|---|---|---|---|---|
+| 38 | 500 | 200 | 250 | 166,000 |
+
+The roster, the DOT templates and the bots are **generated data** —
+names, personalities and purposes, not 950 separate brains. The 38 agent
+roles are the dispatchable ones, and every one of them is policy-gated,
+audited and security-constrained. The 166,000 neurons are a synthetic
+connectome *schema*, not a trained brain.
 
 ---
 
@@ -243,13 +260,29 @@ JARVIS-OS is organized as cooperating subsystems rather than one giant assistant
 | Inference | `jarvis/inference/` | Evidence, hypotheses, reasoning, analysis |
 | Agents | `jarvis/agents/` | Agent orchestration and DAG planning |
 | Tasks | `jarvis/tasks/` | Workflows, triggers, retries, checkpoints |
-| Models | `jarvis/models/` | Model registry, routing, lifecycle |
+| Models | `jarvis/models/` | Model registry, routing, lifecycle, **pluggable backends** |
 | Tools | `jarvis/tools/` | Controlled tool execution |
-| Policy | `jarvis/policy/` | Permissions, risk gates, approvals |
+| Policy | `jarvis/policy/` | Permissions, risk gates, approvals, standing grants |
 | Security | `jarvis/security/` | Secrets, sessions, consent, safeguards |
 | Voice | `jarvis/voice/` | STT, TTS, VAD, wake-word pipeline |
 | Vision | `jarvis/vision/` | Screen/camera perception |
 | API | `jarvis/api/` | REST and WebSocket interfaces |
+| Perception | `jarvis/perception/` | Typed providers (screen, camera, files, objects) |
+| Device | `jarvis/device/` | Device fabric, durable grants, approvals, outbox |
+| Durable | `jarvis/durable/` | Crash-safe task store, runner, recovery |
+| Intelligence | `jarvis/intelligence/` | Unified cognitive loop, wiring, sensory bus |
+| Conductor | `jarvis/conductor/` | Front-door intent router and service |
+| Proactive | `jarvis/proactive/` | Bounded attention and proactive decisions |
+| Dots / Missions | `jarvis/dots/`, `jarvis/missions/` | Autonomous workers and mission lifecycle |
+| Service | `jarvis/service/` | 24/7 background loop and trigger engine |
+| World Intel | `jarvis/worldintel/` | Live sources, evidence, research, conflicts |
+| Notify | `jarvis/notify/` | Notification backends, dedupe, rate limits |
+| Computer | `jarvis/computer/` | Screen, windows, clipboard, input automation |
+| Research | `jarvis/research/`, `jarvis/browser/` | Source-aware research workflows |
+| Developer | `jarvis/developer/` | Coding loop, repository inspection |
+| Planning | `jarvis/planning/` | Mission planning |
+| Spatial / Geospatial | `jarvis/spatial/`, `jarvis/geospatial/` | Spatial memory, live intelligence |
+| Reports / Bench | `jarvis/reports/`, `jarvis/bench.py` | Read-only reports, benchmarks |
 
 For the detailed system specification, see [the unified architecture map](docs/JARVIS_FULL_MASTER_MAP_UNIFIED.md).
 
@@ -264,7 +297,22 @@ git clone git@github.com:MuntazarAI/jarvis-os.git
 cd jarvis-os
 ```
 
-### 2. Install the package
+### 2. Install — one command
+
+```bash
+python3 -m jarvis.cli install
+```
+
+That single command installs the package (so `jarvis` runs from any
+directory), installs and starts **two user systemd services** — the
+background loop and the local API that serves the board — makes sure a
+model backend is configured, and runs the health checks. No root needed:
+the services are user units under `~/.config/systemd/user`.
+
+Undo with `jarvis install --uninstall`.
+
+<details>
+<summary>Manual install (no systemd)</summary>
 
 ```bash
 python3 -m venv .venv
@@ -274,14 +322,14 @@ pip install -e .
 
 The core project intentionally keeps its Python dependency surface small. Optional capabilities can use local system backends and optional packages.
 
-### 3. Run JARVIS
-
 ```bash
 jarvis status
 jarvis doctor
 jarvis talk "hello there"
 jarvis repl
 ```
+
+</details>
 
 ### Useful commands
 
@@ -313,6 +361,12 @@ jarvis start
 jarvis stop
 jarvis restart
 jarvis serve --port 8765
+
+jarvis models list                 # every provider, its health, the selection
+jarvis models use reasoning nvidia # pick the model that answers thinking
+jarvis models test --probe         # send a real prompt to a provider
+jarvis install                     # (re)run the one-shot setup
+jarvis install --uninstall         # remove the services and the global command
 ```
 
 ### Experience Layer (command center)
@@ -369,6 +423,42 @@ source .venv/bin/activate
 
 System backends are detected automatically when available, including Ollama, espeak-ng, Tesseract, FFmpeg, and ydotool. Optional setups that need root access or large downloads are documented in [docs/OPTIONAL_HOST_CAPABILITIES.md](docs/OPTIONAL_HOST_CAPABILITIES.md).
 
+### Install everything with one command
+
+```bash
+cd ~/Projects/jarvis-os && python3 -m jarvis.cli install
+```
+
+This installs the package so `jarvis` runs from any directory, installs
+and starts two user systemd services (the background loop and the local
+API that serves the dashboard), makes sure a model backend is
+configured, and runs the health checks. No root needed — the services
+are user units under `~/.config/systemd/user`. Undo with
+`jarvis install --uninstall`.
+
+### Any model, any provider
+
+Models are reached through pluggable **backends**: the local Ollama
+daemon, NVIDIA NIM, or any OpenAI-compatible server (LM Studio, vLLM,
+llama.cpp, Groq, OpenRouter, Together, OpenAI). Which backend answers
+which kind of work — fast, reasoning, coding, vision, embedding — is
+configuration, not code:
+
+```bash
+jarvis models list                                  # providers + health
+jarvis models add nvidia --type openai \
+  --base-url https://integrate.api.nvidia.com/v1 \
+  --model reasoning=nvidia/nemotron-3-ultra-550b-a55b \
+  --api-key-secret nvidia_api_key --remote
+cat key.txt | jarvis models key nvidia              # key goes in the vault
+jarvis models use reasoning nvidia --allow-remote   # pick a model
+```
+
+API keys live in the encrypted vault, never in config or on a command
+line. `policy.local_only` keeps remote backends configured but unused
+until you deliberately allow them. Full details in
+[docs/MODELS.md](docs/MODELS.md).
+
 ---
 
 ## Current status
@@ -383,6 +473,10 @@ The repository is actively evolving through milestone-based development. The cod
 | Device fabric | ✅ Implemented |
 | Android node | ✅ 3.10 transport + E2E |
 | Persistent device intelligence | ✅ 4.2 grants/approvals/outbox |
+| Model backends | ✅ Any provider — Ollama, NVIDIA NIM, OpenAI-compatible |
+| Model selection & fallback | ✅ Per kind, with a local-only privacy wall |
+| 24/7 background service | ✅ Two user systemd units + `jarvis install` |
+| Security audit pass | ✅ Token sealing, final denials, locked stores, fail-closed stops |
 | Neural Nervous System | 🧪 4.0 foundation |
 | Real Android network transport | ✅ 3.10 E2E-proven |
 | Connectome-scale neural experiments | 🔬 Future research |
@@ -432,14 +526,15 @@ Existing working subsystems should be extended rather than repeatedly rewritten.
 JARVIS-OS includes application-level safeguards such as:
 
 - policy gates around tool calls
-- approval gates for destructive operations
-- restricted Python execution
-- secret sealing and tamper detection
+- approval gates for destructive operations, single-use and expiring
+- restricted Python execution in a child process with a hard timeout
+- secret sealing and tamper detection; keys in the vault, never in config, argv or logs
+- credential stores (vault key, approval store) are unreadable by tools and perception
 - consent/session controls
-- emergency-stop handling
+- emergency-stop handling that fails closed
 - prompt/tool injection defenses
 - evidence and provenance tracking
-- failure isolation
+- failure isolation, corrupt-state quarantine and bounded in-memory state
 
 These are software safeguards, not a guarantee of security. Review the code and your local environment before using JARVIS with sensitive systems.
 
@@ -489,7 +584,11 @@ Open this repository in **GitHub Codespaces** or any Dev Container-compatible VS
 | [Architecture map](docs/JARVIS_FULL_MASTER_MAP_UNIFIED.md) | Complete system specification |
 | [Documentation index](docs/README.md) | Organized entry point for project documentation |
 | [Architecture guide](docs/ARCHITECTURE.md) | High-level architecture and subsystem boundaries |
+| [Models](docs/MODELS.md) | Using any model provider, selection, and key handling |
+| [Background service](docs/BACKGROUND_SERVICE.md) | The 24/7 loop and its systemd units |
+| [Experience layer](docs/EXPERIENCE.md) | Command centre, board, and API surface |
 | [Contributing](CONTRIBUTING.md) | Development workflow and contribution standards |
+| [Code of conduct](CODE_OF_CONDUCT.md) | Expected behaviour and scope |
 | [Security](SECURITY.md) | Security reporting and safe disclosure |
 | [Changelog](CHANGELOG.md) | Milestone history |
 
@@ -508,23 +607,47 @@ jarvis-os/
 │   ├── JARVIS_FULL_MASTER_MAP_UNIFIED.md
 │   └── README.md
 ├── jarvis/
-│   ├── agents/
-│   ├── api/
-│   ├── cognition/
-│   ├── core/
-│   ├── events/
-│   ├── inference/
-│   ├── memory/
-│   ├── models/
-│   ├── policy/
-│   ├── security/
-│   ├── tasks/
-│   ├── tools/
-│   ├── vision/
-│   ├── voice/
-│   └── world/
+│   ├── agents/       orchestration, roles, DAG planning
+│   ├── api/          REST + WebSocket, status board, command centre
+│   ├── autonomy/     standing grants, preferences, presence
+│   ├── browser/      headless research browser
+│   ├── cognition/    intent, attention, executive, mentalist
+│   ├── computer/     screen, windows, clipboard, input
+│   ├── conductor/    front-door router and service
+│   ├── core/         loop, config, shared types, protected paths
+│   ├── developer/    coding loop, repo inspection
+│   ├── device/       device fabric, durable grants, approvals, outbox
+│   ├── dots/         autonomous workers and schedules
+│   ├── durable/      crash-safe task store and runner
+│   ├── events/       event sourcing, replay, snapshots
+│   ├── geospatial/   live intelligence feeds
+│   ├── inference/    evidence, hypotheses, reasoning
+│   ├── intelligence/ unified cognitive loop, wiring, sensory bus
+│   ├── memory/       memory palace, consolidation, graph, identity
+│   ├── missions/     mission lifecycle, proposals, verification
+│   ├── models/       registry, routing, **pluggable backends**
+│   ├── neural/       spiking neural substrate
+│   ├── notify/       notification backends and rate limits
+│   ├── perception/   typed providers (screen, camera, file, objects)
+│   ├── planning/     mission planning
+│   ├── plugins/      extension contract
+│   ├── policy/       permissions, risk gates, approvals, grants
+│   ├── proactive/    bounded attention and proactive decisions
+│   ├── reports/      read-only SQL reports
+│   ├── research/     source-aware research engine
+│   ├── security/     secrets, sessions, consent, safeguards
+│   ├── service/      24/7 background loop, trigger engine
+│   ├── spatial/      spatial memory
+│   ├── tasks/        workflows, triggers, retries, checkpoints
+│   ├── tools/        controlled tool execution
+│   ├── vision/       screen/camera perception
+│   ├── voice/        STT, TTS, VAD, wake word
+│   ├── world/        environmental and system state
+│   └── worldintel/   live sources, evidence, research, conflicts
+├── systemd/          user units for the 24/7 services
 ├── tests/
 ├── CHANGELOG.md
+├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
 ├── README.md
 ├── SECURITY.md

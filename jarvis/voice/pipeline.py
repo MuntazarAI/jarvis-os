@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import tempfile
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any
@@ -97,9 +99,25 @@ class TextToSpeech:
                     "queued": text[:120]}
         try:
             binary = "piper" if self.backend == "piper" else shutil.which("espeak-ng") or "espeak"
-            proc = subprocess.run([binary, text[:800]], capture_output=True,
-                                  text=True, timeout=60)
-            return {"ok": proc.returncode == 0, "backend": self.backend}
+            # espeak writes a WAV stream to stdout; decoding it as text
+            # raises UnicodeDecodeError and throws the audio away. Write
+            # a file instead and never capture audio as text.
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                dest = tmp.name
+            try:
+                if self.backend == "piper":
+                    proc = subprocess.run([binary, "--output_file", dest],
+                                          input=text[:800], capture_output=True,
+                                          timeout=60)
+                else:
+                    proc = subprocess.run([binary, "-w", dest, text[:800]],
+                                          capture_output=True, timeout=60)
+                return {"ok": proc.returncode == 0, "backend": self.backend}
+            finally:
+                try:
+                    os.unlink(dest)
+                except OSError:
+                    pass
         except (OSError, subprocess.SubprocessError) as exc:
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 

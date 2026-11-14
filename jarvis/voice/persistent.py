@@ -23,6 +23,7 @@ import atexit
 import json
 import os
 import subprocess
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -220,6 +221,10 @@ class PersistentTTSClient:
         self._state = WorkerState.SHUTDOWN
         self._gen = 0
         self._busy = False
+        # One request at a time on the wire: the worker speaks one
+        # protocol, so a health check must never read a synthesis's
+        # reply (or the other way round).
+        self._io_lock = threading.Lock()
         self._restarts = 0
         self._ok = 0
         self._failed = 0
@@ -401,8 +406,9 @@ class PersistentTTSClient:
             if len(raw_line) > int(self.limits["max_request_bytes"]):
                 raise PersistentError("request too large")
             assert self._transport is not None
-            self._transport.send_line(raw_line)
-            line = self._transport.read_line(deadline)
+            with self._io_lock:
+                self._transport.send_line(raw_line)
+                line = self._transport.read_line(deadline)
             try:
                 raw = json.loads(line.decode("utf-8"))
             except (UnicodeDecodeError, ValueError):
@@ -418,6 +424,9 @@ class PersistentTTSClient:
                 raise PersistentError("invalid audio artifact")
             self._ok += 1
             self._last_ok_at = time.time()
+            # A healthy worker earns a fresh restart budget: two
+            # transient failures over a long life must not kill it.
+            self._restarts = 0
             latency = round((time.monotonic() - started) * 1000.0, 1)
             TELEMETRY.record("voice.worker.synth", status="ok",
                              latency_ms=latency,
@@ -534,14 +543,19 @@ class PersistentTTSClient:
         }
         if self._state != WorkerState.READY or self._transport is None:
             return base
+        if self._busy:
+            # A synthesis owns the wire; asking now would eat its reply.
+            base["worker_error"] = "busy"
+            return base
         req_id = _new_id("r")
         try:
-            self._transport.send_line(json.dumps(
-                {"v": PROTOCOL_VERSION, "id": req_id,
-                 "op": "health"}).encode())
-            line = self._transport.read_line(
-                time.monotonic() + float(
-                    self.limits["health_timeout_s"]))
+            with self._io_lock:
+                self._transport.send_line(json.dumps(
+                    {"v": PROTOCOL_VERSION, "id": req_id,
+                     "op": "health"}).encode())
+                line = self._transport.read_line(
+                    time.monotonic() + float(
+                        self.limits["health_timeout_s"]))
             data = validate_response(
                 json.loads(line.decode("utf-8")), req_id)
             base["worker"] = {

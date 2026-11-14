@@ -20,6 +20,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ..core.protected import PROTECTED_NAMES, PROTECTED_PATHS, is_protected
+
 from .contract import (
     MAX_DIMENSION_PX,
     MAX_FILE_BYTES,
@@ -132,6 +134,20 @@ def _image_dimensions(path: Path, kind: str) -> tuple[int, int]:
     return 0, 0
 
 
+def _capture_failed(shot: Any, dest: Path) -> bool:
+    """Did the capture fail?
+
+    A backend reports failure in its result; some only say nothing.
+    Either way, no file means no observation.
+    """
+    if isinstance(shot, dict) and shot.get("ok") is False:
+        return True
+    try:
+        return not dest.exists()
+    except OSError:
+        return True
+
+
 class ScreenProvider(PerceptionProvider):
     """One-shot screen observation: capture + OCR + window metadata."""
 
@@ -183,7 +199,20 @@ class ScreenProvider(PerceptionProvider):
                 privacy_class=PrivacyClass.LOCAL)
         dest = _capture_dir() / f"screen-{int(time.time())}.png"
         try:
-            self._capture.capture(str(dest))
+            shot = self._capture.capture(str(dest))
+            if _capture_failed(shot, dest):
+                # The capture reports failure instead of raising: an
+                # unreadable screen must not look like an observation.
+                detail = ""
+                if isinstance(shot, dict):
+                    detail = str(shot.get("error", ""))[:120]
+                return Observation(
+                    source="screen-provider", modality=Modality.SCREEN,
+                    payload={"status": "error",
+                             "detail": detail or "screen capture failed"},
+                    confidence=0.0,
+                    provenance={"provider": self.name},
+                    privacy_class=PrivacyClass.LOCAL)
         except Exception as exc:
             return Observation(
                 source="screen-provider", modality=Modality.SCREEN,
@@ -295,12 +324,23 @@ class CameraProvider(PerceptionProvider):
                 privacy_class=PrivacyClass.LOCAL)
         dest = _capture_dir() / f"camera-{int(time.time())}.jpg"
         try:
-            self._capture.capture(str(dest), device=self._device)
-        except TypeError:
             try:
-                self._capture.capture(str(dest))
-            except Exception as exc:
-                return self._capture_error(exc)
+                shot = self._capture.capture(str(dest), device=self._device)
+            except TypeError:
+                shot = self._capture.capture(str(dest))
+            if _capture_failed(shot, dest):
+                # The capture reports failure instead of raising: a
+                # missing frame must not become a successful reading.
+                detail = ""
+                if isinstance(shot, dict):
+                    detail = str(shot.get("error", ""))[:120]
+                return Observation(
+                    source="camera-provider", modality=Modality.CAMERA,
+                    payload={"status": "error",
+                             "detail": detail or "camera capture failed"},
+                    confidence=0.0,
+                    provenance={"provider": self.name},
+                    privacy_class=PrivacyClass.LOCAL)
         except Exception as exc:
             return self._capture_error(exc)
         try:
@@ -432,26 +472,17 @@ class FileProvider(PerceptionProvider):
 
     #: Credential stores and equivalent are never readable, even when
     #: explicitly requested (fail closed; observing them would launder
-    #: secrets into memory/world through summaries).
-    BLOCKED_PATHS = ("/etc/shadow", "/etc/sudoers", "/etc/gshadow",
-                     "/etc/master.passwd")
-    BLOCKED_NAMES = ("id_rsa", "id_ed25519", "id_ecdsa", ".pem", ".key",
-                     ".p12", ".pfx", "secrets.json", ".env", ".netrc",
-                     "_history", "credentials.json", "cookies.sqlite",
-                     "Login Data", "keystore", "wallet.dat")
+    #: secrets into memory/world through summaries). The canonical list
+    #: lives in jarvis/core/protected.py so the tool layer refuses the
+    #: same files.
+    BLOCKED_PATHS = PROTECTED_PATHS
+    BLOCKED_NAMES = PROTECTED_NAMES
 
     @classmethod
     def _refuse_sensitive(cls, resolved: Path, original: str) -> None:
-        text = str(resolved)
-        for blocked in cls.BLOCKED_PATHS:
-            if text == blocked or text.startswith(blocked + "/"):
-                raise PerceptionError(
-                    f"refusing credential store: {original}")
-        name = resolved.name
-        for blocked in cls.BLOCKED_NAMES:
-            if blocked in name:
-                raise PerceptionError(
-                    f"refusing credential store: {original}")
+        reason = is_protected(resolved)
+        if reason:
+            raise PerceptionError(f"refusing credential store: {original}")
 
     def capabilities(self) -> dict[str, Any]:
         return {"text": True, "json": True, "csv": True, "markdown": True,

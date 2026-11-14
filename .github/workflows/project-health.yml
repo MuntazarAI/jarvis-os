@@ -27,7 +27,7 @@ jobs:
           python-version: "3.13"
           cache: pip
       - name: Install project and test tooling
-        run: python -m pip install --upgrade pip pytest && python -m pip install -e .
+        run: python -m pip install --upgrade pip pytest pytest-asyncio && python -m pip install -e .
       - name: Run test suite
         run: xvfb-run -a bash -lc 'printf "ci-seed" | xclip -selection clipboard; python -m pytest -q'
       - name: Repository health checks

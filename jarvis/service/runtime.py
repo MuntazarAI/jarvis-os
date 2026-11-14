@@ -337,8 +337,12 @@ class BackgroundService:
         if len(self._queue) >= self.max_queue:
             # Backpressure: drop the lowest-priority (largest number)
             # queued trigger, record it, accept the new one.
+            # The queue holds (priority, run_at, seq, trigger): index 0
+            # is the priority. Dropping by run_at discarded a critical
+            # trigger scheduled far ahead in favour of a low-priority
+            # one due sooner.
             worst = max(range(len(self._queue)),
-                        key=lambda i: (self._queue[i][1],
+                        key=lambda i: (self._queue[i][0],
                                        self._queue[i][2]))
             _, _, _, dropped = self._queue.pop(worst)
             heapq.heapify(self._queue)

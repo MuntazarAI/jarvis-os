@@ -61,7 +61,12 @@ def _trigger_for(schedule: Any) -> tuple[str, dict[str, Any]]:
 
 
 def sync_trigger(triggers: Any, schedule: Any) -> None:
-    """Refresh the mirrored trigger spec after next_run changes."""
+    """Refresh the mirrored trigger spec after next_run changes.
+
+    A one-shot trigger only fires while its fire count is zero, so a
+    schedule that moved to a new time has to be re-armed — otherwise a
+    daily or weekly schedule fires once and never again.
+    """
     action = f"{WAKE_ACTION_PREFIX}{schedule.dot_id}:{schedule.schedule_id}"
     kind, spec = _trigger_for(schedule)
     for trig in triggers.triggers.values():
@@ -69,6 +74,9 @@ def sync_trigger(triggers: Any, schedule: Any) -> None:
             trig.kind = kind
             trig.spec = spec
             trig.enabled = schedule.enabled
+            if kind == "schedule" and spec.get("at"):
+                # Re-arm for the new time.
+                trig.fire_count = 0
             return
     ensure_trigger(triggers, schedule)
 
@@ -333,3 +341,16 @@ def _advance(sched: Any, stamp: float, manager: Any) -> None:
         sched.next_run = compute_next(
             sched.kind, sched.config, sched.timezone, stamp,
             created_at=sched.created_at)
+        _rearm(manager, sched)
+
+
+def _rearm(manager: Any, sched: Any) -> None:
+    """Mirror the moved next_run back into the trigger engine."""
+    triggers = getattr(manager, "deps", None)
+    triggers = getattr(triggers, "triggers", None) if triggers is not None else None
+    if triggers is None:
+        return
+    try:
+        sync_trigger(triggers, sched)
+    except Exception:
+        pass

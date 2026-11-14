@@ -266,6 +266,11 @@ class IntelligenceLoop:
                 checkpoint = self.neural_checkpoint()
             except Exception:
                 checkpoint = None
+        if self.state not in (LoopState.RUNNING, LoopState.START):
+            # A paused loop runs no stage: say so instead of returning an
+            # empty cycle that looks like a successful one.
+            record.failed_stage = "not-running"
+            return record
         try:
             for stage in STAGES:
                 if self.state not in (LoopState.RUNNING, LoopState.START):

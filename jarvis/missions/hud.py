@@ -73,7 +73,7 @@ def build_snapshot(ctx: HudContext) -> dict[str, Any]:
         "proposals": [{
             "proposal_id": p.proposal_id, "title": p.title,
             "status": p.status.value, "score": p.score,
-        } for p in _proposal_list(ctx)],
+        } for p in proposals],
         "system": _safe(ctx.system_state, {"status": "unknown"})
         if callable(ctx.system_state) else {"status": "unknown"},
         "emergency_stop": bool(_safe(ctx.emergency_engaged, False))
