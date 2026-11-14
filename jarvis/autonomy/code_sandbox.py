@@ -59,6 +59,7 @@ class SandboxPolicy:
         "numbers", "abc", "enum", "string",
         "_pydecimal", "bisect", "_collections_abc", "_pydecimal",
         "contextvars", "bisect", "operator", "_pydecimal",
+        "struct", "_struct", "copyreg",
     })
     blocked_imports: Set[str] = field(default_factory=lambda: {
         # Dangerous modules
@@ -116,7 +117,16 @@ class SandboxPolicy:
             return True
         # Check parent package
         parent = module.split(".")[0]
-        return parent in self.allowed_imports
+        if parent in self.allowed_imports:
+            return True
+        # A private module of an allowed package is allowed too: the
+        # interpreter imports helpers like _contextvars lazily, and
+        # blocking them breaks ordinary code on some Python versions.
+        if module.startswith("_") and not module.startswith("__"):
+            public = module.lstrip("_").split(".")[0]
+            if public and public in self.allowed_imports:
+                return True
+        return False
 
 
 @dataclass
@@ -286,7 +296,11 @@ def restricted_import(name, globals=None, locals=None, fromlist=(), level=0):
         # Check parent package
         parent = name.split('.')[0]
         if parent not in ALLOWED_IMPORTS:
-            raise ImportError("Import of '{name}' not in allowlist")
+            # A private module of an allowed package is allowed too.
+            public = name.lstrip('_').split('.')[0]
+            if not (name.startswith('_') and not name.startswith('__')
+                    and public in ALLOWED_IMPORTS):
+                raise ImportError("Import of '{name}' not in allowlist")
     return original_import(name, globals, locals, fromlist, level)
 
 builtins.__import__ = restricted_import
