@@ -751,6 +751,28 @@ def _models_text(report: dict[str, Any]) -> str:
     return "\n".join(lines) or "ok"
 
 
+def _store_api_key(vault: Any, slot: str, backend: str = "") -> bool:
+    """Read one API key and put it in the vault.
+
+    Reading and storing live together on purpose: the value never
+    reaches a scope that prints anything, so it cannot leak into a log,
+    a report or an error message.
+    """
+    import getpass
+    try:
+        if sys.stdin.isatty():
+            value = getpass.getpass(
+                f"API key for {backend or 'backend'}: ").strip()
+        else:
+            value = sys.stdin.readline().strip()
+    except Exception:
+        return False
+    if not value:
+        return False
+    vault.put(slot, value)
+    return True
+
+
 def _models_action(args: Any) -> int:
     """Model backends: list, add, remove, use, test, key.
 
@@ -964,21 +986,12 @@ def _models_action(args: Any) -> int:
         if not name:
             return _out({"error": "backend name required"}, 2)
         slot = str(getattr(args, "value", "") or "").strip() or f"{name}_api_key"
-        try:
-            import getpass
-            if sys.stdin.isatty():
-                key = getpass.getpass(f"API key for {name}: ").strip()
-            else:
-                key = sys.stdin.readline().strip()
-        except Exception:
-            key = ""
-        if not key:
+        from .security.security import SecretVault
+        vault = SecretVault(config.paths.home)
+        if not _store_api_key(vault, slot, name):
             return _out({"error": "no key read (pipe it on stdin, e.g. "
                                   f"'cat key.txt | jarvis models key {name}')"},
                          2)
-        from .security.security import SecretVault
-        vault = SecretVault(config.paths.home)
-        vault.put(slot, key)
         entries = [e for e in config.models.backends
                    if str(e.get("name") or "") == name]
         for entry in entries:
