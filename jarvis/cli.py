@@ -751,12 +751,13 @@ def _models_text(report: dict[str, Any]) -> str:
     return "\n".join(lines) or "ok"
 
 
-def _store_api_key(vault: Any, slot: str, backend: str = "") -> bool:
+def _store_api_key(vault: Any, slot: str, backend: str = "") -> None:
     """Read one API key and put it in the vault.
 
     Reading and storing live together on purpose: the value never
     reaches a scope that prints anything, so it cannot leak into a log,
-    a report or an error message.
+    a report or an error message. Failure is raised, not returned —
+    a return value would carry the read back to the caller.
     """
     import getpass
     try:
@@ -766,11 +767,12 @@ def _store_api_key(vault: Any, slot: str, backend: str = "") -> bool:
         else:
             value = sys.stdin.readline().strip()
     except Exception:
-        return False
+        # from None: the original failure carries the read, and must
+        # not travel back to a scope that prints.
+        raise ValueError("could not read the key") from None
     if not value:
-        return False
+        raise ValueError("no key read")
     vault.put(slot, value)
-    return True
 
 
 def _models_action(args: Any) -> int:
@@ -988,7 +990,9 @@ def _models_action(args: Any) -> int:
         slot = str(getattr(args, "value", "") or "").strip() or f"{name}_api_key"
         from .security.security import SecretVault
         vault = SecretVault(config.paths.home)
-        if not _store_api_key(vault, slot, name):
+        try:
+            _store_api_key(vault, slot, name)
+        except ValueError:
             return _out({"error": "no key read (pipe it on stdin, e.g. "
                                   f"'cat key.txt | jarvis models key {name}')"},
                          2)
