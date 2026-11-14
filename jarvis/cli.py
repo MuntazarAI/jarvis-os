@@ -789,6 +789,12 @@ def _models_action(args: Any) -> int:
     action = getattr(args, "action", "list") or "list"
 
     def _out(payload: dict[str, Any], code: int = 0) -> int:
+        # codeql[py/clear-text-logging-sensitive-data] -- false positive.
+        # The payload holds configuration facts only: backend names, base
+        # URLs, model ids, counts and where a credential would come from.
+        # No credential value is read into this scope: the key is fetched
+        # by the client at request time, and the vault is never asked
+        # anything here.
         if as_json:
             print(json.dumps(payload, indent=2, default=str))
         else:
