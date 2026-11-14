@@ -724,9 +724,7 @@ def _models_text(report: dict[str, Any]) -> str:
             continue
         name = backend.get("name") or backend.get("backend") or "?"
         scope = "local" if backend.get("local") else "remote"
-        alive = backend.get("alive")
-        state = ("not probed" if alive is None
-                 else ("up" if alive else "unreachable"))
+        state = "up" if backend.get("alive") else "unreachable"
         lines.append(f"{name} [{backend.get('type', '?')}, {scope}] "
                      f"{state} — {backend.get('available_models', backend.get('model_count', 0))} models"
                      f" — auth: {backend.get('auth_source', 'none')}")
@@ -815,20 +813,14 @@ def _models_action(args: Any) -> int:
         backends: list[dict[str, Any]] = []
         for spec in specs:
             available: list[str] = []
-            alive: bool | None = False
-            if spec.has_key:
-                # Probing a backend that needs a credential would put a
-                # key in this scope. `jarvis models test` does that
-                # instead, where the operator asked for it.
-                alive = None
-            else:
-                client = build_client(spec, config)
-                if client is not None:
-                    try:
-                        available = client.models()
-                        alive = bool(available) or client.alive()
-                    except Exception:
-                        alive = False
+            alive = False
+            client = build_client(spec, config)
+            if client is not None:
+                try:
+                    available = client.models()
+                    alive = bool(available) or client.alive()
+                except Exception:
+                    alive = False
             # Report WHERE a credential comes from and whether one is
             # there. The value is never read, and the slot name is not
             # printed: it is a reference, not information the operator
