@@ -19,7 +19,14 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.types import now
-from .approvals import ApprovalStore
+from .approvals import (
+    APPROVED as APPROVAL_APPROVED,
+    CONSUMED,
+    DENIED,
+    EXPIRED,
+    REVOKED,
+    ApprovalStore,
+)
 from .audit import DeviceAudit
 from .authz import DeviceGrantStore
 from .outbox import (
@@ -458,8 +465,49 @@ class DeviceCommandService:
                         retryable=False)
                     return {"ok": False, "command_id": command_id,
                             "error": str(failed.get("error", ""))[:300]}
-            # First request, or a spent/expired/denied token: mint a fresh
-            # durable approval and park the command for the human.
+                if state in (DENIED, REVOKED):
+                    # An explicit human denial or revocation is final.
+                    failed = self.outbox.fail(
+                        command_id, f"approval {state}",
+                        retryable=False)
+                    self.audit.record(
+                        "device.command.denied", actor=actor,
+                        device_id=str(record.get("device_id", "")),
+                        ok=False, reasons=reasons,
+                        extra={"command_id": command_id,
+                               "approval_state": state})
+                    return {"ok": False, "command_id": command_id,
+                            "denied": True,
+                            "error": f"approval {state}"}
+
+                if state == APPROVAL_APPROVED:
+                    # The router rejected an approved token. This can mean
+                    # its actor/device/capability/argument binding failed.
+                    # Never disguise that mismatch as a fresh approval.
+                    failed = self.outbox.fail(
+                        command_id, "approved token rejected",
+                        retryable=False)
+                    self.audit.record(
+                        "device.command.denied", actor=actor,
+                        device_id=str(record.get("device_id", "")),
+                        ok=False, reasons=reasons,
+                        extra={"command_id": command_id,
+                               "approval_state": state})
+                    return {"ok": False, "command_id": command_id,
+                            "denied": True,
+                            "error": "approved token rejected"}
+
+                if state not in (CONSUMED, EXPIRED):
+                    # Unknown or unexpected states fail closed.
+                    failed = self.outbox.fail(
+                        command_id, "invalid approval state",
+                        retryable=False)
+                    return {"ok": False, "command_id": command_id,
+                            "denied": True,
+                            "error": "invalid approval state"}
+
+            # First request, or a consumed/expired token: request fresh
+            # human approval. The old token remains permanently unusable.
             approval = self.approvals.request(
                 actor, str(record.get("device_id", "")),
                 str(record.get("capability", "")),

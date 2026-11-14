@@ -298,17 +298,37 @@ class StandingGrantStore:
 
     def authorize(self, actor: str, capability: str, scope_kind: str,
                   resource: str, operation: str) -> tuple[bool, str]:
-        """Any live covering grant authorizes (deny beats allow is
-        enforced inside evaluate_grant per operation)."""
+        """Authorize against the standing grants.
+
+        Deny beats allow: an explicit deny on a grant that covers this
+        capability, scope and subject wins, even when an older grant
+        allows the same operation. The module rule is "explicit deny >
+        policy > grant" — a deny must never be lost to an older allow.
+        """
         self._maybe_reload()
+        allowed: str | None = None
         for grant in sorted(self._grants.values(),
                             key=lambda g: g.created_at):
-            ok, reason = evaluate_grant(
-                grant, actor=actor, capability=capability,
-                scope_kind=scope_kind, resource=resource,
-                operation=operation)
-            if ok:
-                return True, f"{grant.grant_id}: {reason}"
+            if not grant.live:
+                continue
+            if grant.subject not in ("*", actor):
+                continue
+            if grant.capability != capability:
+                continue
+            try:
+                if not scope_matches(grant, scope_kind, resource):
+                    continue
+            except Exception:
+                continue
+            # This grant covers this exact action.
+            if operation in (grant.denied_operations or []):
+                return False, f"{grant.grant_id}: operation explicitly denied"
+            if operation not in (grant.allowed_operations or []):
+                continue
+            if allowed is None:
+                allowed = f"{grant.grant_id}: standing grant covers action"
+        if allowed is not None:
+            return True, allowed
         return False, "no live standing grant covers action"
 
 

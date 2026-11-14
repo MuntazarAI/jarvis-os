@@ -9,6 +9,7 @@ JARVIS-OS is a local-first AI operating system architecture for agents, memory, 
 - **[Security](https://github.com/MuntazarAI/jarvis-os/blob/main/SECURITY.md)** — security policy and reporting
 - **[Contributing](https://github.com/MuntazarAI/jarvis-os/blob/main/CONTRIBUTING.md)** — development workflow
 - **[Roadmap](https://github.com/MuntazarAI/jarvis-os/milestones)** — planned work
+- **[Models](https://github.com/MuntazarAI/jarvis-os/blob/main/docs/MODELS.md)** — using any model provider
 
 ## Architecture
 
@@ -28,6 +29,9 @@ The language model is not the security boundary. Model output is treated as a pr
 
 | Area | Purpose |
 | --- | --- |
+| docs/MODELS.md | Model backends: any provider, per-kind selection, key handling |
+| docs/BACKGROUND_SERVICE.md | 24/7 background service and its systemd units |
+| docs/EXPERIENCE.md | Experience layer: command centre, board, API surface |
 | docs/NEURAL_NERVOUS_SYSTEM.md | Neural subsystem architecture |
 | docs/ANDROID_NODE.md | Android node design |
 | docs/ANDROID_TRANSPORT.md | Android transport and pairing |

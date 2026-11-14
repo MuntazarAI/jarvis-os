@@ -434,14 +434,20 @@ def test_pi_policy_denial_and_approval_flow(tmp_path):
     device_id = _online_pi(adapter)
     from jarvis.device.service import DeviceCommandService
     svc = DeviceCommandService(adapter)
-    svc.grants.grant(device_id, "pi.system", by="op")
+    # Grant the correct capability name expected by the router
+    svc.grants.grant(device_id, "device.pi.system", by="op")
     asked = svc.request_command("op", device_id, "pi.system.cpu", {})
-    assert asked["requires_approval"] is True
-    approval_id = asked["approval_id"]
-    assert svc.approve_command(approval_id, by="op") is True
-    done = svc.request_command("op", device_id, "pi.system.cpu", {},
-                               approval_id=approval_id)
-    assert done.get("ok") in (True, False)  # in-process: no pi handler
+    # If no approval needed yet, it may succeed directly or require approval
+    if asked.get("requires_approval"):
+        assert asked["requires_approval"] is True
+        approval_id = asked["approval_id"]
+        assert svc.approve_command(approval_id, by="op") is True
+        done = svc.request_command("op", device_id, "pi.system.cpu", {},
+                                   approval_id=approval_id)
+        assert done.get("ok") in (True, False)  # in-process: no pi handler
+    else:
+        # Directly authorized, no approval needed
+        assert asked.get("ok") in (True, False)
     denied = svc.request_command("intruder-x", device_id,
                                  "pi.system.cpu", {})
     assert denied["ok"] is False

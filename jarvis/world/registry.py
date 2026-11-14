@@ -109,8 +109,26 @@ class WorldEntity:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "WorldEntity":
+        # Reject malformed records instead of manufacturing placeholder
+        # entities from missing fields.
+        if not isinstance(data, dict):
+            raise TypeError("world entity must be an object")
+
+        for key in ("id", "type", "name"):
+            value = data.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"world entity has invalid {key}")
+
+        for key in ("attributes", "state", "provenance"):
+            if key in data and not isinstance(data[key], dict):
+                raise TypeError(f"world entity {key} must be an object")
+
+        for key in ("uncertainty", "evidence_refs"):
+            if key in data and not isinstance(data[key], list):
+                raise TypeError(f"world entity {key} must be a list")
+
         return cls(**{k: data.get(k, v) for k, v in (
-            ("id", ""), ("type", "related_to"), ("name", ""),
+            ("id", ""), ("type", "event"), ("name", ""),
             ("attributes", {}), ("state", {}),
             ("created_at", 0.0), ("updated_at", 0.0), ("observed_at", 0.0),
             ("provenance", {}), ("confidence", 0.6), ("uncertainty", []),
@@ -223,8 +241,14 @@ class JsonFileWorldStore:
         if self.quarantined_path:
             return
         try:
-            # Microsecond stamp + pid avoids same-second collisions when two
-            # store instances load the same corrupt file in one test run.
+            # One quarantine copy per store file: a process that reloads
+            # the store on every tick must not write a new full copy
+            # each time.
+            existing = sorted(self.path.parent.glob(
+                f"{self.path.name}.corrupt-*"))
+            if existing:
+                self.quarantined_path = str(existing[0])
+                return
             stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{int(time.time_ns() % 1_000_000):06d}-p{os.getpid()}"
             target = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
             if target.exists():
@@ -576,6 +600,9 @@ class WorldRegistry:
             try:
                 entity = WorldEntity.from_dict(raw)
             except (ValueError, KeyError, TypeError):
+                continue
+            # The persisted dictionary key must agree with the entity ID.
+            if str(eid) != entity.id:
                 continue
             registry.entities[entity.id] = entity
         for rid, raw in (data.get("relations") or {}).items():

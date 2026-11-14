@@ -136,7 +136,12 @@ def test_security_agent_audit_trail(policy):
     assert len(agent.verdicts) == 2
     status = agent.status()
     assert status["total_evaluations"] == 2
-    assert status["allowed"] == 2
+    # A filesystem mutation is a risk-0.5 action: it is allowed, but it
+    # parks for operator approval instead of counting as plain allowed.
+    assert status["allowed"] == 1
+    assert status["pending_approvals"] == 1
+    assert status["blocked"] == 0
+    assert agent.verdicts[1].approval_token
 
 
 # -- Step 1.5: Multi-agent workflow end-to-end ---------------------------

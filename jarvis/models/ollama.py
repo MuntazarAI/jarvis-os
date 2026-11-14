@@ -15,6 +15,11 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 
+#: Upper bound for one image inference (the first one loads the vision
+#: tower; on a small CPU that is slow, but it must not hang forever).
+IMAGE_TIMEOUT_S = 180.0
+
+
 @dataclass
 class OllamaConfig:
     host: str = "http://localhost:11434"
@@ -28,6 +33,23 @@ class OllamaConfig:
 class OllamaClient:
     def __init__(self, config: OllamaConfig | None = None) -> None:
         self.config = config or OllamaConfig()
+
+    @classmethod
+    def from_spec(cls, spec: Any) -> "OllamaClient":
+        """Build a client from a backend spec (see models/backends.py)."""
+        models = dict(getattr(spec, "models", {}) or {})
+        config = OllamaConfig(
+            host=getattr(spec, "base_url", "") or "http://localhost:11434",
+            timeout=float(getattr(spec, "timeout", 120.0) or 120.0),
+            default_model=(models.get("reasoning") or models.get("fast")
+                           or "qwen2.5:3b"),
+            coding_model=(models.get("coding") or models.get("reasoning")
+                          or "qwen2.5-coder:3b"),
+            vision_model=models.get("vision") or "qwen3-vl:2b",
+            embedding_model=models.get("embedding")
+            or "nomic-embed-text:latest",
+        )
+        return cls(config)
 
     # -- transport ---------------------------------------------------------
     def _post(self, path: str, payload: dict[str, Any],
@@ -101,8 +123,10 @@ class OllamaClient:
                 payload["images"] = [self._image_b64(p) for p in images]
             except OSError as exc:
                 return {"ok": False, "error": f"unreadable image: {exc}"}
-            # First multimodal inference loads the vision tower; allow longer.
-            timeout = max(timeout or 0.0, 300.0)
+            # First multimodal inference loads the vision tower: allow
+            # longer, but stay bounded so a slow model cannot hang the
+            # caller for minutes.
+            timeout = max(timeout or 0.0, IMAGE_TIMEOUT_S)
         result = self._post("/api/generate", payload, timeout=timeout)
         if not result.get("ok"):
             return result

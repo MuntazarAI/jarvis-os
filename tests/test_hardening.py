@@ -138,7 +138,7 @@ def test_policy_hook_denies_ungranted_permission():
     allowed, reason = make_policy_hook(PolicyEngine(), tools=default_registry())(
         "filesystem_write", {})
     assert allowed is False
-    assert "lacks permissions" in reason
+    assert "missing permissions" in reason
 
 
 def test_policy_hook_allows_granted_low_risk_action():
@@ -151,9 +151,9 @@ def test_policy_hook_allows_granted_low_risk_action():
 
 def test_policy_hook_requires_approval_for_high_risk_action():
     policy = PolicyEngine()
-    policy.grant("intelligence-loop", "exec")
+    policy.grant("intelligence-loop", "fs.write")
     allowed, reason = make_policy_hook(policy, tools=default_registry())(
-        "terminal_run", {"command": "ls"})
+        "filesystem_write", {"path": "test.txt", "content": "test"})
     assert allowed is False
     assert "needs approval" in reason
 
@@ -320,7 +320,7 @@ def test_act_respects_emergency_stop(tmp_path):
     (tmp_path / "EMERGENCY_STOP").write_text("engaged\n")
     actions, used = act(fake, "calculate 2 + 2", [], [])
     assert used == []
-    assert any("EMERGENCY STOP" in a for a in actions), actions
+    assert any("emergency stop" in a.lower() for a in actions), actions
     assert fake.tools.history == []
 
 

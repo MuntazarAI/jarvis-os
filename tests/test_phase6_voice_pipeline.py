@@ -50,6 +50,9 @@ def config(home):
     cfg.policy.local_only = True
     cfg.models.cloud_enabled = False
     cfg.models.ollama_enabled = False
+    # The deterministic fake voice: this test must not depend on a TTS
+    # backend being installed on the machine.
+    cfg.voice.tts_provider = "fake"
     return cfg
 
 

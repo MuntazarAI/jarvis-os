@@ -8,11 +8,16 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 from ..core.types import RiskLevel, new_id, now
+
+#: How many tool results are kept in memory. A long-lived process must
+#: not grow without bound.
+MAX_HISTORY = 200
 
 
 @dataclass
@@ -84,6 +89,8 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
         self.history: list[ToolResult] = []
+        #: A long-lived process must not grow without bound.
+        self.max_history = MAX_HISTORY
 
     def register(self, tool: Tool) -> None:
         if tool.spec.name in self._tools:
@@ -107,6 +114,8 @@ class ToolRegistry:
             return ToolResult(tool=name, ok=False, error=f"unknown tool: {name}")
         result = tool.run(**kwargs)
         self.history.append(result)
+        if len(self.history) > self.max_history:
+            del self.history[:-self.max_history]
         return result
 
     def stats(self) -> dict[str, Any]:
@@ -157,6 +166,12 @@ def _fail(tool: str, error: str) -> ToolResult:
 def filesystem_read(path: str, max_bytes: int = 65536) -> ToolResult:
     try:
         target = Path(path).expanduser().resolve()
+        # Credential stores are never readable: a file read must not
+        # become a vault key or an approval token.
+        from ..core.protected import is_protected
+        blocked = is_protected(target)
+        if blocked:
+            return _fail("filesystem_read", f"refusing {blocked}: {path}")
         if not target.exists():
             return _fail("filesystem_read", f"not found: {path}")
         if target.is_dir():
@@ -233,26 +248,69 @@ def python_run(code: str, timeout: float = 15.0) -> ToolResult:
     allowed, reason = _python_ast_allowed(code, set(safe_builtins))
     if not allowed:
         return _fail("python_run", f"blocked: {reason}")
+    # The code runs in a child process: a runaway expression must not
+    # take the agent with it. A deadline checked after the fact cannot
+    # stop `sum(range(10**10))`; the OS timeout can.
+    budget = max(1.0, min(float(timeout or 15.0), 15.0))
     try:
-        compiled = compile(code, "<jarvis>", "eval")
-        import time
-        deadline = time.time() + min(timeout, 15.0)
-        result = eval(compiled, {"__builtins__": safe_builtins}, {})  # noqa: S307
-        if time.time() > deadline:
-            return _fail("python_run", "budget exceeded")
-        return _ok("python_run", {"result": _capped_result(result)})
-    except SyntaxError:
-        try:
-            compiled = compile(code, "<jarvis>", "exec")
-            namespace: dict[str, Any] = {}
-            exec(compiled, {"__builtins__": safe_builtins}, namespace)  # noqa: S102
-            namespace.pop("__builtins__", None)
-            return _ok("python_run", {"result": _capped_result(namespace.get("result")),
-                                      "defined": sorted(namespace)})
-        except Exception as exc:
-            return _fail("python_run", f"{type(exc).__name__}: {exc}")
+        proc = subprocess.run(
+            [sys.executable, "-c", _PYTHON_RUNNER],
+            input=code, capture_output=True, text=True, timeout=budget)
+    except subprocess.TimeoutExpired:
+        return _fail("python_run", f"timed out after {budget:.0f}s")
     except Exception as exc:
         return _fail("python_run", f"{type(exc).__name__}: {exc}")
+    out = (proc.stdout or "").strip()
+    if not out:
+        detail = (proc.stderr or "").strip()[-200:] or "no result"
+        return _fail("python_run", detail)
+    try:
+        payload = json.loads(out.splitlines()[-1])
+    except ValueError:
+        return _fail("python_run", "unreadable result")
+    if not payload.get("ok"):
+        return _fail("python_run", str(payload.get("error", "failed"))[:200])
+    return _ok("python_run", {"result": _capped_result(payload.get("result")),
+                              "defined": payload.get("defined", [])})
+
+
+#: Runs inside the child process. It re-creates the same restricted
+#: builtins and reports the result as one JSON line.
+_PYTHON_RUNNER = """
+import builtins, json, sys
+
+SAFE = {
+    "abs": abs, "min": min, "max": max, "sum": sum, "len": len,
+    "round": round, "sorted": sorted, "range": range, "enumerate": enumerate,
+    "str": str, "int": int, "float": float, "bool": bool, "list": list,
+    "dict": dict, "tuple": tuple, "set": set,
+}
+
+def cap(value, limit=2000):
+    try:
+        text = repr(value)
+    except Exception:
+        return "[unrepresentable result]"
+    return value if len(text) <= limit else text[:limit] + "...[truncated]"
+
+code = sys.stdin.read()
+try:
+    namespace = {"__builtins__": SAFE}
+    try:
+        # A bare expression answers with its value.
+        value = eval(compile(code, "<jarvis>", "eval"), namespace)
+        result, defined = value, []
+    except SyntaxError:
+        # Statements assign; the answer is the `result` variable.
+        exec(compile(code, "<jarvis>", "exec"), namespace)  # noqa: S102
+        namespace.pop("__builtins__", None)
+        result = namespace.get("result")
+        defined = sorted(k for k in namespace if not k.startswith("__"))
+    print(json.dumps({"ok": True, "result": cap(result),
+                      "defined": defined}))
+except Exception as exc:
+    print(json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}))
+"""
 
 
 _SAFE_EXPR_NODES = (
@@ -427,7 +485,8 @@ def code_security_scan(target: str = ".") -> ToolResult:
 def default_registry() -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(Tool(ToolSpec("filesystem_read", "Read a file or list a directory",
-                               RiskLevel.SAFE, 10.0, ["fs.read"]), filesystem_read))
+                               RiskLevel.SAFE, 10.0, ["fs.read"],
+                               sensitive_output=True), filesystem_read))
     reg.register(Tool(ToolSpec("filesystem_write", "Write text to a file",
                                 RiskLevel.MEDIUM, 10.0, ["fs.write"]), filesystem_write))
     reg.register(Tool(ToolSpec("filesystem_move", "Move one file into an existing directory",

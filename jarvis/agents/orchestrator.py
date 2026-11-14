@@ -19,6 +19,9 @@ from .blackboard import Blackboard
 from .bus import AgentMessage, Classification, MessageBus, MessageType
 from .contract import AgentCard, AgentResult, SkillRegistry, VerificationStatus, role_cards
 
+#: Caps for the in-memory run records and trace lists.
+MAX_RUNS = 200
+MAX_TRACES = 200
 log = get_module_logger(__name__)
 
 
@@ -189,6 +192,9 @@ class Orchestrator:
         self.skills = ctx.skills if ctx.skills is not None else SkillRegistry()
         self.traces: dict[str, list[TraceEvent]] = {}
         self.runs: dict[str, RunRecord] = {}
+        #: Both grow per run; a long-lived process must not grow forever.
+        self.max_traces = MAX_TRACES
+        self.max_runs = MAX_RUNS
         self.boards: dict[str, dict[str, Any]] = {}
         self._cancelled: set[str] = set()
         self.bus.subscribe("broadcast", self._on_cancel)
@@ -241,7 +247,10 @@ class Orchestrator:
             recipient="broadcast", task_id=task_id))
 
     def _trace(self, task_id: str, **kw: Any) -> None:
-        self.traces.setdefault(task_id, []).append(TraceEvent(task_id=task_id, **kw))
+        events = self.traces.setdefault(task_id, [])
+        events.append(TraceEvent(task_id=task_id, **kw))
+        if len(events) > self.max_traces:
+            del events[:-self.max_traces]
 
     def explain(self, task_id: str) -> str:
         """Reconstruct request → decision → roles → evidence → actions →
@@ -334,16 +343,6 @@ class Orchestrator:
                      r"migrate|deploy)\b", low):
             depth = min(4, depth + 1)  # multi-step → deeper, never auto-5
         return depth
-        if words <= 6 and not any(w in low for w in
-                                  ("and then", "after", "plan", "research",
-                                   "compare", "investigate", "build", "fix")):
-            return 0
-        if any(w in low for w in ("verify", "check", "confirm", "test")):
-            return 2
-        if any(w in low for w in ("plan", "build", "research", "investigate",
-                                  "compare", "migrate", "deploy")):
-            return 3
-        return 1
 
     # -- main entry ------------------------------------------------------------
     def run(self, goal: str, depth: int | None = None,
@@ -360,6 +359,11 @@ class Orchestrator:
                            depth=level, team=team or "",
                            budgets=budgets.to_dict())
         self.runs[record.run_id] = record
+        if len(self.runs) > self.max_runs:
+            # Insertion order is age order: drop the oldest first. The
+            # persisted traces stay on disk.
+            for run_id in list(self.runs)[:len(self.runs) - self.max_runs]:
+                self.runs.pop(run_id, None)
         board = Blackboard(goal=goal)
         board.write("goal", goal, author="orchestrator", provenance="user",
                     confidence=1.0)

@@ -149,11 +149,14 @@ class Experience:
         self.confidence = _clamp_confidence(self.confidence)
         if len(self.observation_refs) > MAX_EVIDENCE_REFS:
             raise ExperienceError("too many observation refs")
-        for ref in self.observation_refs:
+        for index, ref in enumerate(self.observation_refs):
             if isinstance(ref, dict):
+                # Normalise into the list itself: rebinding the loop
+                # variable threw the conversion away.
                 ref = EvidenceRef(**{k: ref[k] for k in
                                      ("kind", "ref_id")
                                      if k in ref})
+                self.observation_refs[index] = ref
             if not isinstance(ref, EvidenceRef):
                 raise ExperienceError("observation_refs must be EvidenceRef")
 

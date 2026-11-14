@@ -19,6 +19,8 @@ state lives in `--home` (default `~/.jarvis-os`).
 - Ask: `talk "<request>"` (one-shot) · `repl` (interactive)
 - Health: `doctor` (deps/hardware/models) · `service doctor` ·
   `task doctor` · `status` (system JSON)
+- Setup: `install` (one-shot: global command, 24/7 service, models,
+  health) · `install --uninstall` (undo) · `setup` (read-only checklist)
 - Observe: `board [--open]` (dashboard URL) · `serve` (API+WS) ·
   `remote` (phone/local remote URL) · `/experience` page + 
   `GET /api/experience` (command-center snapshot) ·
@@ -37,6 +39,10 @@ state lives in `--home` (default `~/.jarvis-os`).
 - Policy: `approvals` · `grants` · `autonomy`
 - Ops: `service` (lifecycle/health/logs) · `backup` · `benchmark` ·
   `devices` · `pi` · `integration`
+- Models: `models` (backends: list/add/remove/use/test/key) —
+  `jarvis models list` shows every provider, its reachability and the
+  selected model per kind; `models use <kind> <backend[:model]>` picks
+  one; keys go in the vault, never in argv or config
 - Security: `security review` (static self-review) ·
   `security scan` (dynamic scan via Strix sandbox, policy-gated)
 

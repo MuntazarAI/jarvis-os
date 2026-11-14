@@ -9,12 +9,17 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..core.logging import get_module_logger
 from ..core.types import Modality, Observation, now
 from ..memory.palace import MemoryPalace
-from ..world.model import WorldModel
+
+if TYPE_CHECKING:
+    # Imported for typing only: the world model imports the cognition
+    # package, which imports this module back. A runtime import here is
+    # a circular import.
+    from ..world.model import WorldModel
 
 log = get_module_logger(__name__)
 
@@ -46,7 +51,7 @@ class WorldMemoryBridge:
       - memory_to_world: palace.store_episode() → world.record_event()
     """
 
-    def __init__(self, world: WorldModel, palace: MemoryPalace,
+    def __init__(self, world: "WorldModel", palace: MemoryPalace,
                  auto_sync: bool = True) -> None:
         self.world = world
         self.palace = palace

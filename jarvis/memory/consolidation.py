@@ -81,7 +81,8 @@ class MemoryConsolidator:
 
     # -- dedup -----------------------------------------------------------
     def _dedup(self, mems: list, report: ConsolidationReport) -> int:
-        threshold = self.config.memory.dedup_similarity
+        # Near-duplicates are merged by similarity in _merge_similar; this
+        # pass removes exact repeats only.
         seen: dict[str, str] = {}
         removed = 0
         for mem in sorted(mems, key=lambda m: -m.importance):

@@ -102,14 +102,16 @@ class DeviceRouter:
                                   "device": None, "decision": None,
                                   "approval_token": ""}
         # 1. Emergency stop blocks everything, before any other work.
-        if self.policy is not None and hasattr(self.policy, "_emergency_stop"):
+        # Fail closed: if the stop cannot be read, treat it as engaged.
+        if self.policy is not None:
             try:
-                if self.policy._emergency_stop():
-                    denied["reasons"] = [
-                        "EMERGENCY STOP engaged — all device actions blocked"]
-                    return denied
+                engaged = self.policy.emergency_stop_engaged()
             except Exception:
-                pass
+                engaged = True
+            if engaged:
+                denied["reasons"] = [
+                    "EMERGENCY STOP engaged — all device actions blocked"]
+                return denied
         # 2. Device must exist and be allowed to execute.
         try:
             device = self.registry.require(device_id)

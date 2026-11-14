@@ -153,7 +153,11 @@ def run_tests(jarvis: Any, path: str = ".", timeout: float = 300.0) -> dict[str,
         return {"ok": False, "error": result.error}
     out = str(result.output.get("stdout", ""))
     tail = out.strip().splitlines()[-3:] if out.strip() else []
-    passed = "passed" in out
+    # The exit code is the truth: "1 failed, 11 passed" contains the
+    # word "passed" but the run did not pass.
+    returncode = result.output.get("returncode")
+    failed = "failed" in out or "error" in out
+    passed = bool(returncode == 0) and not failed
     jarvis.palace.store_episode(f"ran tests in {path}: {'PASS' if passed else 'CHECK'}",
                                 room="Experiences", importance=0.6)
     return {"ok": True, "passed": passed, "tail": tail}

@@ -9,7 +9,9 @@ Rules: read-only (no POST route), defensive (any failing subsystem
 contributes an explicit `unknown` marker, the snapshot never raises),
 and secret-scrubbed (tokens/keys never enter the payload). The page
 itself carries no authority: same token gate as the API, token kept
-in sessionStorage, sent as a header, never in URLs.
+in sessionStorage, sent as a header for REST, and — because a browser
+cannot set headers on a WebSocket upgrade — as a `?token=` parameter
+on the live feed (same as the experience page).
 """
 
 from __future__ import annotations
@@ -158,6 +160,44 @@ def _security_info(home: str) -> dict[str, Any]:
     return _safe(_read, {"posture": "unknown"})
 
 
+def _models_info(jarvis: Any) -> dict[str, Any]:
+    """Which model provider answers which kind of work, and is it up."""
+    def _snapshot() -> dict[str, Any]:
+        from ..models.backends import (build_client, configured_backends,
+                                       resolve_selection)
+        cfg = getattr(jarvis, "config", None)
+        selection = resolve_selection(cfg)
+        backends = []
+        for spec in configured_backends(cfg):
+            alive = False
+            count = 0
+            client = build_client(spec, cfg)
+            if client is not None:
+                try:
+                    available = client.models()
+                    count = len(available)
+                    alive = bool(available) or client.alive()
+                except Exception:
+                    alive = False
+            backends.append({
+                "name": spec.name,
+                "type": spec.type,
+                "local": spec.local,
+                "alive": alive,
+                "models": count,
+                "serves": sorted(k for k, v in selection.items()
+                                 if v[0] == spec.name),
+            })
+        return {
+            "backends": backends,
+            "selection": {kind: f"{name}:{model}"
+                          for kind, (name, model) in selection.items()},
+            "local_only": bool(getattr(cfg.policy, "local_only", True))
+            if cfg is not None else True,
+        }
+    return _safe(_snapshot, {"status": "unknown"})
+
+
 def build_board(jarvis: Any) -> dict[str, Any]:
     """Assemble the snapshot. Never raises; unknowns are explicit."""
     try:
@@ -174,6 +214,7 @@ def build_board(jarvis: Any) -> dict[str, Any]:
             "missions": _missions_info(jarvis),
             "durable": _durable_info(home),
             "voice": _voice_info(jarvis),
+            "models": _models_info(jarvis),
             "approvals": _approvals(policy),
             "reach": _reach_info(jarvis),
             "security": _security_info(home),
@@ -312,6 +353,19 @@ let secRows = [["posture", sec.posture ?? "?"],
 ["reverified", (sec.counts && sec.counts.reverified) ?? "?"],
 ["store", sec.store ?? "?"]];
 g.push(card("security", secRows));
+let mods = b.models || {};
+let modelRows = [];
+(mods.backends || []).forEach(bk => {
+modelRows.push([bk.name, (bk.alive ? "up" : "down") + " · " +
+(bk.local ? "local" : "remote") + " · " + (bk.models ?? 0) + " models"]);
+(bk.serves || []).forEach(k => {
+modelRows.push(["  " + k, (mods.selection || {})[k] || ""]);
+});
+});
+if (mods.local_only === false) modelRows.push(["remote", "allowed"]);
+else if (mods.local_only === true) modelRows.push(["remote", "blocked"]);
+g.push(card("models", modelRows.length ? modelRows :
+[["models", "none configured"]]));
 if (Array.isArray(sec.findings) && sec.findings.length) {
 g.push(card("security findings", sec.findings.slice(0, 6).map(f =>
 [(f.severity || "?") + " · " + (f.state || "?"),
@@ -348,8 +402,12 @@ let el = document.getElementById("tick");
 function note(t) { el.innerHTML = "<div>" + esc(t) + "</div>"; }
 function connect() {
 let proto = location.protocol === "https:" ? "wss" : "ws";
-let ws; try { ws = new WebSocket(proto + "://" + location.host +
-location.pathname.replace(/board.*$/, "")); }
+let base = location.pathname.replace(/board.*$/, "");
+// A browser cannot set headers on a WebSocket upgrade, so the token
+// rides in the query string (same as the experience page). Without it
+// the handshake is refused and the feed never connects.
+let qs = token ? "?token=" + encodeURIComponent(token) : "";
+let ws; try { ws = new WebSocket(proto + "://" + location.host + base + qs); }
 catch (e) { note("live feed unavailable — retrying…");
 setTimeout(connect, 5000); return; }
 ws.onopen = () => note("live — waiting for events…");

@@ -234,6 +234,9 @@ class MemoryPalace:
         if tier not in TIERS:
             raise ValueError(f"unknown tier: {tier}")
         kwargs.setdefault("vector", embed(content, self.dim))
+        # `summary` is a stored column, not a Memory field: keep it out of
+        # the constructor and hand it to the INSERT.
+        summary = kwargs.pop("summary", "")
         origin = kwargs.pop("origin", "") or infer_origin(kwargs.get("source", ""))
         if origin not in ORIGINS:
             raise ValueError(f"unknown origin: {origin}")
@@ -262,7 +265,7 @@ class MemoryPalace:
                 " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     mem.id, mem.tier, mem.room, mem.kind, mem.content,
-                    kwargs.get("summary", ""), mem.source, mem.modality, mem.confidence,
+                    summary, mem.source, mem.modality, mem.confidence,
                     mem.importance, mem.sensitivity, mem.privacy, mem.provenance,
                     json.dumps(mem.related_entities), json.dumps(mem.related_memories),
                     json.dumps(mem.related_events), mem.valid_from, mem.valid_until,
@@ -390,11 +393,15 @@ class MemoryPalace:
     def update(self, memory_id: str, **changes: Any) -> Memory | None:
         allowed = {
             "content", "room", "tier", "kind", "confidence", "importance",
-            "sensitivity", "privacy", "summary_note", "origin",
+            "sensitivity", "privacy", "summary", "summary_note", "origin",
         }
         if "origin" in changes and changes["origin"] not in ORIGINS:
             raise ValueError(f"unknown origin: {changes['origin']}")
         fields = {k: v for k, v in changes.items() if k in allowed}
+        # The column is `summary`; `summary_note` is the historical name
+        # for the same field and must not reach the SQL.
+        if "summary_note" in fields:
+            fields["summary"] = fields.pop("summary_note")
         if "content" in fields:
             fields["vector"] = json.dumps(embed(str(fields["content"]), self.dim))
         if not fields:

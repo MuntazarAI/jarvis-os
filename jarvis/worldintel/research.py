@@ -25,6 +25,19 @@ from .freshness import assess
 from .routing import route
 from .sources import EvidenceItem, SourceRegistry, bounded_get, fetch_hn
 
+#: Freshness order, freshest first. The states are words, so a plain
+#: min() would compare them alphabetically ("expired" < "fresh").
+_FRESHNESS_ORDER = ("fresh", "recent", "aging", "stale", "expired", "unknown")
+
+
+def _freshest(states: list[str]) -> str:
+    """The freshest state in the list ("unknown" when there is none)."""
+    known = [s for s in states if s in _FRESHNESS_ORDER]
+    if not known:
+        return "unknown"
+    return min(known, key=_FRESHNESS_ORDER.index)
+
+
 MAX_SEARCHES = 4
 MAX_EVIDENCE = 12
 MAX_STEPS = 12
@@ -225,7 +238,7 @@ class Researcher:
                         for p in answer.provenance]
         answer.freshness = {
             "states": fresh_states,
-            "newest": min(fresh_states) if fresh_states else "unknown",
+            "newest": _freshest(fresh_states),
             "evidence_count": len(evidence)}
         corroborated = sum(1 for c in answer.claims
                            if c["corroboration"]["corroborated"])

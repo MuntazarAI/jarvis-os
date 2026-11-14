@@ -1,0 +1,29 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:3001",
+    "ANTHROPIC_MODEL": "auto"
+  },
+  "model": "fable",
+  "enabledPlugins": {
+    "code-review@claude-plugins-official": true,
+    "code-simplifier@anthropic-plugin-directory": true,
+    "claude-security@anthropic-plugin-directory": true,
+    "session-report@anthropic-plugin-directory": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(npm *)",
+      "Bash(npx *)",
+      "Bash(pytest *)",
+      "Bash(make *)",
+      "Bash(cargo *)",
+      "Bash(docker *)",
+      "Bash(pwd)",
+      "Bash(ls *)"
+    ]
+  },
+  "effortLevel": "xhigh",
+  "theme": "dark",
+  "syntaxHighlightingDisabled": true
+}

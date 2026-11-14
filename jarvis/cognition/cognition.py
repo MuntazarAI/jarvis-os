@@ -14,17 +14,23 @@ from ..core.types import Modality, Observation, now
 @dataclass
 class Perception:
     observations: list[Observation] = field(default_factory=list)
+    #: A long-lived process must not grow without bound.
+    max_observations: int = 200
 
     def perceive_text(self, text: str, source: str = "user") -> Observation:
         obs = Observation(kind="text", content=text, modality=Modality.TEXT.value,
                           source=source)
         self.observations.append(obs)
+        if len(self.observations) > self.max_observations:
+            del self.observations[:-self.max_observations]
         return obs
 
     def perceive_system(self, content: str, kind: str = "system_state") -> Observation:
         obs = Observation(kind=kind, content=content, modality=Modality.SYSTEM.value,
                           source="system", confidence=0.95)
         self.observations.append(obs)
+        if len(self.observations) > self.max_observations:
+            del self.observations[:-self.max_observations]
         return obs
 
     def perceive_sensor(self, sensor: str, reading: str, confidence: float = 0.75) -> Observation:
@@ -32,12 +38,16 @@ class Perception:
                           modality=Modality.SENSOR.value, source=sensor,
                           confidence=confidence, metadata={"sensor": sensor})
         self.observations.append(obs)
+        if len(self.observations) > self.max_observations:
+            del self.observations[:-self.max_observations]
         return obs
 
     def perceive_document(self, path: str, excerpt: str) -> Observation:
         obs = Observation(kind="document", content=excerpt, modality=Modality.DOCUMENT.value,
                           source="file", metadata={"path": path})
         self.observations.append(obs)
+        if len(self.observations) > self.max_observations:
+            del self.observations[:-self.max_observations]
         return obs
 
     def latest(self, n: int = 10) -> list[Observation]:
@@ -359,6 +369,9 @@ class Reflector:
     def __init__(self) -> None:
         self.lessons: list[str] = []
         self.reviews: list[dict[str, Any]] = []
+        #: A long-lived process must not grow without bound.
+        self.max_lessons: int = 200
+        self.max_reviews: int = 200
 
     def self_check(self, output: str) -> list[str]:
         issues: list[str] = []
@@ -393,11 +406,15 @@ class Reflector:
         review = {"action": action, "error": error, "likely_cause": cause,
                   "suggested_fix": fix, "at": now()}
         self.reviews.append(review)
+        if len(self.reviews) > self.max_reviews:
+            del self.reviews[:-self.max_reviews]
         return review
 
     def learn(self, lesson: str) -> None:
         if lesson not in self.lessons:
             self.lessons.append(lesson)
+        if len(self.lessons) > self.max_lessons:
+            del self.lessons[:-self.max_lessons]
 
     def critique_plan(self, steps: list[str]) -> list[str]:
         notes: list[str] = []

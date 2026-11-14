@@ -18,6 +18,13 @@ This repo is a local-first AI system (Python, stdlib-first, CLI-first).
 - `jarvis/security/` — guards (injection scan), vault, consent;
   `strix.py` is the policy-gated dynamic-scan bridge (optional dep).
 - `jarvis/voice|vision|world|memory|…` — perception/cognition subsystems.
+- `jarvis/models/` — registry, router, and **pluggable backends**:
+  `backends.py` (specs + key resolution), `openai_compat.py` (any
+  OpenAI-compatible server: NVIDIA NIM, LM Studio, vLLM, Groq, …),
+  `ollama.py` (local daemon). A new provider is usually config only:
+  `jarvis models add|use|test`. Keys live in the vault, never in config,
+  argv or logs. `policy.local_only` keeps remote backends out of the
+  chain until it is deliberately turned off.
 
 ## House rules
 
