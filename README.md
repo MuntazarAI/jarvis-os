@@ -394,22 +394,38 @@ pytest tests/ -q
 
 ## Voice
 
-JARVIS voice = **Chatterbox** (local-first) + the Chatterbox reference
-sample `male_old_movie.flac`, selected as the JARVIS voice identity
-(a reference prompt, not an official voice).
-Reference: `https://storage.googleapis.com/chatterbox-demo-samples/prompts/male_old_movie.flac`
+JARVIS speaks with the best **local** voice engine that is installed.
+`voice.tts_provider = "auto"` picks in this order:
+
+| Engine | Where it runs | Voice | Speed on a CPU |
+|---|---|---|---|
+| **kokoro** | local | British male (`bm_george`) | ~3 s per sentence |
+| **piper** | local | British male (`en_GB-northern_english_male`) | ~0.5 s per sentence |
+| **chatterbox** | local | the Chatterbox reference sample `male_old_movie.flac` | slow, heavy |
+| **espeak** | local | robotic fallback | instant |
+
+`edge` (Microsoft Edge TTS, `en-GB-RyanNeural`) is the most natural
+voice, but it is **cloud**: the text leaves the machine. It is opt-in
+only and never chosen automatically.
 
 ```bash
-jarvis voice status
-jarvis voice setup     # explicit reference-voice install + verify
-jarvis voice test      # deterministic, no mic/GPU/net
+jarvis voice status       # which engine is in use
+jarvis voice voices       # what is installed, what can speak
+jarvis voice voices --install piper    # British male voice (~63 MB)
+jarvis voice voices --install kokoro   # Kokoro model + voices (~200 MB)
+jarvis voice runtime      # create the voice runtime (piper/kokoro/edge-tts)
+jarvis voice test         # deterministic, no mic/GPU/net
 jarvis say "Voice online"
 jarvis listen --always --no-speak
 ```
 
+The voice engines do not install on the system Python (the TTS
+packages cap at Python < 3.13), so they live in their own environment
+at `~/.config/jarvis/voice-venv`, created by `jarvis voice runtime`.
+
 Transcripts are untrusted input through the normal
 perception → cognition → policy path; TTS only speaks finished
-responses (Chatterbox → existing local fallback → text-only).
+responses (voice engine → local fallback → text-only).
 Raw audio is transient by default. See
 [docs/VOICE_AUDIO_INTELLIGENCE.md](docs/VOICE_AUDIO_INTELLIGENCE.md).
 

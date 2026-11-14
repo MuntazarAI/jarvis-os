@@ -4,6 +4,28 @@ All notable project milestones are recorded here.
 
 ## Unreleased
 
+### A British voice for JARVIS
+
+- Added the Kokoro TTS provider: a natural local British male voice
+  (`bm_george`), no GPU needed
+- Added the Edge TTS provider (`en-GB-RyanNeural`): the most natural
+  voice, but it is cloud, so it is opt-in only and never picked
+  automatically
+- The piper fallback now finds its voice model by itself and prefers the
+  British male voices; it also gets its text as bytes on stdin, which is
+  what piper actually reads
+- `voice.tts_provider` now defaults to `auto`: kokoro → piper →
+  chatterbox → espeak, the best local engine that is really installed
+- Added `jarvis voice voices` (what is installed, what can speak) and
+  `jarvis voice voices --install piper|kokoro` for the voice assets
+- Added `jarvis voice runtime`: creates the voice runtime
+  (`~/.config/jarvis/voice-venv`, Python 3.12 via `uv`) that holds
+  piper, kokoro and edge-tts — they do not install on Python 3.13+
+- `jarvis install` now also makes JARVIS able to speak: it creates the
+  voice runtime when needed, installs the British male voice, and moves
+  an old pinned config to `auto`
+- The doctor check `voice:chatterbox` is now `voice:engine`
+
 ### Any model, any provider
 
 - Added pluggable model backends: local Ollama, NVIDIA NIM, and any

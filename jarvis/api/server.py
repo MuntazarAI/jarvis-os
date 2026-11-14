@@ -300,7 +300,7 @@ class JarvisAPI:
             cfgd = cfg.__dict__ if cfg is not None and hasattr(
                 cfg, "__dict__") else {}
             primary = provider_for(
-                str(cfgd.get("tts_provider", "") or "chatterbox"),
+                str(cfgd.get("tts_provider", "") or "auto"),
                 cfgd)
             if not primary.available():
                 primary = provider_for("local-fallback", cfgd)

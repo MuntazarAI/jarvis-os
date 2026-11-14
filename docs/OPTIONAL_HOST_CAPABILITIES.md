@@ -8,7 +8,8 @@ and tests run without them.
 | Capability | Doctor check | Default | Why it is optional |
 | --- | --- | --- | --- |
 | `ydotoold` | `computer:input` | off | needs write access to `/dev/uinput` |
-| Chatterbox TTS | `voice:chatterbox` | off | ~8 GiB disk and slow CPU inference |
+| Chatterbox TTS | `voice:engine` | off | ~8 GiB disk and slow CPU inference |
+| Piper / Kokoro TTS | `voice:engine` | off | ~60–200 MB of voice files, no GPU |
 
 Neither capability bypasses policy. Screen text and model output remain
 untrusted, and every input action is still a HIGH-risk, approval-gated
@@ -121,10 +122,21 @@ because it needs an isolated Python 3.12 runtime, CPU PyTorch, and
 several gigabytes of cached model weights. On the reference 8 GB
 CPU-only laptop, a short utterance can take tens of seconds.
 
+For a natural British male voice on a small machine, **piper** or
+**kokoro** are the better choice — they are a few hundred megabytes
+instead of several gigabytes:
+
+```bash
+jarvis voice runtime              # piper + kokoro + edge-tts, in ~/.config/jarvis/voice-venv
+jarvis voice voices --install piper    # British male voice (~63 MB)
+jarvis voice voices --install kokoro   # Kokoro model + voices (~200 MB)
+jarvis voice status               # which engine is in use
+```
+
 The fallback chain is:
 
 ```
-Chatterbox (persistent or bridge) → espeak/piper → text-only
+kokoro → piper → chatterbox (persistent or bridge) → espeak → text-only
 ```
 
 ### Install
@@ -153,7 +165,7 @@ Fetch the reference voice and verify the bridge:
 jarvis voice setup
 jarvis voice status
 jarvis say "Voice online"
-jarvis doctor | grep voice:chatterbox
+jarvis doctor | grep voice:engine
 ```
 
 The first synthesis may download model weights (roughly 6 GiB) and load

@@ -26,9 +26,14 @@ from pathlib import Path
 from typing import Any
 
 from .audio import AudioError
+from .voice_assets import (find_binary, find_piper_voice, kokoro_installed,
+                           kokoro_model_path, kokoro_voices_path)
 
 MAX_TTS_CHARS = 2000
 SUPPORTED_FORMATS = ("wav",)
+
+#: How long a local voice engine may take for one sentence.
+ENGINE_TIMEOUT_S = 180.0
 
 
 def _new_id(prefix: str) -> str:
@@ -161,27 +166,77 @@ class UnavailableTTSProvider(TTSProvider):
             sample_rate=request.sample_rate)
 
 
+def _find_binary(name: str) -> str:
+    """Find a voice tool: on PATH, or in the JARVIS voice runtime."""
+    return find_binary(name)
+
+
+def _wav_info(path: Path) -> tuple[float, int]:
+    """(duration_s, sample_rate) of a wav file; (0.0, 0) when unknown."""
+    try:
+        with wave.open(str(path), "rb") as handle:
+            rate = handle.getframerate()
+            frames = handle.getnframes()
+            if rate <= 0:
+                return 0.0, 0
+            return round(frames / float(rate), 3), int(rate)
+    except (OSError, wave.Error, EOFError):
+        return 0.0, 0
+
+
+def _convert_to_wav(src: Path, dest: Path) -> bool:
+    """Convert an audio file to wav with ffmpeg. False when it cannot."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    try:
+        proc = subprocess.run([ffmpeg, "-nostdin", "-y", "-loglevel", "error",
+                               "-i", str(src), str(dest)],
+                              capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0 and dest.exists() and dest.stat().st_size > 0
+
+
 class LocalFallbackTTSProvider(TTSProvider):
-    """Preserve the existing espeak/piper path as fallback #2."""
+    """Local espeak/piper path: the fast, offline voice.
+
+    Piper with an installed voice sounds like a person; espeak sounds
+    like a 1980s GPS. Piper is preferred whenever a voice model is
+    present, and the British male voices win over the rest.
+    """
 
     name = "local-fallback"
 
-    def __init__(self, voice: str = "en-gb", rate: int = 145) -> None:
+    def __init__(self, voice: str = "en-gb", rate: int = 145,
+                 piper_model: str = "") -> None:
         self.voice = voice
         self.rate = rate
+        self.piper_model = piper_model
         self.backend = self._resolve()
 
-    @staticmethod
-    def _resolve() -> str:
+    def _resolve(self) -> str:
         # espeak needs no voice model and is always present; piper needs
-        # one, so it is only preferred when a model is configured.
-        if os.environ.get("JARVIS_PIPER_MODEL") and shutil.which("piper"):
+        # one, so it is only preferred when a model is available. Claiming
+        # piper without a model would be a lie the caller cannot detect.
+        if _find_binary("piper") and (self._piper_model_path() or
+                                      os.environ.get("JARVIS_PIPER_MODEL", "")):
             return "piper"
         if shutil.which("espeak") or shutil.which("espeak-ng"):
             return "espeak"
-        if shutil.which("piper"):
-            return "piper"
         return "none"
+
+    def _piper_model_path(self) -> str:
+        """The voice model to synthesize with."""
+        if self.piper_model:
+            candidate = Path(os.path.expanduser(self.piper_model))
+            if candidate.exists():
+                return str(candidate)
+        try:
+            found = find_piper_voice()
+            return str(found) if found else ""
+        except Exception:
+            return ""
 
     def available(self) -> bool:
         return self.backend != "none"
@@ -194,14 +249,17 @@ class LocalFallbackTTSProvider(TTSProvider):
         """
         commands: list[tuple[list[str], Any]] = []
         if self.backend == "piper":
-            piper = shutil.which("piper") or "piper"
+            piper = _find_binary("piper") or "piper"
             argv = [piper]
-            model = os.environ.get("JARVIS_PIPER_MODEL", "")
+            model = self._piper_model_path() or os.environ.get(
+                "JARVIS_PIPER_MODEL", "")
             if model:
+                # piper needs the voice model; without one it cannot speak.
                 argv += ["--model", model]
             argv += ["--output_file", str(target)]
             # piper reads the text on stdin; it takes no positional text.
-            commands.append((argv, text))
+            # stdin must be bytes, not str.
+            commands.append((argv, text.encode("utf-8")))
         espeak = shutil.which("espeak-ng") or shutil.which("espeak")
         if espeak:
             commands.append(([espeak, "-w", str(target), text], None))
@@ -250,12 +308,13 @@ class LocalFallbackTTSProvider(TTSProvider):
             if not target.exists() or target.stat().st_size == 0:
                 last_error = "tts produced no audio file"
                 continue
+            duration, rate = _wav_info(target)
             return TTSResult(
                 request_id=request.request_id, provider=self.name,
-                status="success", duration_s=0.0,
+                status="success", duration_s=duration,
                 audio_path=str(target),
                 audio_bytes=target.stat().st_size,
-                sample_rate=request.sample_rate, latency_ms=latency,
+                sample_rate=rate or request.sample_rate, latency_ms=latency,
                 metadata={"backend": self.backend})
         if scratch:
             try:
@@ -268,6 +327,191 @@ class LocalFallbackTTSProvider(TTSProvider):
             request_id=request.request_id, provider=self.name,
             status="failed", error=last_error,
             sample_rate=request.sample_rate)
+
+
+class KokoroTTSProvider(TTSProvider):
+    """Local Kokoro TTS — a natural British male voice, no GPU needed.
+
+    Kokoro is driven through its command line tool from the JARVIS
+    voice runtime. On a CPU it takes a few seconds per sentence, which
+    is slower than piper but sounds like a person rather than a modem.
+    Nothing leaves this machine.
+    """
+
+    name = "kokoro"
+
+    def __init__(self, voice: str = "bm_george", lang: str = "en-gb",
+                 model: str = "", voices_path: str = "",
+                 timeout_s: float = ENGINE_TIMEOUT_S) -> None:
+        self.voice = voice or "bm_george"
+        self.lang = lang or "en-gb"
+        self.model = model
+        self.voices_path = voices_path
+        self.timeout_s = timeout_s
+
+    def _model_path(self) -> str:
+        if self.model:
+            candidate = Path(os.path.expanduser(self.model))
+            if candidate.exists():
+                return str(candidate)
+        path = kokoro_model_path()
+        return str(path) if path.exists() else ""
+
+    def _voices_path(self) -> str:
+        if self.voices_path:
+            candidate = Path(os.path.expanduser(self.voices_path))
+            if candidate.exists():
+                return str(candidate)
+        path = kokoro_voices_path()
+        return str(path) if path.exists() else ""
+
+    def available(self) -> bool:
+        return bool(_find_binary("kokoro-tts")) and kokoro_installed()
+
+    def _argv(self, text_file: str, out_file: str) -> list[str]:
+        argv = [_find_binary("kokoro-tts") or "kokoro-tts",
+                text_file, out_file,
+                "--voice", self.voice, "--lang", self.lang]
+        model = self._model_path()
+        if model:
+            argv += ["--model", model]
+        voices = self._voices_path()
+        if voices:
+            argv += ["--voices", voices]
+        return argv
+
+    def synthesize(self, request: TTSRequest,
+                   dest: str | Path | None = None) -> TTSResult:
+        started = time.perf_counter()
+        if not self.available():
+            return TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="failed",
+                error="kokoro runtime or model not installed",
+                sample_rate=request.sample_rate)
+        scratch = None
+        if dest:
+            target = Path(str(dest))
+        else:
+            scratch = tempfile.mkdtemp(prefix="jarvis-kokoro-")
+            target = Path(scratch) / "speech.wav"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            text_file = target.with_suffix(".txt")
+            text_file.write_text(request.text[:MAX_TTS_CHARS],
+                                 encoding="utf-8")
+        except OSError as exc:
+            return TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="failed", error=f"cannot write input: {exc}"[:200],
+                sample_rate=request.sample_rate)
+        try:
+            proc = subprocess.run(self._argv(str(text_file), str(target)),
+                                  capture_output=True, text=True,
+                                  timeout=self.timeout_s)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="failed", error=f"{type(exc).__name__}: {exc}"[:200],
+                sample_rate=request.sample_rate,
+                latency_ms=round((time.perf_counter() - started) * 1000, 2))
+        finally:
+            try:
+                text_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+        latency = round((time.perf_counter() - started) * 1000, 2)
+        if proc.returncode != 0 or not target.exists() or \
+                target.stat().st_size == 0:
+            detail = (proc.stderr or proc.stdout or "kokoro failed").strip()
+            return TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="failed", error=detail[-200:],
+                sample_rate=request.sample_rate, latency_ms=latency)
+        duration, rate = _wav_info(target)
+        return TTSResult(
+            request_id=request.request_id, provider=self.name,
+            status="success", audio_path=str(target),
+            audio_bytes=target.stat().st_size, duration_s=duration,
+            sample_rate=rate or request.sample_rate, latency_ms=latency,
+            metadata={"voice": self.voice, "local": True,
+                      "engine": "kokoro"})
+
+
+class EdgeTTSProvider(TTSProvider):
+    """Microsoft Edge TTS — cloud speech, the most natural voice.
+
+    The text leaves this machine, so this provider is opt-in only: it
+    never appears in the automatic provider chain. The audio is fetched
+    as mp3 and converted to wav when ffmpeg is available, because the
+    system players expect PCM.
+    """
+
+    name = "edge"
+
+    def __init__(self, voice: str = "en-GB-RyanNeural",
+                 timeout_s: float = 60.0) -> None:
+        self.voice = voice or "en-GB-RyanNeural"
+        self.timeout_s = timeout_s
+
+    def available(self) -> bool:
+        return bool(_find_binary("edge-tts"))
+
+    def _argv(self, text: str, out_file: str) -> list[str]:
+        return [_find_binary("edge-tts") or "edge-tts",
+                "--voice", self.voice, "--text", text,
+                "--write-media", out_file]
+
+    def synthesize(self, request: TTSRequest,
+                   dest: str | Path | None = None) -> TTSResult:
+        started = time.perf_counter()
+        if not self.available():
+            return TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="failed", error="edge-tts runtime not installed",
+                sample_rate=request.sample_rate)
+        scratch = None
+        if dest:
+            target = Path(str(dest))
+        else:
+            scratch = tempfile.mkdtemp(prefix="jarvis-edge-")
+            target = Path(scratch) / "speech.wav"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            mp3 = target.with_suffix(".mp3")
+            proc = subprocess.run(
+                self._argv(request.text[:MAX_TTS_CHARS], str(mp3)),
+                capture_output=True, text=True, timeout=self.timeout_s)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="failed", error=f"{type(exc).__name__}: {exc}"[:200],
+                sample_rate=request.sample_rate,
+                latency_ms=round((time.perf_counter() - started) * 1000, 2))
+        latency = round((time.perf_counter() - started) * 1000, 2)
+        if proc.returncode != 0 or not mp3.exists() or \
+                mp3.stat().st_size == 0:
+            detail = (proc.stderr or proc.stdout or "edge-tts failed").strip()
+            return TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="failed", error=detail[-200:],
+                sample_rate=request.sample_rate, latency_ms=latency)
+        if not _convert_to_wav(mp3, target):
+            # No ffmpeg: hand back the mp3 as it is.
+            target = mp3
+        else:
+            try:
+                mp3.unlink(missing_ok=True)
+            except OSError:
+                pass
+        duration, rate = _wav_info(target)
+        return TTSResult(
+            request_id=request.request_id, provider=self.name,
+            status="success", audio_path=str(target),
+            audio_bytes=target.stat().st_size, duration_s=duration,
+            sample_rate=rate or request.sample_rate, latency_ms=latency,
+            metadata={"voice": self.voice, "local": False, "cloud": True,
+                      "engine": "edge"})
 
 
 class ChatterboxTTSProvider(TTSProvider):
@@ -688,23 +932,65 @@ def _venv_has_chatterbox(python_exe: str) -> bool:
 
 
 def provider_for(name: str, config: Any = None) -> TTSProvider:
-    """Resolve a provider by name with graceful fallback to unavailable."""
+    """Resolve a provider by name with graceful fallback to unavailable.
+
+    `auto` picks the best *local* voice that is actually installed:
+    Kokoro (most natural) → Piper (instant) → Chatterbox (the
+    reference-voice identity) → espeak. The cloud engine is never in
+    the automatic chain — it must be asked for by name.
+    """
     cfg = config or {}
     get = (lambda k, d="": getattr(cfg, k, d)
            if not isinstance(cfg, dict) else cfg.get(k, d))
     if name == "fake":
         return FakeTTSProvider()
+    if name == "kokoro":
+        return KokoroTTSProvider(
+            voice=str(get("kokoro_voice", "bm_george") or "bm_george"),
+            lang=str(get("kokoro_lang", "en-gb") or "en-gb"),
+            model=str(get("kokoro_model", "")),
+            voices_path=str(get("kokoro_voices", "")))
+    if name in ("edge", "edge-tts"):
+        return EdgeTTSProvider(
+            voice=str(get("edge_voice", "en-GB-RyanNeural")
+                      or "en-GB-RyanNeural"))
     if name in ("local-fallback", "espeak", "piper"):
-        return LocalFallbackTTSProvider()
+        return LocalFallbackTTSProvider(
+            piper_model=str(get("piper_model", "")))
     if name == "chatterbox":
         return ChatterboxTTSProvider(
             model=str(get("model", "chatterbox-turbo")),
             reference_audio=str(get("reference_audio", "")),
             python_executable=str(get("chatterbox_python", "")),
             persistent=bool(get("persistent", True)))
+    if name in ("auto", ""):
+        # Order matters: a natural local British voice beats the
+        # reference-voice identity, which beats a robot voice.
+        kokoro = KokoroTTSProvider(
+            voice=str(get("kokoro_voice", "bm_george") or "bm_george"),
+            lang=str(get("kokoro_lang", "en-gb") or "en-gb"),
+            model=str(get("kokoro_model", "")),
+            voices_path=str(get("kokoro_voices", "")))
+        if kokoro.available():
+            return kokoro
+        piper = LocalFallbackTTSProvider(
+            piper_model=str(get("piper_model", "")))
+        if piper.backend == "piper":
+            return piper
+        chatterbox = ChatterboxTTSProvider(
+            model=str(get("model", "chatterbox-turbo")),
+            reference_audio=str(get("reference_audio", "")),
+            python_executable=str(get("chatterbox_python", "")),
+            persistent=bool(get("persistent", True)))
+        if chatterbox.available():
+            return chatterbox
+        if piper.available():
+            return piper
+        return UnavailableTTSProvider("no local TTS engine installed")
     return UnavailableTTSProvider(f"unknown TTS provider: {name}")
 
 
 __all__ = ["TTSRequest", "TTSResult", "TTSProvider", "FakeTTSProvider",
            "UnavailableTTSProvider", "LocalFallbackTTSProvider",
+           "KokoroTTSProvider", "EdgeTTSProvider",
            "ChatterboxTTSProvider", "provider_for", "MAX_TTS_CHARS"]

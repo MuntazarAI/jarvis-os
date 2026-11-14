@@ -111,24 +111,54 @@ mature/controlled profile), `output.py` (playback abstraction),
 ## Configuration
 
 `JarvisConfig.voice`: enabled, stt_provider (`faster-whisper`, never
-replaced by TTS work), tts_provider (`chatterbox`), profile (`jarvis`),
+replaced by TTS work), tts_provider (`auto`), profile (`jarvis`),
 reference_audio (`~/.config/jarvis/voices/male_old_movie.flac`,
 overridable via `JARVIS_VOICE_REFERENCE`), language, style, emotion,
 model, output format/sample_rate/device, exaggeration (0.5),
 temperature (0.8), cfg_weight (0.5), retain_audio=false,
-retain_transcripts=false, playback_backend, timeout_s, queue_max.
+retain_transcripts=false, playback_backend, timeout_s, queue_max,
+plus the engine settings: piper_model, kokoro_voice (`bm_george`),
+kokoro_lang (`en-gb`), kokoro_model, kokoro_voices, edge_voice
+(`en-GB-RyanNeural`).
 
 No machine-specific absolute paths. No cloud TTS required.
+
+### Voice engines
+
+`tts_provider = "auto"` resolves to the best **local** engine that is
+actually installed:
+
+| Order | Engine | Voice | Notes |
+|---|---|---|---|
+| 1 | kokoro | British male (`bm_george`) | local, ~3 s per sentence on a CPU |
+| 2 | piper | British male (`en_GB-northern_english_male-medium`) | local, ~0.5 s per sentence |
+| 3 | chatterbox | the reference sample `male_old_movie.flac` | local, heavy, slow on a CPU |
+| 4 | espeak | robotic | local, instant, last resort |
+
+`edge` (Microsoft Edge TTS) is the most natural voice but sends the
+text to a cloud service, so it is **opt-in only**: name it explicitly
+(`voice.tts_provider = "edge"`) and it is never part of the automatic
+chain. Its result is tagged `metadata.cloud = true`.
+
+Engines live in their own environment (`~/.config/jarvis/voice-venv`):
+the TTS packages cap at Python < 3.13 and `onnxruntime` has no build
+for newer interpreters. `jarvis/voice/voice_assets.py` finds the
+runtimes and the downloaded voice files; `jarvis/voice/runtime_setup.py`
+creates the environment with `uv`.
 
 ## Setup
 
 ```bash
-jarvis voice status    # provider, reference, backends
+jarvis voice status    # provider, engine, reference, backends
+jarvis voice voices    # which engines are installed and can speak
+jarvis voice runtime   # create the voice runtime (piper/kokoro/edge-tts)
+jarvis voice voices --install piper    # British male voice (~63 MB)
+jarvis voice voices --install kokoro   # Kokoro model + voices (~200 MB)
 jarvis voice setup     # explicit download + verify of male_old_movie.flac
 jarvis voice test      # deterministic, no mic/GPU/net
 jarvis voice-test      # same self-test (alias)
-jarvis voice benchmark # fake measured; chatterbox measured on demand only
-jarvis say "Hello"     # chatterbox → fallback → text-only, never crashes
+jarvis voice benchmark # fake measured; real engines measured on demand only
+jarvis say "Hello"     # voice engine → fallback → text-only, never crashes
 jarvis listen          # mic → STT → think → speak (existing loop)
 jarvis doctor          # voice:* diagnostics, no secrets
 ```
@@ -157,7 +187,7 @@ possible (`direct` mode), otherwise shells out to
 
 Missing runtime/reference/model fails gracefully with a clear
 error — never a silent voice switch, never a cognition crash.
-Fallback chain: chatterbox → existing espeak/piper → text-only.
+Fallback chain: the configured engine → local espeak/piper → text-only.
 
 ## Security / privacy
 
@@ -169,6 +199,11 @@ logged; transcripts transient unless explicitly retained; telemetry
 carries lengths/latencies/statuses only. Wake word ≠ authentication.
 Learning never grants permissions.
 
+The cloud engine (Edge TTS) is the one exception to "nothing leaves
+this machine", and it is opt-in only: it is never selected by the
+automatic chain, and every result it produces is tagged
+`metadata.cloud = true`.
+
 ## Testing
 
 `tests/test_voice_tts_51.py` (25 tests): provider contract, fake TTS,
@@ -177,11 +212,16 @@ correlation, telemetry hygiene, speak wiring, cognitive handoff,
 replay/simulation, CLI/doctor, E2E fake loop; real Chatterbox test
 skips honestly when unavailable (`NOT AVAILABLE`, never fake-passed).
 
+`tests/test_voice_engines.py`: the piper/kokoro/edge providers — the
+command each one builds, bytes on stdin, wav conversion, honest
+failures, the automatic order, and the privacy invariant that the
+cloud engine is never picked automatically. No network, no models.
+
 ## Status / limitations (reference host snapshot, 2026-10-03)
 
 > Current check (2026-11-04): the runtime described below is **not
 > installed** on the present host, so `jarvis doctor` reports
-> `voice:chatterbox` as a non-fatal `WARN`. The snapshot is kept as
+> `voice:engine` as a non-fatal `WARN`. The snapshot is kept as
 > benchmark evidence, not as a claim of current availability. See
 > [OPTIONAL_HOST_CAPABILITIES.md](OPTIONAL_HOST_CAPABILITIES.md) for
 > install and removal steps.

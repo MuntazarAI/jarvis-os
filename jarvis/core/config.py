@@ -166,15 +166,17 @@ class DeviceTransportConfig:
 class VoiceConfig:
     """Local-first voice I/O (5.1). STT and TTS are independent.
 
-    STT stays faster-whisper; TTS defaults to local Chatterbox with
-    the `male_old_movie.flac` reference as the JARVIS voice identity.
-    All paths configurable; no machine-specific absolutes. Retention
-    defaults to transient (no raw audio, no transcript persistence).
+    STT stays faster-whisper; TTS defaults to `auto`: the best local
+    voice engine that is actually installed (Kokoro → Piper → Chatterbox
+    → espeak). Name an engine to pin it; the cloud engine (Edge) is
+    opt-in only, because its text leaves the machine. All paths
+    configurable; no machine-specific absolutes. Retention defaults to
+    transient (no raw audio, no transcript persistence).
     """
 
     enabled: bool = True
     stt_provider: str = "faster-whisper"
-    tts_provider: str = "chatterbox"
+    tts_provider: str = "auto"
     chatterbox_python: str = ""
     persistent: bool = True
     profile: str = "jarvis"
@@ -195,6 +197,13 @@ class VoiceConfig:
     timeout_s: float = 120.0
     queue_max: int = 4
     unload_after_s: float = 0.0
+    # Voice engines (all optional; empty = discover on this machine).
+    piper_model: str = ""
+    kokoro_voice: str = "bm_george"
+    kokoro_lang: str = "en-gb"
+    kokoro_model: str = ""
+    kokoro_voices: str = ""
+    edge_voice: str = "en-GB-RyanNeural"
 
 
 @dataclass
