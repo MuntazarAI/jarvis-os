@@ -112,7 +112,6 @@ class AdvancedVision:
                 bounding_box=(110, 110, 190, 190),
                 confidence=0.92,
                 identity=None,
-                confidence=0.92,
             )
         ]
 
