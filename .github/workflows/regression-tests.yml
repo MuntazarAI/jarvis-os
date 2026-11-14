@@ -25,7 +25,7 @@ jobs:
       - name: Install system test dependencies
         run: sudo apt-get update && sudo apt-get install -y ffmpeg xvfb xclip ydotool
       - name: Install project and test tooling
-        run: python -m pip install --upgrade pip pytest && python -m pip install -e .
+        run: python -m pip install --upgrade pip pytest pytest-asyncio && python -m pip install -e .
       - name: Run neural benchmark
         run: python benchmarks/neural_benchmark.py --size 1000 --steps 1000 --repeats 3
       - name: Publish benchmark artifact
@@ -44,7 +44,7 @@ jobs:
           python-version: "3.13"
           cache: pip
       - name: Install project and test tooling
-        run: python -m pip install --upgrade pip pytest && python -m pip install -e .
+        run: python -m pip install --upgrade pip pytest pytest-asyncio && python -m pip install -e .
       - name: Run consolidation tests
         run: python -m pytest tests/test_memory3.py tests/test_consolidation.py -q --tb=short
 
@@ -60,7 +60,7 @@ jobs:
       - name: Install system test dependencies
         run: sudo apt-get update && sudo apt-get install -y ffmpeg xvfb xclip ydotool
       - name: Install project and test tooling
-        run: python -m pip install --upgrade pip pytest && python -m pip install -e .
+        run: python -m pip install --upgrade pip pytest pytest-asyncio && python -m pip install -e .
       - name: Run full test suite
         run: xvfb-run -a bash -lc 'printf "ci-seed" | xclip -selection clipboard; python -m pytest tests/ -q --tb=short --ignore=tests/test_agent_mesh.py --ignore=tests/test_agent_reach.py'
 
