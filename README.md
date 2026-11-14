@@ -1,11 +1,15 @@
 # JARVIS-OS
 
 <p align="center">
-  <img src="docs/assets/jarvis-os-banner.svg" alt="JARVIS-OS — Local Intelligence System Core" width="100%">
+  <img src="docs/assets/jarvis-os-banner-social.png" alt="JARVIS-OS — Personal AI Operating System" width="100%">
 </p>
 
 <p align="center">
   <strong>LOCAL-FIRST · EVIDENCE-DRIVEN · MODULAR · BOUNDED AUTONOMY</strong>
+</p>
+
+<p align="center">
+  <img src="docs/assets/jarvis-os-banner-repo.png" alt="JARVIS-OS Repository Banner" width="100%">
 </p>
 
 <p align="center">
@@ -129,6 +133,33 @@ The system is designed to preserve context across tasks while keeping observatio
 
 ---
 
+## ◈ System Inventory
+
+<p align="center">
+  <table>
+    <tr>
+      <td><b>🤖 Stark AI Agents</b></td>
+      <td><b>🔲 DOT Templates</b></td>
+      <td><b>🤖 AI Bots</b></td>
+      <td><b>🧠 Fly Brain Neurons</b></td>
+      <td><b>🔌 OMNINET Subsystems</b></td>
+    </tr>
+    <tr>
+      <td><b>510</b></td>
+      <td><b>200</b></td>
+      <td><b>250</b></td>
+      <td><b>166,000</b></td>
+      <td><b>13</b></td>
+    </tr>
+  </table>
+</p>
+
+<p align="center">
+  <em>All agents, DOTs, and bots are policy-gated, audited, and security-constrained.</em>
+</p>
+
+---
+
 ## Core capabilities
 
 | System | What it provides |
@@ -158,14 +189,15 @@ The system is designed to preserve context across tasks while keeping observatio
 
 Counts come from the code, not from a roadmap:
 
-| 🤖 Agent roles | 🧠 Fly-brain neurons | 📦 Top-level packages | 🔌 Stark roster entries |
-|---|---|---|---|
-| 38 | 166,000 | 40 | 7 |
+| 🤖 Agent roles | 🤖 Stark roster | 🔲 DOT templates | 🤖 AI bots | 🧠 Fly-brain neurons |
+|---|---|---|---|---|
+| 38 | 500 | 200 | 250 | 166,000 |
 
-Every agent role is policy-gated, audited, and security-constrained. The
-Stark roster is **flavour data, not authority** (`jarvis/agents/stark.py`
-says so itself), and the 166,000 neurons are a synthetic connectome
-*schema*, not a trained brain.
+The roster, the DOT templates and the bots are **generated data** —
+names, personalities and purposes, not 950 separate brains. The 38 agent
+roles are the dispatchable ones, and every one of them is policy-gated,
+audited and security-constrained. The 166,000 neurons are a synthetic
+connectome *schema*, not a trained brain.
 
 ---
 

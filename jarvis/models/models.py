@@ -15,7 +15,7 @@ from .backends import (BackendSpec, build_client, configured_backends,
 @dataclass
 class Model:
     name: str
-    kind: str  # fast | reasoning | coding | vision | embedding
+    kind: str  # fast | reasoning | coding | vision | embedding | moe
     backend: str = "local"  # backend instance name (ollama, nvidia, ...)
     capabilities: list[str] = field(default_factory=list)
     healthy: bool = True
@@ -26,12 +26,25 @@ class Model:
     generative: bool = False  # True when a real model can answer
     local: bool = True  # False for remote providers (privacy boundary)
 
+    # Colibri-inspired MoE (Mixture-of-Experts) fields
+    is_moe: bool = False  # Whether this is a Mixture-of-Experts model
+    expert_count: int = 0  # Total number of experts
+    active_experts: list[str] = field(default_factory=list)  # Currently loaded experts
+    expert_memory_mb: int = 0  # Memory used by active experts (MB)
+    max_expert_memory_mb: int = 4096  # Max memory for experts (MB)
+    expert_tier: str = "cold"  # hot (GPU), warm (RAM), cold (disk/NVMe)
+
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "kind": self.kind, "backend": self.backend,
                 "capabilities": self.capabilities, "healthy": self.healthy,
                 "latency_ms": self.latency_ms, "version": self.version,
                 "backend_model": self.backend_model,
-                "generative": self.generative, "local": self.local}
+                "generative": self.generative, "local": self.local,
+                "is_moe": self.is_moe, "expert_count": self.expert_count,
+                "active_experts": list(self.active_experts),
+                "expert_memory_mb": self.expert_memory_mb,
+                "max_expert_memory_mb": self.max_expert_memory_mb,
+                "expert_tier": self.expert_tier}
 
 
 class ModelRegistry:
@@ -92,8 +105,77 @@ class ModelRegistry:
         by_kind: dict[str, int] = {}
         for model in self._models.values():
             by_kind[model.kind] = by_kind.get(model.kind, 0) + 1
+        moe_models = [m for m in self._models.values() if m.is_moe]
         return {"total": len(self._models), "by_kind": by_kind,
-                "healthy": sum(1 for m in self._models.values() if m.healthy)}
+                "healthy": sum(1 for m in self._models.values() if m.healthy),
+                "moe_models": len(moe_models),
+                "moe_expert_memory_mb": sum(m.expert_memory_mb for m in moe_models)}
+
+    # -- Colibri-inspired Mixture-of-Experts management ------------------
+
+    def register_moe(self, name: str, expert_count: int,
+                     max_expert_memory_mb: int = 4096,
+                     backend_model: str = "") -> Model:
+        """Register a Mixture-of-Experts model.
+
+        Colibri-inspired: keeps hot experts on GPU, warm ones in RAM,
+        cold ones streamed from NVMe. Only a small part of the model
+        is active for each token.
+        """
+        model = Model(
+            name=name, kind="reasoning", backend="colibri",
+            capabilities=["planning", "analysis", "codegen", "chat"],
+            is_moe=True, expert_count=expert_count,
+            max_expert_memory_mb=max_expert_memory_mb,
+            expert_tier="cold",
+            backend_model=backend_model or name,
+        )
+        self.register(model)
+        return model
+
+    def load_expert(self, model_name: str, expert_name: str,
+                    tier: str = "hot") -> bool:
+        """Load an expert into the specified tier (hot/warm/cold).
+
+        Colibri-inspired expert loading: hot = GPU, warm = RAM,
+        cold = disk/NVMe. Only loads if memory budget allows.
+        """
+        model = self._models.get(model_name)
+        if model is None or not model.is_moe:
+            return False
+        if expert_name in model.active_experts:
+            return True  # Already loaded
+        # Estimate expert size (rough: max_expert_memory_mb / expert_count)
+        expert_size_mb = model.max_expert_memory_mb // max(model.expert_count, 1)
+        if model.expert_memory_mb + expert_size_mb > model.max_expert_memory_mb:
+            return False  # Not enough memory
+        model.active_experts.append(expert_name)
+        model.expert_memory_mb += expert_size_mb
+        model.expert_tier = tier
+        model.last_check = now()
+        return True
+
+    def unload_expert(self, model_name: str, expert_name: str) -> bool:
+        """Unload an expert from active memory."""
+        model = self._models.get(model_name)
+        if model is None or not model.is_moe:
+            return False
+        if expert_name not in model.active_experts:
+            return True  # Already unloaded
+        model.active_experts.remove(expert_name)
+        expert_size_mb = model.max_expert_memory_mb // max(model.expert_count, 1)
+        model.expert_memory_mb = max(0, model.expert_memory_mb - expert_size_mb)
+        if not model.active_experts:
+            model.expert_tier = "cold"
+        model.last_check = now()
+        return True
+
+    def get_moe_model(self, name: str) -> Model | None:
+        """Get a MoE model by name."""
+        model = self._models.get(name)
+        if model and model.is_moe:
+            return model
+        return None
 
 
 class ModelRouter:
@@ -283,6 +365,11 @@ def default_registry(config: JarvisConfig | None = None) -> ModelRegistry:
         reg.register(Model("cloud-reasoning", "reasoning", "cloud",
                            ["planning", "analysis"], latency_ms=2000.0,
                            local=False))
+    # Colibri-inspired MoE model: runs very large MoE models on modest hardware
+    # by keeping hot experts on GPU, warm ones in RAM, cold ones streamed from disk.
+    reg.register_moe("colibri-moe", expert_count=64,
+                     max_expert_memory_mb=4096,
+                     backend_model="glm-5.2:744b-moe-int4")
     return reg
 
 
