@@ -415,20 +415,29 @@ class ProactiveEngine:
             data = json.loads(path.read_text())
         except (OSError, ValueError):
             return
-        for raw in data.get("candidates", [])[-self.max_records:]:
+        candidates = data.get("candidates")
+        if not isinstance(candidates, list):
+            candidates = []
+        for raw in candidates[-self.max_records:]:
             try:
                 cand = AttentionCandidate.from_dict(raw)
             except (KeyError, TypeError):
                 continue
             self.candidates[cand.candidate_id] = cand
-        for raw in data.get("decisions", [])[-self.max_records:]:
+        decisions = data.get("decisions")
+        if not isinstance(decisions, list):
+            decisions = []
+        for raw in decisions[-self.max_records:]:
             try:
                 dec = ProactiveDecision.from_dict(raw)
             except (KeyError, TypeError):
                 continue
             self.decisions[dec.candidate_id] = dec
-        self.notifications = data.get("notifications", [])[-self.max_records:]
-        if "attention" in data:
+        notifications = data.get("notifications")
+        if not isinstance(notifications, list):
+            notifications = []
+        self.notifications = notifications[-self.max_records:]
+        if isinstance(data.get("attention"), dict):
             self.attention.restore(data["attention"])
         self.outcomes = [o for o in data.get("outcomes", [])
                          if isinstance(o, dict)][-self.max_records:]
