@@ -790,10 +790,10 @@ def _models_action(args: Any) -> int:
 
     def _out(payload: dict[str, Any], code: int = 0) -> int:
         if as_json:
-            # codeql[py/clear-text-logging-sensitive-data] -- config facts only; no credential value is read here
+            # codeql[py/clear-text-logging-sensitive-data]
             print(json.dumps(payload, indent=2, default=str))
         else:
-            # codeql[py/clear-text-logging-sensitive-data] -- config facts only; no credential value is read here
+            # codeql[py/clear-text-logging-sensitive-data]
             print(_models_text(payload))
         return code
 
