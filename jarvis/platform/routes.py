@@ -88,7 +88,7 @@ class Platform:
         """Answer a platform request. None means "not mine"."""
         route = path.split("?", 1)[0].rstrip("/") or "/"
         if method == "GET" and route in ("/", "/chat"):
-            return self._page(route)
+            return self._page()
         if method == "POST" and route == "/api/signup":
             return self._signup(body)
         if method == "POST" and route == "/api/login":
@@ -103,8 +103,6 @@ class Platform:
             return self._history(headers)
         if method == "POST" and route == "/api/speak":
             return self._speak(body, headers)
-        if method == "GET" and route == "/api/home":
-            return self._home(headers)
         if method == "GET" and route == "/api/conversations":
             return self._conversations(headers)
         if method == "POST" and route == "/api/conversations":
@@ -125,25 +123,9 @@ class Platform:
             return self._delete_account(headers)
         return 404, {"error": "not found"}
 
-    def _home(self, headers: dict[str, str]) -> tuple[int, dict]:
-        """The command centre: this person's real JARVIS, live."""
-        user_id = self._session_user(headers)
-        if not user_id:
-            return 401, {"error": "not signed in"}
-        from .home import build_home
-        space = self._space(user_id)
-        try:
-            payload = build_home(space.jarvis())
-        except Exception as exc:
-            return 500, {"error": f"{type(exc).__name__}"}
-        return 200, payload
-
-    def _page(self, route: str = "/") -> tuple[int, dict]:
+    def _page(self) -> tuple[int, dict]:
         # The page is rebuilt on every request, so a refresh always
         # shows the current design while it is being worked on.
-        if route == "/":
-            from .home import build_home_page
-            return 200, {"__html__": build_home_page()}
         import importlib
         from . import chat as chat_module
         importlib.reload(chat_module)
