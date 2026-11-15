@@ -15,6 +15,9 @@ Public API:
   (stt.py)
 - TTSProvider / TTSRequest / TTSResult / provider_for — TTS abstraction
   (tts.py)
+- KokoroTTSProvider / EdgeTTSProvider — the British voices (tts.py)
+- voice_assets / runtime_setup — voice engines, assets and runtime
+  (voice_assets.py, runtime_setup.py)
 - SecretVault — local encrypted-at-rest secret store (security.py)
 """
 
@@ -33,8 +36,10 @@ from .stt import STTProvider, SpeechRecognitionResult, STTStatus, STTError
 from .tts import (
     TTSProvider, TTSRequest, TTSResult, provider_for,
     FakeTTSProvider, UnavailableTTSProvider, LocalFallbackTTSProvider,
-    ChatterboxTTSProvider,
+    ChatterboxTTSProvider, KokoroTTSProvider, EdgeTTSProvider,
 )
+from .voice_assets import engine_status, install_piper_voice
+from .runtime_setup import install_runtime, runtime_ready
 from ..security.security import SecretVault
 
 __all__ = [
@@ -56,7 +61,10 @@ __all__ = [
     # TTS
     "TTSProvider", "TTSRequest", "TTSResult", "provider_for",
     "FakeTTSProvider", "UnavailableTTSProvider", "LocalFallbackTTSProvider",
-    "ChatterboxTTSProvider",
+    "ChatterboxTTSProvider", "KokoroTTSProvider", "EdgeTTSProvider",
+    # Voice engines
+    "engine_status", "install_piper_voice", "install_runtime",
+    "runtime_ready",
     # Security
     "SecretVault",
 ]

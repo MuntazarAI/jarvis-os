@@ -2,9 +2,10 @@
 
 Explicit setup only — never silent downloads. `ensure_reference()`
 creates the voice directory, fetches the configured reference audio
-(urllib, bounded timeout), verifies existence/readability/format
-(wav/flac header sniff), records metadata JSON, and reuses an existing
-valid copy instead of duplicating it.
+(one bounded, atomic download — the same one the other voice assets
+use), verifies existence/readability/format (wav/flac header sniff),
+records metadata JSON, and reuses an existing valid copy instead of
+duplicating it.
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ from __future__ import annotations
 import json
 import os
 import time
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -74,29 +74,12 @@ def ensure_reference(dest: str | Path | None = None,
         return {"ok": False, "path": str(target),
                 "error": "reference missing and no URL configured; "
                          "place male_old_movie.flac manually"}
-    try:
-        request = urllib.request.Request(
-            url, headers={"User-Agent": "jarvis-os-voice-setup/5.1"})
-        with urllib.request.urlopen(request,
-                                    timeout=timeout_s) as resp, \
-                open(target, "wb") as out:
-            total = 0
-            while True:
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > 64 * 1024 * 1024:
-                    try:
-                        target.unlink()
-                    except OSError:
-                        pass
-                    return {"ok": False, "path": str(target),
-                            "error": "download exceeds 64MiB cap"}
-                out.write(chunk)
-    except Exception as exc:
+    # One downloader for every voice asset: bounded, atomic, capped.
+    from .voice_assets import download_asset
+    outcome = download_asset(url, target, timeout_s=timeout_s)
+    if not outcome.get("ok"):
         return {"ok": False, "path": str(target),
-                "error": f"{type(exc).__name__}: {exc}"[:300]}
+                "error": str(outcome.get("error", "download failed"))[:300]}
     verified = verify_reference(target)
     meta = {"url": url, "filename": target.name,
             "verified_at": time.time(), **verified}

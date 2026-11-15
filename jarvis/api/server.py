@@ -300,7 +300,7 @@ class JarvisAPI:
             cfgd = cfg.__dict__ if cfg is not None and hasattr(
                 cfg, "__dict__") else {}
             primary = provider_for(
-                str(cfgd.get("tts_provider", "") or "chatterbox"),
+                str(cfgd.get("tts_provider", "") or "auto"),
                 cfgd)
             if not primary.available():
                 primary = provider_for("local-fallback", cfgd)
@@ -322,7 +322,10 @@ class JarvisAPI:
                     return 503, {"error": str(
                         getattr(result, "error",
                                 "synthesis failed"))[:200]}
-                with open(dest, "rb") as handle:
+                # The engine may have written the audio somewhere else
+                # (an mp3 it could not convert, for instance).
+                produced = getattr(result, "audio_path", "") or dest
+                with open(produced, "rb") as handle:
                     audio = handle.read()
             if not audio:
                 return 503, {"error": "empty audio"}
