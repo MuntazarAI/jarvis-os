@@ -3,8 +3,6 @@
 import json
 from types import SimpleNamespace
 
-import pytest
-
 from jarvis.api.board import BOARD_HTML, build_board
 from jarvis.api.server import JarvisAPI
 
@@ -138,3 +136,19 @@ def test_api_board_needs_token_when_set():
     code, _ = api.handle("GET", "/api/board", b"", {
         "authorization": "Bearer wrong"})
     assert code == 401
+
+
+def test_http_responses_carry_a_length():
+    """HTTP/1.1 without Content-Length leaves the client waiting."""
+    import urllib.request
+
+    api = JarvisAPI(_fake(""), port=0)  # 0 = a free port
+    api.serve_forever()
+    try:
+        url = f"http://127.0.0.1:{api.port}/api/board"
+        with urllib.request.urlopen(url, timeout=10) as handle:
+            body = handle.read()
+            assert handle.headers.get("Content-Length") == str(len(body))
+            assert json.loads(body)
+    finally:
+        api.shutdown()

@@ -310,12 +310,69 @@ def test_post_within_the_cap_still_works():
     assert "200" in _status_line(response)
 
 
-# -- board live feed --------------------------------------------------------
+def test_the_websocket_handshake_matches_the_rfc():
+    """The RFC 6455 §1.3 example.
 
-def test_board_websocket_url_carries_the_token():
+    A wrong GUID makes every browser refuse the handshake with an
+    empty error, and nothing else in the code would notice.
+    """
+    from jarvis.api.server import ws_accept_key
+    assert ws_accept_key("dGhlIHNhbXBsZSBub25jZQ==") == \
+        "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+
+
+def test_the_websocket_survives_the_handshake():
+    """The live feed needs a connection that stays open.
+
+    With HTTP/1.0 the server closed every connection right after the
+    handshake, so a live feed could only ever say "lost".
+    """
+    import base64
+    import os
+    import socket
+
+    api, port = _serve(_fake_jarvis())
+    try:
+        key = base64.b64encode(os.urandom(16)).decode()
+        request = (
+            f"GET / HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:{port}\r\n"
+            f"Upgrade: websocket\r\n"
+            f"Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            f"Sec-WebSocket-Version: 13\r\n\r\n"
+        )
+        sock = socket.create_connection(("127.0.0.1", port), timeout=10)
+        sock.sendall(request.encode())
+        response = sock.recv(4096).decode(errors="replace")
+        assert "101" in response, response
+        assert "HTTP/1.1" in response, response
+        # The connection must still be open: a closed one reads as EOF.
+        sock.settimeout(2)
+        try:
+            data = sock.recv(4096)
+        except socket.timeout:
+            data = b""
+        assert data == b"", "the server closed the live feed"
+        sock.close()
+    finally:
+        api.shutdown()
+
+
+# -- board (no live stream) -------------------------------------------------
+
+def test_board_has_no_live_stream():
+    """The board polls a snapshot; it carries no WebSocket of its own.
+
+    The live-events box it used to have could only ever show an error,
+    and the event count and types are in the snapshot anyway.
+    """
     from jarvis.api.board import BOARD_HTML
-    assert "?token=" in BOARD_HTML
-    assert "encodeURIComponent(token)" in BOARD_HTML
+    assert "new WebSocket" not in BOARD_HTML
+    assert "live events" not in BOARD_HTML
+    # The token still travels as a header, never in the URL.
+    assert "Authorization" in BOARD_HTML
+    assert "sessionStorage" in BOARD_HTML
 
 
 def test_websocket_handshake_accepts_the_token_in_the_query():

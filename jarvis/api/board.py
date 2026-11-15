@@ -9,9 +9,11 @@ Rules: read-only (no POST route), defensive (any failing subsystem
 contributes an explicit `unknown` marker, the snapshot never raises),
 and secret-scrubbed (tokens/keys never enter the payload). The page
 itself carries no authority: same token gate as the API, token kept
-in sessionStorage, sent as a header for REST, and — because a browser
-cannot set headers on a WebSocket upgrade — as a `?token=` parameter
-on the live feed (same as the experience page).
+in sessionStorage and sent as a header for REST.
+
+The page polls the snapshot every five seconds. There is no live
+stream on it: the event count and the event types are in the
+snapshot, so a second transport would only add a way to fail.
 """
 
 from __future__ import annotations
@@ -265,9 +267,6 @@ padding: 3px 0; border-top: 1px dotted #223; }
 .k { color: var(--dim); } .v { text-align: right; word-break: break-word; }
 .ok { color: var(--ok); } .warn { color: var(--warn); }
 .bad { color: var(--bad); } .acc { color: var(--acc); }
-#tick { font-size: 12px; color: var(--dim); max-height: 150px;
-overflow: auto; } #tick div { padding: 2px 0;
-border-top: 1px dotted #223; }
 #gate { position: fixed; inset: 0; background: rgba(0,0,0,.7);
 display: none; align-items: center; justify-content: center; }
 #gate div { background: var(--card); padding: 24px; border-radius: 12px;
@@ -281,8 +280,6 @@ button { padding: 8px 14px; cursor: pointer; }
 <div id="estop">EMERGENCY STOP ENGAGED — actions paused, read-only.</div>
 </header>
 <div class="grid" id="grid"></div>
-<div class="card" style="margin-top:12px"><h2>live events</h2>
-<div id="tick"><div>connecting…</div></div></div>
 <div id="gate"><div><h2>API token</h2>
 <p>This server requires a bearer token (see <code>jarvis serve
 --token</code>). It stays in this tab only.</p>
@@ -397,35 +394,7 @@ document.getElementById("grid").innerHTML = g.join("");
 // untrusted string reaches this sink unescaped. Do not add raw HTML
 // here without extending the review test.
 }
-function live() {
-let el = document.getElementById("tick");
-function note(t) { el.innerHTML = "<div>" + esc(t) + "</div>"; }
-function connect() {
-let proto = location.protocol === "https:" ? "wss" : "ws";
-let base = location.pathname.replace(/board.*$/, "");
-// A browser cannot set headers on a WebSocket upgrade, so the token
-// rides in the query string (same as the experience page). Without it
-// the handshake is refused and the feed never connects.
-let qs = token ? "?token=" + encodeURIComponent(token) : "";
-let ws; try { ws = new WebSocket(proto + "://" + location.host + base + qs); }
-catch (e) { note("live feed unavailable — retrying…");
-setTimeout(connect, 5000); return; }
-ws.onopen = () => note("live — waiting for events…");
-ws.onmessage = ev => { let m;
-try { m = JSON.parse(ev.data); } catch (e) { return; }
-if (el.children.length === 1 &&
-/live|waiting|retrying/.test(el.textContent)) el.innerHTML = "";
-let d = document.createElement("div");
-d.textContent = (m.type || "?") + " #" + (m.seq ?? "?");
-el.prepend(d); while (el.children.length > 30) el.lastChild.remove(); };
-let retry = () => { note("live feed lost — retrying…");
-try { ws.close(); } catch (e) {}
-setTimeout(connect, 5000); };
-ws.onerror = retry; ws.onclose = retry;
-}
-connect();
-}
-refresh(); setInterval(refresh, 5000); live();
+refresh(); setInterval(refresh, 5000);
 </script>
 </body>
 </html>
