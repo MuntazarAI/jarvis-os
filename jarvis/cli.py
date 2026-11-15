@@ -157,6 +157,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="remove the service and the global command")
     inst.add_argument("--no-service", action="store_true",
                       help="skip the 24/7 background service")
+    inst.add_argument("--skip-voice", action="store_true",
+                      help="skip the voice runtime and voice files")
     inst.add_argument("--linger", action="store_true",
                       help="also keep the service alive with no session open")
     inst.add_argument("--json", action="store_true", help="emit JSON")
@@ -2285,8 +2287,9 @@ def _voice_action(jarvis: Any, args: Any) -> int:
                  f"effective style: {payload['effective_style']}"]
         return _out(payload, "\n".join(lines))
     if action == "voices":
-        from .voice.voice_assets import (DEFAULT_PIPER_VOICE, PIPER_VOICES,
-                                         engine_status, install_kokoro_assets,
+        from .voice.voice_assets import (DEFAULT_PIPER_VOICE, KOKORO_BRITISH_MALE,
+                                         PIPER_VOICES, engine_status,
+                                         install_kokoro_assets,
                                          install_piper_voice)
         install = str(getattr(args, "install", "") or "")
         if install:
@@ -2306,9 +2309,11 @@ def _voice_action(jarvis: Any, args: Any) -> int:
                       json.dumps(result, default=str))
             jarvis.close()
             return code
-        payload = engine_status()
+        allow_cloud = bool(getattr(cfg, "allow_cloud_tts", False))
+        payload = engine_status(allow_cloud=allow_cloud)
         payload["installable_voices"] = sorted(PIPER_VOICES)
         payload["default_voice"] = DEFAULT_PIPER_VOICE
+        payload["kokoro_british_male"] = list(KOKORO_BRITISH_MALE)
         lines = ["VOICE ENGINES"]
         for engine in ("piper", "kokoro", "edge", "chatterbox"):
             info = payload.get(engine, {})
@@ -2319,6 +2324,9 @@ def _voice_action(jarvis: Any, args: Any) -> int:
                 if info.get("cloud") else ""
             lines.append(f"[{mark}] {engine:10s} {detail}{note}")
         lines.append(f"default voice: {DEFAULT_PIPER_VOICE}")
+        if not allow_cloud:
+            lines.append("the cloud voice is off "
+                         "(voice.allow_cloud_tts = false)")
         lines.append("install one: jarvis voice voices --install piper")
         return _out(payload, "\n".join(lines))
     if action == "runtime":
@@ -4467,8 +4475,13 @@ def _install_action(args: Any) -> int:
         _step("models", True, "; ".join(notes))
     else:
         _step("models", True, "backends already configured")
-    ok, detail = _install_voice(config)
-    _step("voice", ok, detail)
+    if getattr(args, "skip_voice", False):
+        _step("voice", True, "skipped (--skip-voice)")
+        voice_ok = True
+    else:
+        ok, detail = _install_voice(config)
+        _step("voice", ok, detail)
+        voice_ok = ok
     if not getattr(args, "no_service", False):
         ok, detail = _install_unit(linger=bool(getattr(args, "linger", False)))
         _step("service", ok, detail)
@@ -4483,6 +4496,10 @@ def _install_action(args: Any) -> int:
         checks = [{"name": "doctor", "ok": False,
                    "detail": f"{type(exc).__name__}: {exc}", "required": True}]
     failed = [c["name"] for c in checks if c.get("required") and not c.get("ok")]
+    if not voice_ok:
+        # The voice step is part of the promise this command makes:
+        # a failed step must fail the command.
+        failed.append("voice")
     payload = {"ok": not failed, "steps": steps, "checks": checks,
                "failed": failed}
     if as_json:

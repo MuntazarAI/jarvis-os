@@ -17,7 +17,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-#: Where the voice runtime lives.
+#: Where the voice runtime lives (resolved at call time by
+#: `runtime_dir()`, so the home directory can be redirected).
 RUNTIME_DIR = Path(os.path.expanduser("~/.config/jarvis/voice-venv"))
 
 #: The Python version the voice packages support.
@@ -26,14 +27,22 @@ RUNTIME_PYTHON = "3.12"
 #: The packages that make up the voice runtime.
 RUNTIME_PACKAGES = ("piper-tts", "kokoro-tts", "edge-tts")
 
+#: The binaries the runtime provides.
+RUNTIME_TOOLS = ("piper", "kokoro-tts", "edge-tts")
+
 #: Upper bounds, so a stuck download cannot hang the installer.
 UV_TIMEOUT_S = 900.0
 PIP_TIMEOUT_S = 1800.0
 
 
+def runtime_dir() -> Path:
+    """Where the voice runtime lives."""
+    return Path(os.path.expanduser("~/.config/jarvis/voice-venv"))
+
+
 def runtime_bin() -> Path:
     """The bin directory of the voice runtime."""
-    return RUNTIME_DIR / "bin"
+    return runtime_dir() / "bin"
 
 
 def runtime_python() -> Path:
@@ -52,15 +61,19 @@ def find_uv() -> str:
 def installed_tools() -> list[str]:
     """The voice tools present in the runtime."""
     tools = []
-    for name in ("piper", "kokoro-tts", "edge-tts"):
+    for name in RUNTIME_TOOLS:
         if (runtime_bin() / name).exists():
             tools.append(name)
     return tools
 
 
 def runtime_ready() -> bool:
-    """Is the voice runtime usable?"""
-    return bool(installed_tools())
+    """Is the voice runtime complete?
+
+    A runtime with only some of the tools is not ready: it is repaired
+    by running the install again, not silently accepted.
+    """
+    return all(name in installed_tools() for name in RUNTIME_TOOLS)
 
 
 def _run(argv: list[str], timeout_s: float) -> tuple[int, str]:
@@ -79,8 +92,9 @@ def _run(argv: list[str], timeout_s: float) -> tuple[int, str]:
 def install_runtime(timeout_s: float = PIP_TIMEOUT_S) -> dict[str, Any]:
     """Create the voice runtime and install piper, kokoro and edge-tts.
 
-    Reuses an existing runtime. Never fails loudly: the result carries
-    the reason so the caller can report it honestly.
+    Reuses an existing complete runtime. A partial one is repaired: the
+    packages are installed again over it. Never fails loudly: the
+    result carries the reason so the caller can report it honestly.
     """
     steps: list[dict[str, Any]] = []
 
@@ -90,7 +104,7 @@ def install_runtime(timeout_s: float = PIP_TIMEOUT_S) -> dict[str, Any]:
 
     if runtime_ready():
         return {"ok": True, "reused": True, "steps": steps,
-                "runtime": str(RUNTIME_DIR),
+                "runtime": str(runtime_dir()),
                 "tools": installed_tools()}
 
     uv = find_uv()
@@ -98,20 +112,22 @@ def install_runtime(timeout_s: float = PIP_TIMEOUT_S) -> dict[str, Any]:
         return {"ok": False, "reused": False, "steps": steps,
                 "error": "uv is not installed — install it with "
                          "`python3 -m pip install --user uv`",
-                "runtime": str(RUNTIME_DIR)}
+                "runtime": str(runtime_dir())}
 
     code, detail = _run([uv, "python", "install", RUNTIME_PYTHON], UV_TIMEOUT_S)
     if not _step("python", code, detail or f"python {RUNTIME_PYTHON} ready"):
         return {"ok": False, "reused": False, "steps": steps,
                 "error": detail or "could not install python",
-                "runtime": str(RUNTIME_DIR)}
+                "runtime": str(runtime_dir())}
 
-    code, detail = _run([uv, "venv", "--python", RUNTIME_PYTHON,
-                          str(RUNTIME_DIR)], UV_TIMEOUT_S)
-    if not _step("venv", code, detail or str(RUNTIME_DIR)):
+    # --allow-existing repairs a runtime that a failed install left
+    # half-built, instead of refusing a non-empty directory.
+    code, detail = _run([uv, "venv", "--allow-existing", "--python",
+                          RUNTIME_PYTHON, str(runtime_dir())], UV_TIMEOUT_S)
+    if not _step("venv", code, detail or str(runtime_dir())):
         return {"ok": False, "reused": False, "steps": steps,
                 "error": detail or "could not create the voice runtime",
-                "runtime": str(RUNTIME_DIR)}
+                "runtime": str(runtime_dir())}
 
     code, detail = _run([uv, "pip", "install", "--python",
                           str(runtime_python()),
@@ -119,12 +135,12 @@ def install_runtime(timeout_s: float = PIP_TIMEOUT_S) -> dict[str, Any]:
     if not _step("packages", code, detail or ", ".join(RUNTIME_PACKAGES)):
         return {"ok": False, "reused": False, "steps": steps,
                 "error": detail or "could not install the voice packages",
-                "runtime": str(RUNTIME_DIR)}
+                "runtime": str(runtime_dir())}
 
     return {"ok": runtime_ready(), "reused": False, "steps": steps,
-            "runtime": str(RUNTIME_DIR), "tools": installed_tools()}
+            "runtime": str(runtime_dir()), "tools": installed_tools()}
 
 
 __all__ = ["RUNTIME_DIR", "RUNTIME_PYTHON", "RUNTIME_PACKAGES",
-           "runtime_bin", "runtime_python", "find_uv", "installed_tools",
-           "runtime_ready", "install_runtime"]
+           "RUNTIME_TOOLS", "runtime_dir", "runtime_bin", "runtime_python",
+           "find_uv", "installed_tools", "runtime_ready", "install_runtime"]

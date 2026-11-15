@@ -9,21 +9,29 @@ All notable project milestones are recorded here.
 - Added the Kokoro TTS provider: a natural local British male voice
   (`bm_george`), no GPU needed
 - Added the Edge TTS provider (`en-GB-RyanNeural`): the most natural
-  voice, but it is cloud, so it is opt-in only and never picked
-  automatically
-- The piper fallback now finds its voice model by itself and prefers the
-  British male voices; it also gets its text as bytes on stdin, which is
-  what piper actually reads
+  voice, but it is cloud, so it is opt-in twice — the provider name and
+  `voice.allow_cloud_tts` — and never automatic
+- The spoken text no longer goes into a command line: argv is readable
+  from /proc by every local process, so the engines read it from a file
+  with 0600 permissions (espeak through `-f`, so a response starting
+  with `-` cannot become an option)
+- piper gets its text as bytes on stdin (it crashed on str), finds its
+  voice model by itself, and prefers the British male voices
+- the local fallback no longer claims to be piper without a model, and
+  the result names the engine that actually spoke
+- the voice engine reports the real duration and sample rate
+- voice files are verified against a pinned SHA-256: a voice file is
+  executed by onnxruntime, so an unverified download is a
+  code-execution risk
 - `voice.tts_provider` now defaults to `auto`: kokoro → piper →
-  chatterbox → espeak, the best local engine that is really installed
+  chatterbox → espeak. The cloud engine never enters that chain
 - Added `jarvis voice voices` (what is installed, what can speak) and
   `jarvis voice voices --install piper|kokoro` for the voice assets
 - Added `jarvis voice runtime`: creates the voice runtime
   (`~/.config/jarvis/voice-venv`, Python 3.12 via `uv`) that holds
   piper, kokoro and edge-tts — they do not install on Python 3.13+
-- `jarvis install` now also makes JARVIS able to speak: it creates the
-  voice runtime when needed, installs the British male voice, and moves
-  an old pinned config to `auto`
+- `jarvis install` also makes JARVIS able to speak, and moves an old
+  pinned config to `auto`
 - The doctor check `voice:chatterbox` is now `voice:engine`
 
 ### Any model, any provider

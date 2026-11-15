@@ -406,7 +406,9 @@ JARVIS speaks with the best **local** voice engine that is installed.
 
 `edge` (Microsoft Edge TTS, `en-GB-RyanNeural`) is the most natural
 voice, but it is **cloud**: the text leaves the machine. It is opt-in
-only and never chosen automatically.
+twice — set `voice.tts_provider = "edge"` *and* `voice.allow_cloud_tts
+= true` — and it is never chosen automatically. With
+`policy.local_only` on (the default) the config refuses to start.
 
 ```bash
 jarvis voice status       # which engine is in use

@@ -204,6 +204,9 @@ class VoiceConfig:
     kokoro_model: str = ""
     kokoro_voices: str = ""
     edge_voice: str = "en-GB-RyanNeural"
+    #: The cloud voice engine sends the spoken text to Microsoft. It is
+    #: off unless this is turned on *and* policy.local_only is off.
+    allow_cloud_tts: bool = False
 
 
 @dataclass
@@ -417,6 +420,11 @@ class JarvisConfig:
             errors.append("service.max_log_bytes must be >= 65536")
         if not 1 <= self.service.max_log_files <= 20:
             errors.append("service.max_log_files must be 1..20")
+        if self.voice.allow_cloud_tts and self.policy.local_only:
+            # The cloud voice engine sends the spoken text off this
+            # machine; local_only says it must not leave.
+            errors.append("voice.allow_cloud_tts cannot be true while "
+                          "policy.local_only is on")
         for kind in self.models.selection:
             if kind not in MODEL_KINDS:
                 errors.append(f"models.selection: unknown kind '{kind}' "

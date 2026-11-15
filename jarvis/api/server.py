@@ -322,7 +322,10 @@ class JarvisAPI:
                     return 503, {"error": str(
                         getattr(result, "error",
                                 "synthesis failed"))[:200]}
-                with open(dest, "rb") as handle:
+                # The engine may have written the audio somewhere else
+                # (an mp3 it could not convert, for instance).
+                produced = getattr(result, "audio_path", "") or dest
+                with open(produced, "rb") as handle:
                     audio = handle.read()
             if not audio:
                 return 503, {"error": "empty audio"}

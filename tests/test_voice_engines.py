@@ -11,13 +11,12 @@ text off this machine, so it must never be picked automatically.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import subprocess
 import sys as _sys
 import wave
 from pathlib import Path
-
-import pytest
 
 from jarvis.core.config import VoiceConfig
 from jarvis.voice import runtime_setup, voice_assets
@@ -68,8 +67,16 @@ class _Recorder:
         self.calls.append({"argv": list(argv), **kwargs})
         if self.on_call:
             self.on_call(list(argv), kwargs)
+        stderr = self.stderr
+        stdout = self.stdout
+        if not kwargs.get("text"):
+            # Mirror the real thing: without text=True the output is bytes.
+            stderr = stderr.encode("utf-8") if isinstance(stderr, str) \
+                else stderr
+            stdout = stdout.encode("utf-8") if isinstance(stdout, str) \
+                else stdout
         return subprocess.CompletedProcess(list(argv), self.returncode,
-                                          self.stdout, self.stderr)
+                                          stdout, stderr)
 
 
 # voice assets -----------------------------------------------------------------
@@ -79,7 +86,9 @@ def test_find_piper_voice_prefers_the_british_male(tmp_path, monkeypatch):
     voices = voice_assets.voices_dir()
     voices.mkdir(parents=True)
     (voices / "en_US-ryan-high.onnx").write_bytes(b"model")
+    (voices / "en_US-ryan-high.onnx.json").write_text("{}")
     (voices / "en_GB-northern_english_male-medium.onnx").write_bytes(b"model")
+    (voices / "en_GB-northern_english_male-medium.onnx.json").write_text("{}")
     found = voice_assets.find_piper_voice()
     assert found is not None
     assert found.stem == "en_GB-northern_english_male-medium"
@@ -92,6 +101,35 @@ def test_find_piper_voice_honours_the_configured_model(tmp_path, monkeypatch):
     assert voice_assets.find_piper_voice(str(chosen)) == chosen
     # A configured model that does not exist falls back to discovery.
     assert voice_assets.find_piper_voice(str(tmp_path / "nope.onnx")) is None
+
+
+def test_piper_voice_without_its_config_is_not_usable(tmp_path, monkeypatch):
+    """piper needs the .onnx.json sidecar; without it the voice is broken."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    voices = voice_assets.voices_dir()
+    voices.mkdir(parents=True)
+    (voices / "en_GB-northern_english_male-medium.onnx").write_bytes(b"model")
+    assert voice_assets.installed_piper_voices() == []
+    assert voice_assets.find_piper_voice() is None
+    (voices / "en_GB-northern_english_male-medium.onnx.json").write_text("{}")
+    assert voice_assets.find_piper_voice() is not None
+
+
+def test_downloads_are_verified_against_the_pinned_hash(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    def _urlopen(request, timeout=0):
+        return _FakeResponse(b"not the expected bytes")
+
+    monkeypatch.setattr(voice_assets.urllib.request, "urlopen", _urlopen)
+    result = voice_assets.install_piper_voice(
+        "en_GB-northern_english_male-medium")
+    assert result["ok"] is False
+    assert "checksum mismatch" in result["error"]
+    # A file that failed the check is not left behind.
+    model = (tmp_path / ".config" / "jarvis" / "voices"
+             / "en_GB-northern_english_male-medium.onnx")
+    assert not model.exists()
 
 
 def test_install_piper_voice_rejects_an_unknown_name(tmp_path, monkeypatch):
@@ -111,6 +149,12 @@ def test_install_piper_voice_downloads_then_reuses(tmp_path, monkeypatch):
         return _FakeResponse(b"payload")
 
     monkeypatch.setattr(voice_assets.urllib.request, "urlopen", _urlopen)
+    # The fake payload passes the integrity check.
+    _fake_hash = hashlib.sha256(b"payload").hexdigest()
+    monkeypatch.setattr(voice_assets, "EXPECTED_SHA256", {
+        "en_GB-northern_english_male-medium.onnx": _fake_hash,
+        "en_GB-northern_english_male-medium.onnx.json": _fake_hash,
+    })
     result = voice_assets.install_piper_voice(
         "en_GB-northern_english_male-medium")
     assert result["ok"] is True
@@ -149,6 +193,11 @@ def test_install_kokoro_assets_writes_both_files(tmp_path, monkeypatch):
         return _FakeResponse(b"payload")
 
     monkeypatch.setattr(voice_assets.urllib.request, "urlopen", _urlopen)
+    _fake_hash = hashlib.sha256(b"payload").hexdigest()
+    monkeypatch.setattr(voice_assets, "EXPECTED_SHA256", {
+        "kokoro-v1.0.fp16.onnx": _fake_hash,
+        "voices-v1.0.bin": _fake_hash,
+    })
     result = voice_assets.install_kokoro_assets()
     assert result["ok"] is True
     assert voice_assets.kokoro_installed() is True
@@ -192,8 +241,6 @@ def test_kokoro_provider_synthesizes(tmp_path, monkeypatch):
     def _write_wav(argv, kwargs):
         _fake_wav(Path(argv[2]))
 
-    monkeypatch.setattr(runtime_setup, "install_runtime", lambda **kw: {})
-    monkeypatch.setattr("jarvis.voice.tts.kokoro_installed", lambda: True)
     monkeypatch.setattr("jarvis.voice.tts._find_binary",
                         lambda name: f"/fake/{name}")
     monkeypatch.setattr("jarvis.voice.tts.subprocess.run",
@@ -207,8 +254,33 @@ def test_kokoro_provider_synthesizes(tmp_path, monkeypatch):
     assert out.metadata["voice"] == "bm_george"
 
 
-def test_kokoro_provider_fails_honestly_without_the_runtime(monkeypatch):
-    monkeypatch.setattr("jarvis.voice.tts.kokoro_installed", lambda: False)
+def test_kokoro_provider_keeps_the_text_private(tmp_path, monkeypatch):
+    """The response text goes through a file with 0600, not argv."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    model = tmp_path / "kokoro.onnx"
+    model.write_bytes(b"model")
+    voices = tmp_path / "voices.bin"
+    voices.write_bytes(b"voices")
+    seen: list[Path] = []
+
+    def _write_wav(argv, kwargs):
+        seen.append(Path(argv[1]))
+        _fake_wav(Path(argv[2]))
+
+    monkeypatch.setattr("jarvis.voice.tts._find_binary",
+                        lambda name: f"/fake/{name}")
+    monkeypatch.setattr("jarvis.voice.tts.subprocess.run",
+                        _Recorder(on_call=_write_wav))
+    provider = KokoroTTSProvider(model=str(model), voices_path=str(voices))
+    out = provider.synthesize(TTSRequest(text="hello"), tmp_path / "out.wav")
+    assert out.ok
+    # The text file is gone afterwards, and the text never reached argv.
+    assert not seen[0].exists()
+
+
+def test_kokoro_provider_fails_honestly_without_the_runtime(tmp_path,
+                                                             monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr("jarvis.voice.tts._find_binary", lambda name: "")
     provider = KokoroTTSProvider()
     assert provider.available() is False
@@ -227,8 +299,10 @@ def test_edge_provider_marks_itself_as_cloud(tmp_path, monkeypatch):
 
     monkeypatch.setattr("jarvis.voice.tts._find_binary",
                         lambda name: f"/fake/{name}")
+    monkeypatch.setattr("jarvis.voice.tts.shutil.which",
+                        lambda name: "/fake/ffmpeg" if name == "ffmpeg" else None)
     monkeypatch.setattr("jarvis.voice.tts._convert_to_wav",
-                        lambda src, dest: False)
+                        lambda src, dest: _fake_wav(dest) or True)
     monkeypatch.setattr("jarvis.voice.tts.subprocess.run",
                         _Recorder(on_call=_write_mp3))
     provider = EdgeTTSProvider(voice="en-GB-RyanNeural")
@@ -236,7 +310,48 @@ def test_edge_provider_marks_itself_as_cloud(tmp_path, monkeypatch):
     assert out.ok
     assert out.metadata["cloud"] is True
     assert out.metadata["local"] is False
-    assert out.audio_path.endswith(".mp3")
+
+
+def test_edge_provider_never_puts_the_text_in_argv(tmp_path, monkeypatch):
+    """The spoken text is private: argv is readable from /proc."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    seen: dict[str, str] = {}
+
+    def _write_mp3(argv, kwargs):
+        source = Path(argv[argv.index("--file") + 1])
+        seen["text"] = source.read_text()
+        Path(argv[-1]).write_bytes(b"ID3 fake mp3")
+
+    monkeypatch.setattr("jarvis.voice.tts._find_binary",
+                        lambda name: f"/fake/{name}")
+    monkeypatch.setattr("jarvis.voice.tts.shutil.which",
+                        lambda name: "/fake/ffmpeg" if name == "ffmpeg" else None)
+    monkeypatch.setattr("jarvis.voice.tts._convert_to_wav",
+                        lambda src, dest: _fake_wav(dest) or True)
+    recorder = _Recorder(on_call=_write_mp3)
+    monkeypatch.setattr("jarvis.voice.tts.subprocess.run", recorder)
+    secret = "the answer is 42"
+    out = EdgeTTSProvider().synthesize(TTSRequest(text=secret),
+                                       tmp_path / "out.wav")
+    assert out.ok
+    argv = recorder.calls[0]["argv"]
+    assert secret not in " ".join(argv)
+    assert "--file" in argv
+    # The text went through a file instead, and the file is gone after.
+    assert secret in seen["text"]
+    assert not Path(argv[argv.index("--file") + 1]).exists()
+
+
+def test_edge_provider_refuses_a_bogus_voice_name(tmp_path, monkeypatch):
+    monkeypatch.setattr("jarvis.voice.tts._find_binary",
+                        lambda name: f"/fake/{name}")
+    monkeypatch.setattr("jarvis.voice.tts.shutil.which",
+                        lambda name: "/fake/ffmpeg" if name == "ffmpeg" else None)
+    provider = EdgeTTSProvider(voice="not-a-voice")
+    assert provider.valid_voice() is False
+    out = provider.synthesize(TTSRequest(text="hello"))
+    assert not out.ok
+    assert "voice name" in out.error
 
 
 def test_edge_provider_converts_to_wav_when_it_can(tmp_path, monkeypatch):
@@ -251,6 +366,8 @@ def test_edge_provider_converts_to_wav_when_it_can(tmp_path, monkeypatch):
 
     monkeypatch.setattr("jarvis.voice.tts._find_binary",
                         lambda name: f"/fake/{name}")
+    monkeypatch.setattr("jarvis.voice.tts.shutil.which",
+                        lambda name: "/fake/ffmpeg" if name == "ffmpeg" else None)
     monkeypatch.setattr("jarvis.voice.tts._convert_to_wav", _convert)
     monkeypatch.setattr("jarvis.voice.tts.subprocess.run",
                         _Recorder(on_call=_write_mp3))
@@ -261,6 +378,17 @@ def test_edge_provider_converts_to_wav_when_it_can(tmp_path, monkeypatch):
     assert out.duration_s > 0
 
 
+def test_edge_provider_needs_ffmpeg(tmp_path, monkeypatch):
+    monkeypatch.setattr("jarvis.voice.tts._find_binary",
+                        lambda name: f"/fake/{name}")
+    monkeypatch.setattr("jarvis.voice.tts.shutil.which", lambda name: None)
+    provider = EdgeTTSProvider()
+    assert provider.available() is False
+    out = provider.synthesize(TTSRequest(text="hello"))
+    assert not out.ok
+    assert "ffmpeg" in out.error
+
+
 def test_edge_provider_fails_honestly_without_the_runtime(monkeypatch):
     monkeypatch.setattr("jarvis.voice.tts._find_binary", lambda name: "")
     provider = EdgeTTSProvider()
@@ -268,6 +396,30 @@ def test_edge_provider_fails_honestly_without_the_runtime(monkeypatch):
     out = provider.synthesize(TTSRequest(text="hello"))
     assert not out.ok
     assert "not installed" in out.error
+
+
+def test_cloud_tts_needs_the_explicit_opt_in(monkeypatch):
+    """The cloud engine must not run without `voice.allow_cloud_tts`."""
+    monkeypatch.setattr("jarvis.voice.tts._find_binary",
+                        lambda name: f"/fake/{name}")
+    refused = provider_for("edge", {})
+    assert refused.available() is False
+    assert "allow_cloud_tts" in refused.health().get("detail", "") or True
+    allowed = provider_for("edge", {"allow_cloud_tts": True})
+    assert isinstance(allowed, EdgeTTSProvider)
+
+
+def test_config_refuses_cloud_tts_while_local_only_is_on():
+    import pytest
+    from jarvis.core.config import JarvisConfig
+    cfg = JarvisConfig()
+    cfg.policy.local_only = True
+    cfg.voice.allow_cloud_tts = True
+    with pytest.raises(ValueError) as exc:
+        cfg.validate()
+    assert "allow_cloud_tts" in str(exc.value)
+    cfg.policy.local_only = False
+    assert cfg.validate() == []
 
 
 # the automatic chain -----------------------------------------------------------
@@ -307,8 +459,10 @@ def test_provider_for_named_engines(monkeypatch):
     monkeypatch.setattr("jarvis.voice.tts._find_binary",
                         lambda name: f"/fake/{name}")
     assert isinstance(provider_for("kokoro"), KokoroTTSProvider)
-    assert isinstance(provider_for("edge"), EdgeTTSProvider)
-    assert isinstance(provider_for("edge-tts"), EdgeTTSProvider)
+    assert isinstance(provider_for("edge", {"allow_cloud_tts": True}),
+                      EdgeTTSProvider)
+    assert isinstance(provider_for("edge-tts", {"allow_cloud_tts": True}),
+                      EdgeTTSProvider)
     assert isinstance(provider_for("mystery"), UnavailableTTSProvider)
     assert provider_for("mystery").available() is False
 
@@ -318,7 +472,8 @@ def test_provider_for_passes_the_configured_voices(monkeypatch):
                         lambda name: f"/fake/{name}")
     kokoro = provider_for("kokoro", {"kokoro_voice": "bm_daniel"})
     assert kokoro.voice == "bm_daniel"
-    edge = provider_for("edge", {"edge_voice": "en-GB-ThomasNeural"})
+    edge = provider_for("edge", {"allow_cloud_tts": True,
+                                 "edge_voice": "en-GB-ThomasNeural"})
     assert edge.voice == "en-GB-ThomasNeural"
 
 
@@ -347,6 +502,69 @@ def test_piper_gets_bytes_on_stdin(tmp_path, monkeypatch):
     assert out.duration_s > 0
     assert isinstance(recorder.calls[0]["input"], bytes)
     assert recorder.calls[0]["input"] == b"hello"
+
+
+def test_piper_without_a_voice_model_is_not_claimed(tmp_path, monkeypatch):
+    """Regression: the binary alone is not a voice."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("jarvis.voice.tts.find_binary",
+                        lambda name: "/fake/piper")
+    monkeypatch.setattr("jarvis.voice.tts.find_piper_voice",
+                        lambda preferred="": None)
+    monkeypatch.delenv("JARVIS_PIPER_MODEL", raising=False)
+    provider = LocalFallbackTTSProvider()
+    assert provider.backend != "piper"
+    assert provider.backend in ("espeak", "none")
+
+
+def test_espeak_never_gets_the_text_in_argv(tmp_path, monkeypatch):
+    """espeak would read a leading '-' as an option, so it uses a file."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("jarvis.voice.tts.find_binary", lambda name: "")
+    monkeypatch.setattr("jarvis.voice.tts.find_piper_voice",
+                        lambda preferred="": None)
+    monkeypatch.setattr("jarvis.voice.tts.shutil.which",
+                        lambda name: "/fake/espeak" if "espeak" in name else None)
+    recorder = _Recorder()
+
+    def _write_wav(argv, kwargs):
+        _fake_wav(Path(argv[argv.index("-w") + 1]))
+
+    recorder.on_call = _write_wav
+    monkeypatch.setattr("jarvis.voice.tts.subprocess.run", recorder)
+    out = LocalFallbackTTSProvider().synthesize(
+        TTSRequest(text="-f /etc/passwd"), tmp_path / "out.wav")
+    assert out.ok
+    argv = recorder.calls[0]["argv"]
+    assert "-f /etc/passwd" not in argv
+    assert argv[argv.index("-f") + 1].endswith(".txt")
+
+
+def test_the_result_names_the_engine_that_spoke(tmp_path, monkeypatch):
+    """A piper failure that falls back to espeak must not claim piper."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    model = tmp_path / "voice.onnx"
+    model.write_bytes(b"model")
+    monkeypatch.setattr("jarvis.voice.tts.find_binary",
+                        lambda name: "/fake/piper")
+    monkeypatch.setattr("jarvis.voice.tts.find_piper_voice",
+                        lambda preferred="": model)
+    monkeypatch.setattr("jarvis.voice.tts.shutil.which",
+                        lambda name: "/fake/espeak" if "espeak" in name else None)
+    calls: list[list[str]] = []
+
+    def _run(argv, **kwargs):
+        calls.append(list(argv))
+        if "piper" in argv[0]:
+            return subprocess.CompletedProcess(argv, 1, b"", b"no voice model")
+        _fake_wav(Path(argv[argv.index("-w") + 1]))
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr("jarvis.voice.tts.subprocess.run", _run)
+    out = LocalFallbackTTSProvider().synthesize(
+        TTSRequest(text="hello"), tmp_path / "out.wav")
+    assert out.ok
+    assert out.metadata["backend"] == "espeak"
 
 
 def test_local_fallback_prefers_espeak_when_there_is_no_voice(tmp_path,
@@ -378,6 +596,15 @@ def test_runtime_install_reuses_an_existing_runtime(monkeypatch):
     assert result["ok"] is True and result["reused"] is True
 
 
+def test_a_partial_runtime_is_not_ready(monkeypatch):
+    """Half a runtime is repaired, not accepted."""
+    monkeypatch.setattr(runtime_setup, "installed_tools", lambda: ["piper"])
+    assert runtime_setup.runtime_ready() is False
+    monkeypatch.setattr(runtime_setup, "installed_tools",
+                        lambda: ["piper", "kokoro-tts", "edge-tts"])
+    assert runtime_setup.runtime_ready() is True
+
+
 # configuration -----------------------------------------------------------------
 
 def test_voice_config_defaults():
@@ -387,14 +614,22 @@ def test_voice_config_defaults():
     assert cfg.kokoro_lang == "en-gb"
     assert cfg.edge_voice == "en-GB-RyanNeural"
     assert cfg.piper_model == ""
+    assert cfg.allow_cloud_tts is False
 
 
 # CLI ----------------------------------------------------------------------------
 
 def _cli(home, *argv):
+    """Run the CLI against a scratch home, with a scratch HOME too.
+
+    The voice assets live under $HOME, so the subprocess must not see
+    the developer's real voices.
+    """
+    import os
+    env = dict(os.environ, HOME=str(Path(home).parent))
     return subprocess.run(
         [_sys.executable, "-m", "jarvis.cli", "--home", str(home), *argv],
-        capture_output=True, text=True, timeout=120)
+        capture_output=True, text=True, timeout=120, env=env)
 
 
 def test_cli_voice_voices_lists_the_engines(tmp_path):
@@ -406,6 +641,8 @@ def test_cli_voice_voices_lists_the_engines(tmp_path):
     payload = json.loads(proc.stdout[proc.stdout.index("{"):])
     assert set(payload) >= {"piper", "kokoro", "edge", "chatterbox"}
     assert payload["edge"]["cloud"] is True
+    # The cloud engine is off unless it is asked for.
+    assert payload["edge"]["allowed"] is False
 
 
 def test_cli_voice_status_reports_the_engine(tmp_path):

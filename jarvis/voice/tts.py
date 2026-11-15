@@ -1,11 +1,17 @@
 """TTS provider abstraction + implementations (5.1).
 
-JARVIS depends on TTSProvider, never on Chatterbox directly:
+JARVIS depends on TTSProvider, never on an engine directly:
 
-    ChatterboxTTSProvider  (local-first JARVIS voice)
-    LocalFallbackTTSProvider (existing espeak/piper path, preserved)
+    KokoroTTSProvider  (local, natural British male voice)
+    LocalFallbackTTSProvider (local piper/espeak path, fast and offline)
+    ChatterboxTTSProvider (local-first reference-voice identity)
+    EdgeTTSProvider  (cloud, opt-in only: the text leaves the machine)
     FakeTTSProvider (deterministic, offline, for tests)
     UnavailableTTSProvider (honest failure, text-only fallback)
+
+`provider_for("auto")` picks the best *local* engine that is really
+installed: kokoro → piper → chatterbox → espeak. The cloud engine is
+never in that chain and needs both its name and `voice.allow_cloud_tts`.
 
 TTS synthesizes response text only. It never executes tools, policies,
 devices, or memory writes. Bounded text (2000 chars), bounded queue
@@ -15,6 +21,7 @@ handled by callers, lazy model load, singleton-safe via module cache.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -26,8 +33,8 @@ from pathlib import Path
 from typing import Any
 
 from .audio import AudioError
-from .voice_assets import (find_binary, find_piper_voice, kokoro_installed,
-                           kokoro_model_path, kokoro_voices_path)
+from .voice_assets import (find_binary, find_piper_voice, kokoro_model_path,
+                           kokoro_voices_path)
 
 MAX_TTS_CHARS = 2000
 SUPPORTED_FORMATS = ("wav",)
@@ -62,6 +69,10 @@ class TTSRequest:
         if len(self.text) > MAX_TTS_CHARS:
             raise AudioError(
                 f"TTS text exceeds {MAX_TTS_CHARS} chars")
+        if "\x00" in self.text:
+            # A NUL byte breaks subprocess argv and stdin: refuse it here
+            # rather than crash deep inside an engine.
+            raise AudioError("TTS text must not contain NUL bytes")
         if self.output_format not in SUPPORTED_FORMATS:
             raise AudioError("unsupported TTS format")
         if self.sample_rate not in (8000, 16000, 22050, 24000, 44100,
@@ -184,6 +195,26 @@ def _wav_info(path: Path) -> tuple[float, int]:
         return 0.0, 0
 
 
+def _unlink_text_source(target: Path) -> None:
+    """Remove the espeak text file next to the audio file."""
+    try:
+        target.with_suffix(".txt").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _remove_scratch(scratch: str | None) -> None:
+    """Remove a scratch directory and everything in it."""
+    if not scratch:
+        return
+    try:
+        for leftover in Path(scratch).glob("*"):
+            leftover.unlink(missing_ok=True)
+        Path(scratch).rmdir()
+    except OSError:
+        pass
+
+
 def _convert_to_wav(src: Path, dest: Path) -> bool:
     """Convert an audio file to wav with ffmpeg. False when it cannot."""
     ffmpeg = shutil.which("ffmpeg")
@@ -241,13 +272,16 @@ class LocalFallbackTTSProvider(TTSProvider):
     def available(self) -> bool:
         return self.backend != "none"
 
-    def _commands(self, target: Path, text: str) -> list[tuple[list[str], Any]]:
+    def _commands(self, target: Path,
+                  text: str) -> list[tuple[str, list[str], Any]]:
         """The synthesis commands to try, best first.
 
-        Each entry is (argv, stdin). Both backends write a WAV file:
-        stdout is audio, not text.
+        Each entry is (backend, argv, stdin). Both backends write a WAV
+        file: stdout is audio, not text, so the file is the only sane
+        transport. The spoken text never goes into argv — anything in
+        argv is readable from /proc by every local process.
         """
-        commands: list[tuple[list[str], Any]] = []
+        commands: list[tuple[str, list[str], Any]] = []
         if self.backend == "piper":
             piper = _find_binary("piper") or "piper"
             argv = [piper]
@@ -259,10 +293,21 @@ class LocalFallbackTTSProvider(TTSProvider):
             argv += ["--output_file", str(target)]
             # piper reads the text on stdin; it takes no positional text.
             # stdin must be bytes, not str.
-            commands.append((argv, text.encode("utf-8")))
+            commands.append(("piper", argv, text.encode("utf-8")))
         espeak = shutil.which("espeak-ng") or shutil.which("espeak")
         if espeak:
-            commands.append(([espeak, "-w", str(target), text], None))
+            # espeak would treat a leading "-" as an option (and -f would
+            # speak a local file), so the text goes through a file.
+            source = target.with_suffix(".txt")
+            try:
+                source.write_text(text, encoding="utf-8")
+                os.chmod(source, 0o600)
+            except OSError:
+                source = None
+            if source is not None:
+                commands.append(("espeak",
+                                 [espeak, "-w", str(target), "-f", str(source)],
+                                 None))
         return commands
 
     def synthesize(self, request: TTSRequest,
@@ -279,7 +324,8 @@ class LocalFallbackTTSProvider(TTSProvider):
         if dest:
             target = Path(str(dest))
         else:
-            # A temporary directory that is cleaned up with the file.
+            # The audio lives here on success: the caller gets the path,
+            # so the directory stays until the caller is done with it.
             scratch = tempfile.mkdtemp(prefix="jarvis-tts-")
             target = Path(scratch) / "speech.wav"
         try:
@@ -291,31 +337,35 @@ class LocalFallbackTTSProvider(TTSProvider):
                 sample_rate=request.sample_rate)
         text = request.text[:MAX_TTS_CHARS]
         last_error = "tts failed"
-        # `scratch` is removed with the file: a caller that asks for no
-        # destination does not get a directory per synthesis.
-        for argv, stdin in self._commands(target, text):
+        spoke_with = ""
+        for backend, argv, stdin in self._commands(target, text):
             try:
                 proc = subprocess.run(argv, input=stdin, capture_output=True,
-                                      timeout=60)
-            except (OSError, subprocess.SubprocessError) as exc:
+                                      timeout=ENGINE_TIMEOUT_S)
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
                 last_error = f"{type(exc).__name__}: {exc}"[:200]
                 continue
             latency = round((time.perf_counter() - started) * 1000, 2)
             if proc.returncode != 0:
-                detail = (proc.stderr or b"").decode("utf-8", "replace")
+                detail = proc.stderr or b""
+                if isinstance(detail, bytes):
+                    detail = detail.decode("utf-8", "replace")
                 last_error = (detail.strip() or "tts failed")[-200:]
                 continue
             if not target.exists() or target.stat().st_size == 0:
                 last_error = "tts produced no audio file"
                 continue
             duration, rate = _wav_info(target)
+            spoke_with = backend
+            _unlink_text_source(target)
             return TTSResult(
                 request_id=request.request_id, provider=self.name,
                 status="success", duration_s=duration,
                 audio_path=str(target),
                 audio_bytes=target.stat().st_size,
                 sample_rate=rate or request.sample_rate, latency_ms=latency,
-                metadata={"backend": self.backend})
+                metadata={"backend": spoke_with or self.backend})
+        _unlink_text_source(target)
         if scratch:
             try:
                 for leftover in Path(scratch).glob("*"):
@@ -366,7 +416,10 @@ class KokoroTTSProvider(TTSProvider):
         return str(path) if path.exists() else ""
 
     def available(self) -> bool:
-        return bool(_find_binary("kokoro-tts")) and kokoro_installed()
+        # The configured model paths count: a custom model directory is
+        # just as usable as the default one.
+        return bool(_find_binary("kokoro-tts")) and bool(self._model_path()) \
+            and bool(self._voices_path())
 
     def _argv(self, text_file: str, out_file: str) -> list[str]:
         argv = [_find_binary("kokoro-tts") or "kokoro-tts",
@@ -393,14 +446,20 @@ class KokoroTTSProvider(TTSProvider):
         if dest:
             target = Path(str(dest))
         else:
+            # The audio lives here on success: the caller gets the path.
             scratch = tempfile.mkdtemp(prefix="jarvis-kokoro-")
             target = Path(scratch) / "speech.wav"
+        text_file = target.with_suffix(".txt")
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            text_file = target.with_suffix(".txt")
             text_file.write_text(request.text[:MAX_TTS_CHARS],
                                  encoding="utf-8")
+            # The response text is private: keep it off the other
+            # accounts of this machine.
+            os.chmod(text_file, 0o600)
         except OSError as exc:
+            _unlink_text_source(target)
+            _remove_scratch(scratch)
             return TTSResult(
                 request_id=request.request_id, provider=self.name,
                 status="failed", error=f"cannot write input: {exc}"[:200],
@@ -409,21 +468,21 @@ class KokoroTTSProvider(TTSProvider):
             proc = subprocess.run(self._argv(str(text_file), str(target)),
                                   capture_output=True, text=True,
                                   timeout=self.timeout_s)
-        except (OSError, subprocess.SubprocessError) as exc:
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            _unlink_text_source(target)
+            _remove_scratch(scratch)
             return TTSResult(
                 request_id=request.request_id, provider=self.name,
                 status="failed", error=f"{type(exc).__name__}: {exc}"[:200],
                 sample_rate=request.sample_rate,
                 latency_ms=round((time.perf_counter() - started) * 1000, 2))
         finally:
-            try:
-                text_file.unlink(missing_ok=True)
-            except OSError:
-                pass
+            _unlink_text_source(target)
         latency = round((time.perf_counter() - started) * 1000, 2)
         if proc.returncode != 0 or not target.exists() or \
                 target.stat().st_size == 0:
             detail = (proc.stderr or proc.stdout or "kokoro failed").strip()
+            _remove_scratch(scratch)
             return TTSResult(
                 request_id=request.request_id, provider=self.name,
                 status="failed", error=detail[-200:],
@@ -441,25 +500,35 @@ class KokoroTTSProvider(TTSProvider):
 class EdgeTTSProvider(TTSProvider):
     """Microsoft Edge TTS — cloud speech, the most natural voice.
 
-    The text leaves this machine, so this provider is opt-in only: it
-    never appears in the automatic provider chain. The audio is fetched
-    as mp3 and converted to wav when ffmpeg is available, because the
-    system players expect PCM.
+    The text leaves this machine, so this provider is opt-in twice: it
+    never appears in the automatic provider chain, and it refuses to run
+    unless `voice.allow_cloud_tts` is set. The audio arrives as mp3 and
+    is converted to wav, because the system players expect PCM — so
+    ffmpeg is part of the requirements.
     """
 
     name = "edge"
+
+    #: Edge voice names look like `en-GB-RyanNeural`.
+    VOICE_PATTERN = re.compile(r"^[a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural$")
 
     def __init__(self, voice: str = "en-GB-RyanNeural",
                  timeout_s: float = 60.0) -> None:
         self.voice = voice or "en-GB-RyanNeural"
         self.timeout_s = timeout_s
 
-    def available(self) -> bool:
-        return bool(_find_binary("edge-tts"))
+    def valid_voice(self) -> bool:
+        """Is the voice name shaped like an Edge voice name?"""
+        return bool(self.VOICE_PATTERN.match(self.voice))
 
-    def _argv(self, text: str, out_file: str) -> list[str]:
+    def available(self) -> bool:
+        return bool(_find_binary("edge-tts")) and bool(shutil.which("ffmpeg"))
+
+    def _argv(self, text_file: str, out_file: str) -> list[str]:
+        # The text goes through a file, never argv: argv is world-readable
+        # through /proc while the child runs.
         return [_find_binary("edge-tts") or "edge-tts",
-                "--voice", self.voice, "--text", text,
+                "--voice", self.voice, "--file", text_file,
                 "--write-media", out_file]
 
     def synthesize(self, request: TTSRequest,
@@ -468,42 +537,71 @@ class EdgeTTSProvider(TTSProvider):
         if not self.available():
             return TTSResult(
                 request_id=request.request_id, provider=self.name,
-                status="failed", error="edge-tts runtime not installed",
+                status="failed",
+                error="edge-tts runtime or ffmpeg not installed",
+                sample_rate=request.sample_rate)
+        if not self.valid_voice():
+            # Refuse before the text goes to the cloud.
+            return TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="failed",
+                error=f"not an Edge voice name: {self.voice}"[:200],
                 sample_rate=request.sample_rate)
         scratch = None
         if dest:
             target = Path(str(dest))
         else:
+            # The audio lives here on success: the caller gets the path.
             scratch = tempfile.mkdtemp(prefix="jarvis-edge-")
             target = Path(scratch) / "speech.wav"
+        text_file = target.with_suffix(".txt")
+        mp3 = target.with_suffix(".mp3")
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            mp3 = target.with_suffix(".mp3")
-            proc = subprocess.run(
-                self._argv(request.text[:MAX_TTS_CHARS], str(mp3)),
-                capture_output=True, text=True, timeout=self.timeout_s)
-        except (OSError, subprocess.SubprocessError) as exc:
+            text_file.write_text(request.text[:MAX_TTS_CHARS],
+                                 encoding="utf-8")
+            os.chmod(text_file, 0o600)
+        except OSError as exc:
+            _unlink_text_source(target)
+            _remove_scratch(scratch)
+            return TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="failed", error=f"cannot write input: {exc}"[:200],
+                sample_rate=request.sample_rate,
+                latency_ms=round((time.perf_counter() - started) * 1000, 2))
+        try:
+            proc = subprocess.run(self._argv(str(text_file), str(mp3)),
+                                  capture_output=True, text=True,
+                                  timeout=self.timeout_s)
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            _unlink_text_source(target)
+            _remove_scratch(scratch)
             return TTSResult(
                 request_id=request.request_id, provider=self.name,
                 status="failed", error=f"{type(exc).__name__}: {exc}"[:200],
                 sample_rate=request.sample_rate,
                 latency_ms=round((time.perf_counter() - started) * 1000, 2))
+        finally:
+            _unlink_text_source(target)
         latency = round((time.perf_counter() - started) * 1000, 2)
         if proc.returncode != 0 or not mp3.exists() or \
                 mp3.stat().st_size == 0:
             detail = (proc.stderr or proc.stdout or "edge-tts failed").strip()
+            _remove_scratch(scratch)
             return TTSResult(
                 request_id=request.request_id, provider=self.name,
                 status="failed", error=detail[-200:],
                 sample_rate=request.sample_rate, latency_ms=latency)
         if not _convert_to_wav(mp3, target):
-            # No ffmpeg: hand back the mp3 as it is.
-            target = mp3
-        else:
-            try:
-                mp3.unlink(missing_ok=True)
-            except OSError:
-                pass
+            _remove_scratch(scratch)
+            return TTSResult(
+                request_id=request.request_id, provider=self.name,
+                status="failed", error="cannot convert the cloud audio to wav",
+                sample_rate=request.sample_rate, latency_ms=latency)
+        try:
+            mp3.unlink(missing_ok=True)
+        except OSError:
+            pass
         duration, rate = _wav_info(target)
         return TTSResult(
             request_id=request.request_id, provider=self.name,
@@ -951,6 +1049,12 @@ def provider_for(name: str, config: Any = None) -> TTSProvider:
             model=str(get("kokoro_model", "")),
             voices_path=str(get("kokoro_voices", "")))
     if name in ("edge", "edge-tts"):
+        # The cloud engine needs two opt-ins: the provider name and
+        # `voice.allow_cloud_tts`. Without both, nothing leaves the
+        # machine.
+        if not bool(get("allow_cloud_tts", False)):
+            return UnavailableTTSProvider(
+                "cloud TTS is off: set voice.allow_cloud_tts to enable it")
         return EdgeTTSProvider(
             voice=str(get("edge_voice", "en-GB-RyanNeural")
                       or "en-GB-RyanNeural"))

@@ -119,7 +119,7 @@ temperature (0.8), cfg_weight (0.5), retain_audio=false,
 retain_transcripts=false, playback_backend, timeout_s, queue_max,
 plus the engine settings: piper_model, kokoro_voice (`bm_george`),
 kokoro_lang (`en-gb`), kokoro_model, kokoro_voices, edge_voice
-(`en-GB-RyanNeural`).
+(`en-GB-RyanNeural`), allow_cloud_tts (false).
 
 No machine-specific absolute paths. No cloud TTS required.
 
@@ -136,9 +136,16 @@ actually installed:
 | 4 | espeak | robotic | local, instant, last resort |
 
 `edge` (Microsoft Edge TTS) is the most natural voice but sends the
-text to a cloud service, so it is **opt-in only**: name it explicitly
-(`voice.tts_provider = "edge"`) and it is never part of the automatic
-chain. Its result is tagged `metadata.cloud = true`.
+text to a cloud service, so it is **opt-in twice**: name it explicitly
+(`voice.tts_provider = "edge"`) *and* turn on
+`voice.allow_cloud_tts`. With `policy.local_only` on (the default) the
+config refuses to start, because that setting says nothing may leave
+the machine. Its result is tagged `metadata.cloud = true`.
+
+The spoken text never goes into a command line: argv is readable from
+`/proc` by every local process, so the engines get the text through a
+file with `0600` permissions (and espeak reads it through `-f`, so a
+response that starts with `-` cannot become an option).
 
 Engines live in their own environment (`~/.config/jarvis/voice-venv`):
 the TTS packages cap at Python < 3.13 and `onnxruntime` has no build
