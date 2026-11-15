@@ -210,6 +210,34 @@ def test_engine_status_never_hides_the_cloud_flag(tmp_path, monkeypatch):
     status = voice_assets.engine_status()
     assert set(status) >= {"piper", "kokoro", "edge"}
     assert status["edge"]["cloud"] is True
+    assert status["edge"]["allowed"] is False
+    assert status["edge"]["available"] is False
+
+
+def test_one_downloader_for_every_voice_asset(tmp_path, monkeypatch):
+    """The reference voice and the model voices share one downloader."""
+    monkeypatch.setattr(voice_assets.urllib.request, "urlopen",
+                        lambda request, timeout=0: _FakeResponse(b"payload"))
+    target = tmp_path / "voice.bin"
+    result = voice_assets.download_asset("https://example.invalid/v", target)
+    assert result["ok"] is True
+    assert target.read_bytes() == b"payload"
+    assert not list(tmp_path.glob("*.part"))
+
+    # The reference-voice installer uses it too.
+    from jarvis.voice import setup
+    called: dict[str, str] = {}
+
+    def _fake_download(url, path, timeout_s=0.0, max_bytes=0):
+        called["url"] = url
+        Path(path).write_bytes(b"payload")
+        return {"ok": True, "path": str(path)}
+
+    monkeypatch.setattr(voice_assets, "download_asset", _fake_download)
+    monkeypatch.setattr(setup, "voice_dir", lambda: tmp_path)
+    out = setup.ensure_reference(tmp_path / "male_old_movie.flac")
+    assert called["url"]
+    assert "ok" in out
 
 
 # kokoro provider ---------------------------------------------------------------

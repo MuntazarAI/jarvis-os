@@ -176,7 +176,18 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _download(url: str, target: Path, timeout_s: float) -> dict[str, Any]:
+def download_asset(url: str, target: Path, timeout_s: float = 300.0,
+                   max_bytes: int = MAX_VOICE_BYTES) -> dict[str, Any]:
+    """Download one voice asset: bounded, atomic, capped.
+
+    The one downloader for every voice file (the reference voice, the
+    piper voices, the Kokoro model).
+    """
+    return _download(url, target, timeout_s, max_bytes)
+
+
+def _download(url: str, target: Path, timeout_s: float,
+              max_bytes: int = MAX_VOICE_BYTES) -> dict[str, Any]:
     """Download one file, bounded, atomically (temp file then rename).
 
     `timeout_s` is a wall-clock bound for the whole download, not just
@@ -201,7 +212,7 @@ def _download(url: str, target: Path, timeout_s: float) -> dict[str, Any]:
                 if not chunk:
                     break
                 total += len(chunk)
-                if total > MAX_VOICE_BYTES:
+                if total > max_bytes:
                     out.close()
                     temp.unlink(missing_ok=True)
                     return {"ok": False, "error": "voice exceeds size cap"}
@@ -322,4 +333,4 @@ __all__ = ["PIPER_VOICES", "PIPER_PREFERENCE", "PIPER_VOICE_BASE",
            "find_binary", "installed_piper_voices", "find_piper_voice",
            "piper_installed", "kokoro_model_path", "kokoro_voices_path",
            "kokoro_installed", "install_piper_voice", "install_kokoro_assets",
-           "engine_status", "sha256_of"]
+           "engine_status", "sha256_of", "download_asset"]
