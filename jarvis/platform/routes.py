@@ -88,7 +88,18 @@ class Platform:
         """Answer a platform request. None means "not mine"."""
         route = path.split("?", 1)[0].rstrip("/") or "/"
         if method == "GET" and route in ("/", "/chat"):
-            return self._page()
+            # No frontend yet: the site is being built. The API below is
+            # the whole contract for now.
+            return 200, {"ok": True, "frontend": "coming",
+                         "endpoints": [
+                             "POST /api/signup", "POST /api/login",
+                             "POST /api/logout", "GET /api/me",
+                             "POST /api/chat", "GET /api/history",
+                             "GET /api/conversations",
+                             "POST /api/conversations",
+                             "POST /api/speak",
+                             "POST /api/account/password",
+                             "POST /api/account/delete"]}
         if method == "POST" and route == "/api/signup":
             return self._signup(body)
         if method == "POST" and route == "/api/login":
@@ -122,14 +133,6 @@ class Platform:
         if method == "POST" and route == "/api/account/delete":
             return self._delete_account(headers)
         return 404, {"error": "not found"}
-
-    def _page(self) -> tuple[int, dict]:
-        # The page is rebuilt on every request, so a refresh always
-        # shows the current design while it is being worked on.
-        import importlib
-        from . import chat as chat_module
-        importlib.reload(chat_module)
-        return 200, {"__html__": chat_module.CHAT_HTML}
 
     # -- accounts -----------------------------------------------------------
     def _signup(self, body: bytes) -> tuple[int, dict[str, Any]]:

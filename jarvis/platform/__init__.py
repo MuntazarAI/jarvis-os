@@ -7,10 +7,11 @@ own tasks.
     Platform   the routes: sign up, log in, chat, speak
     accounts   passwords (scrypt) and sessions (HttpOnly cookie)
     users      one home directory — one JARVIS — per person
-    chat       the page people actually see
 
-Everything is local to the server. No third-party service sees a
-message, and one person's data never reaches another person's answers.
+The web page is being built separately; this package is the contract
+it will talk to. Everything is local to the server: no third-party
+service sees a message, and one person's data never reaches another
+person's answers.
 """
 
 from .accounts import (SessionStore, UserStore, hash_password,

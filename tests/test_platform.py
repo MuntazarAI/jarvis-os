@@ -24,7 +24,6 @@ import pytest
 from jarvis.platform.accounts import (SessionStore, UserStore, hash_password,
                                        new_cookie, parse_cookies,
                                        verify_password)
-from jarvis.platform.chat import CHAT_HTML
 from jarvis.platform.routes import Platform
 from jarvis.platform.server import PlatformServer
 
@@ -350,13 +349,6 @@ def test_an_over_long_message_is_refused(platform):
     assert code == 400
 
 
-def test_the_page_never_reaches_out_to_the_internet():
-    lowered = CHAT_HTML.lower()
-    assert "src=\"http" not in lowered
-    assert "href=\"http" not in lowered
-    assert "@import" not in lowered
-
-
 def _session_token(platform: Platform, email: str) -> str:
     """Sign in and return the session id."""
     user = platform.users.authenticate(email, "a very long password") or \
@@ -373,8 +365,10 @@ def test_the_server_signs_a_person_in_and_answers(tmp_path):
     base = f"http://127.0.0.1:{server.port}"
     opener = _client(base)
     try:
-        status, _ = _get(base, opener, "/")
+        # No frontend yet: the root says so and lists the contract.
+        status, body = _get(base, opener, "/")
         assert status == 200
+        assert json.loads(body.decode())["frontend"] == "coming"
         code, payload = _post(base, opener, "/api/signup",
                                {"email": "muntazar@example.com",
                                 "password": "a very long password"})
