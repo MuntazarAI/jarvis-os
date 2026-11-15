@@ -39,7 +39,3 @@ def test_registered_and_low_risk():
     assert decision.risk <= 0.5
 
 
-def test_office_linkifies_replies():
-    from jarvis.api.office_page import OFFICE_HTML
-    assert "function linkify" in OFFICE_HTML
-    assert 'target="_blank" rel="noopener"' in OFFICE_HTML

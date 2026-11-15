@@ -1,9 +1,11 @@
-"""Office floor page: MD design tokens, live data, honesty mapping."""
+"""The speak and approval endpoints.
+
+The office page is gone; these APIs are what an interface would use.
+"""
 
 import json
 from types import SimpleNamespace
 
-from jarvis.api.office_page import OFFICE_HTML
 from jarvis.api.server import JarvisAPI
 
 
@@ -19,41 +21,6 @@ def _api(token=""):
             paths=SimpleNamespace(home=""),
             voice=SimpleNamespace(), world=None))
     return JarvisAPI(fake, token=token)
-
-
-def test_office_route_is_public_shell():
-    api = _api(token="tok")
-    code, payload = api.handle("GET", "/office", b"", {})
-    assert code == 200
-    assert payload["__html__"].startswith("<!DOCTYPE html>")
-
-
-def test_office_design_tokens_and_honesty():
-    for token in ("#FFF8E7", "#1A1320", "#FFD93D", "#4ECDC4",
-                  "Press Start 2P", "Pixelify Sans", "VT323"):
-        assert token in OFFICE_HTML, token
-    assert "HONESTY MAPPING" in OFFICE_HTML
-    assert "api/experience" in OFFICE_HTML
-    assert "sessionStorage" in OFFICE_HTML
-
-
-def test_office_hygiene():
-    lowered = OFFICE_HTML.lower()
-    assert "src=\"http" not in lowered
-    # Sole external exception: MD-spec Google Fonts, with system
-    # fallbacks so the page works fully offline.
-    hrefs = [line for line in lowered.splitlines()
-             if "href=\"http" in line]
-    assert hrefs and all("fonts.g" in line for line in hrefs), hrefs
-    assert "system-ui" in lowered and "monospace" in lowered
-    assert "token_hint" not in OFFICE_HTML  # pasted only, never shown
-    assert "alert(" not in lowered  # no demo popups
-
-
-def test_office_post_has_no_route():
-    api = _api()
-    code, _ = api.handle("POST", "/office", b"{}", {})
-    assert code == 404
 
 
 def test_speak_endpoint():
@@ -83,12 +50,6 @@ def test_speak_endpoint():
         "POST", "/api/speak",
         json.dumps({"text": "x" * 501}).encode(), auth)
     assert code == 400  # bounded input
-
-
-def test_office_speaks_replies():
-    from jarvis.api.office_page import OFFICE_HTML
-    assert "api/speak" in OFFICE_HTML
-    assert "sound: on" in OFFICE_HTML
 
 
 def test_speak_audio_over_http():
@@ -148,9 +109,3 @@ def test_pending_endpoint_gated_and_shaped():
     assert "hunter2" not in args["command"]
 
 
-def test_office_has_approval_modal():
-    from jarvis.api.office_page import OFFICE_HTML
-    assert "appr-modal" in OFFICE_HTML
-    assert "api/approvals/pending" in OFFICE_HTML
-    assert "api/approvals/decision" in OFFICE_HTML
-    assert "one.args" in OFFICE_HTML  # bound args shown before approval

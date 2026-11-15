@@ -79,10 +79,6 @@ class PlatformServer:
             def do_GET(self) -> None:  # noqa: N802
                 headers = {k.lower(): v for k, v in self.headers.items()}
                 code, payload = platform.handle("GET", self.path, b"", headers)
-                if isinstance(payload, dict) and "__html__" in payload:
-                    self._send(code, payload["__html__"].encode(),
-                               "text/html; charset=utf-8")
-                    return
                 body = json.dumps(payload, default=str).encode()
                 self._send(code, body, "application/json")
 

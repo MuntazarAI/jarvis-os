@@ -91,18 +91,6 @@ class JarvisAPI:
         # all data comes from /api/board, which stays token-gated
         # below. Gating the shell too would hide the token prompt
         # itself (chicken-and-egg: the login box locked behind login).
-        if method == "GET" and path.split("?", 1)[0] == "/board":
-            from .board import BOARD_HTML
-            return 200, {"__html__": BOARD_HTML}
-        if method == "GET" and path.split("?", 1)[0] == "/remote":
-            from .remote import REMOTE_HTML
-            return 200, {"__html__": REMOTE_HTML}
-        if method == "GET" and path.split("?", 1)[0] == "/command":
-            from .command_page import COMMAND_HTML
-            return 200, {"__html__": COMMAND_HTML}
-        if method == "GET" and path.split("?", 1)[0] == "/office":
-            from .office_page import OFFICE_HTML
-            return 200, {"__html__": OFFICE_HTML}
         if self.token and not _bearer_ok(
                 headers.get("authorization", ""), self.token):
             return 401, {"error": "unauthorized"}
@@ -138,9 +126,6 @@ class JarvisAPI:
             if method == "GET" and path.split("?", 1)[0] == "/api/experience":
                 from .experience import build_experience
                 return 200, build_experience(self.jarvis)
-            if method == "GET" and path.split("?", 1)[0] == "/experience":
-                from .experience_page import EXPERIENCE_HTML
-                return 200, {"__html__": EXPERIENCE_HTML}
             # NOTE: query strings are stripped for API routes only;
             # legacy routes above keep exact-match behavior.
             api_path = path.split("?", 1)[0].rstrip("/") or "/"
@@ -624,12 +609,6 @@ class JarvisAPI:
                 code, payload = api.handle("GET", self.path, b"",
                                            {k.lower(): v for k, v in self.headers.items()})
                 nocache = {"Cache-Control": "no-store"}
-                if isinstance(payload, dict) and "__html__" in payload:
-                    raw = payload["__html__"].encode()
-                    self._headers(code, "text/html; charset=utf-8",
-                                  nocache, len(raw))
-                    self.wfile.write(raw)
-                    return
                 body = json.dumps(payload, default=str).encode()
                 bare = self.path.split("?", 1)[0]
                 self._headers(code, "application/json",

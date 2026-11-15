@@ -361,20 +361,6 @@ def test_the_websocket_survives_the_handshake():
 
 # -- board (no live stream) -------------------------------------------------
 
-def test_board_has_no_live_stream():
-    """The board polls a snapshot; it carries no WebSocket of its own.
-
-    The live-events box it used to have could only ever show an error,
-    and the event count and types are in the snapshot anyway.
-    """
-    from jarvis.api.board import BOARD_HTML
-    assert "new WebSocket" not in BOARD_HTML
-    assert "live events" not in BOARD_HTML
-    # The token still travels as a header, never in the URL.
-    assert "Authorization" in BOARD_HTML
-    assert "sessionStorage" in BOARD_HTML
-
-
 def test_websocket_handshake_accepts_the_token_in_the_query():
     api, port = _serve(_fake_jarvis(), token="SECRET-TOKEN-123")
     try:

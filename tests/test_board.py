@@ -1,9 +1,12 @@
-"""Status board: read-only snapshot, auth gating, secret hygiene."""
+"""The status snapshot: read-only, auth gated, secret scrubbed.
+
+The page that used to show it is gone; the data stays.
+"""
 
 import json
 from types import SimpleNamespace
 
-from jarvis.api.board import BOARD_HTML, build_board
+from jarvis.api.board import build_board
 from jarvis.api.server import JarvisAPI
 
 
@@ -104,29 +107,9 @@ def test_secret_scrubbed_from_snapshot(tmp_path):
     assert "SECRET-TOKEN-123" not in json.dumps(payload)
 
 
-def test_board_page_route_and_auth():
-    api = JarvisAPI(_fake(""), token="SECRET-TOKEN-123")
-    # The page shell is public (it holds no data); the DATA endpoint
-    # stays gated. Otherwise the token prompt locks behind itself.
-    code, payload = api.handle("GET", "/board", b"", {})
-    assert code == 200
-    assert payload["__html__"].startswith("<!DOCTYPE html>")
-    # the actual secret value appears nowhere in the shell
-    assert "SECRET-TOKEN-123" not in payload["__html__"]
-    assert "api/board" in payload["__html__"]  # relative fetch URL
-    assert "sessionStorage" in payload["__html__"]  # token hygiene
-
-
-def test_board_has_no_external_references():
-    lowered = BOARD_HTML.lower()
-    assert "src=\"http" not in lowered
-    assert "href=\"http" not in lowered
-    assert "@import" not in lowered
-
-
 def test_board_read_only():
     api = JarvisAPI(_fake(""))
-    for path in ("/api/board", "/board"):
+    for path in ("/api/board",):
         code, _ = api.handle("POST", path, b"{}", {})
         assert code == 404
 

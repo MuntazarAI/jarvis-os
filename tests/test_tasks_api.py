@@ -1,13 +1,12 @@
-"""Command centre page: elfaria-style layout, live data only.
+"""Task endpoints: create, read and validate.
 
-Route, fidelity (all regions present), hygiene (offline, no secrets),
-task create/read endpoints, CLI pointer.
+The pages are gone; the API behind them is what a new frontend will
+use.
 """
 
 import json
 from types import SimpleNamespace
 
-from jarvis.api.command_page import COMMAND_HTML
 from jarvis.api.server import JarvisAPI
 
 
@@ -23,37 +22,6 @@ def _api(token=""):
             paths=SimpleNamespace(home=""),
             voice=SimpleNamespace(), world=None))
     return JarvisAPI(fake, token=token)
-
-
-def test_command_route_is_public_shell():
-    api = _api(token="tok")
-    code, payload = api.handle("GET", "/command", b"", {})
-    assert code == 200
-    assert payload["__html__"].startswith("<!DOCTYPE html>")
-
-
-def test_command_regions_present():
-    for marker in ("JARVIS", "Agent Command Room", "JARVIS CORE",
-                   "Mission Control", "Task Queue", "System Status",
-                   "Recent Activity", "Memory Palace", "Knowledge Graph",
-                   "Tools & Integrations", "Ask JARVIS anything",
-                   "COMMAND CENTER", "QUICK ACTIONS"):
-        assert marker in COMMAND_HTML, marker
-
-
-def test_command_hygiene():
-    lowered = COMMAND_HTML.lower()
-    assert "src=\"http" not in lowered
-    assert "href=\"http" not in lowered
-    assert "sessionStorage" in COMMAND_HTML
-    assert "api/experience" in COMMAND_HTML
-    assert "alert(" not in lowered  # no dead demo popups
-
-
-def test_command_post_has_no_page_route():
-    api = _api()
-    code, _ = api.handle("POST", "/command", b"{}", {})
-    assert code == 404
 
 
 def test_task_create_and_read(tmp_path):

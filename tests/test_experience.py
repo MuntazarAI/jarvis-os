@@ -308,22 +308,11 @@ def test_scan_history_bounded_and_summaries_only(tmp_path):
     assert items[-1]["summary"] == "s24"
 
 
-def test_experience_page_markers():
-    from jarvis.api.experience_page import EXPERIENCE_HTML
-    lowered = EXPERIENCE_HTML.lower()
-    assert "src=\"http" not in lowered
-    assert "href=\"http" not in lowered
-    assert "api/experience" in EXPERIENCE_HTML
-    assert "prefers-reduced-motion" in EXPERIENCE_HTML
-
-
 def test_perf_budgets(tmp_path):
     import time
-    from jarvis.api.experience_page import EXPERIENCE_HTML
     snap = build_experience(_fake(str(tmp_path)))
     started = time.perf_counter()
     build_experience(_fake(str(tmp_path)))
     elapsed_ms = (time.perf_counter() - started) * 1000
     assert elapsed_ms < 1000, f"snapshot too slow: {elapsed_ms:.0f}ms"
-    assert len(EXPERIENCE_HTML.encode()) < 150 * 1024
     assert len(json.dumps(snap).encode()) < 500 * 1024
