@@ -21,7 +21,7 @@ prometheus-client>=0.26.0
 # redis>=5.0.0
 
 # HTTP client
-httpx>=0.26.0
+httpx>=0.28.1
 
 # Configuration
 pyyaml>=6.0.3
@@ -32,4 +32,4 @@ cryptography>=50.0.2
 # Testing
 pytest>=7.4.0
 pytest-asyncio>=1.4.1.post1
-httpx>=0.26.0
+httpx>=0.28.1
