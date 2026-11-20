@@ -12,7 +12,6 @@ import urllib.request
 
 import pytest
 
-from jarvis.api.remote import REMOTE_HTML
 
 CLI = [sys.executable, "-m", "jarvis.cli"]
 
@@ -91,21 +90,10 @@ def test_task_doctor_fails_closed_on_corrupt_store(tmp_path):
     assert "fail-closed" in out
 
 
-def test_status_summary_and_remote_pointer(tmp_path):
+def test_status_summary(tmp_path):
     code, out, _ = run_cli(tmp_path, "status-summary")
     assert code == 0
     assert "STATUS" in out and "agents:" in out
-    code, out, _ = run_cli(tmp_path, "remote")
-    assert code == 0
-    assert "/remote" in out
-
-
-def test_remote_shell_has_no_secrets_and_relative_urls():
-    lowered = REMOTE_HTML.lower()
-    assert "src=\"http" not in lowered
-    assert "href=\"http" not in lowered
-    assert "fetch(\"cycle\"" in REMOTE_HTML
-    assert "sessionStorage" in REMOTE_HTML
 
 
 def test_board_and_api_send_no_store(tmp_path):
@@ -127,7 +115,7 @@ def test_board_and_api_send_no_store(tmp_path):
     api.serve_forever()
     try:
         base = f"http://127.0.0.1:{api.port}"
-        for path in ("/board", "/remote", "/api/board"):
+        for path in ("/api/board",):
             with urllib.request.urlopen(base + path,
                                         timeout=10) as resp:
                 assert resp.headers.get("Cache-Control") == \
@@ -153,5 +141,5 @@ def test_cycle_still_gated_without_token():
     api = JarvisAPI(fake, token="tok")
     code, _ = api.handle("POST", "/cycle", b'{"input": "hi"}', {})
     assert code == 401
-    code, _ = api.handle("GET", "/remote", b"", {})
-    assert code == 200  # shell public; the ACTION stays gated
+    code, _ = api.handle("GET", "/api/board", b"", {})
+    assert code == 401  # the data stays gated

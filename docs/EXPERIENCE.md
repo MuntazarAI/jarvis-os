@@ -22,7 +22,7 @@ policy engine, memory, or approval system exists in this layer.
 | Notifications | `proactive.notifications` + derived alerts | deduped by key |
 | Timeline | `EventStore.stream` | last 30, no second database |
 | Evidence | `jarvis proof` (memory/tasks/audit receipts) | linked, not duplicated |
-| Commands | `POST /cycle` → `cycle_once` (Conductor path) | `/remote` + experience command box |
+| Commands | `POST /cycle` → `cycle_once` (Conductor path) | the API behind the new frontend |
 
 ## Presence (view mapping, not a state machine)
 
@@ -48,8 +48,8 @@ only). See `docs/API.md` for the wider surface.
 
 ## Security model
 
-- Shells (`/board`, `/remote`, `/experience`) are public and hold no
-  data; every data/action route needs the bearer token.
+- The old shells (`/board`, `/remote`, `/experience`) are gone; every
+  data and action route needs the bearer token.
 - Approval tokens are pasted, never rendered (hints only, 8 chars).
 - `_scrub` redacts secret-named keys and URL credentials in all
   snapshots; `token_hint` is explicitly exempt (designed for display).

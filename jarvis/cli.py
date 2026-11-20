@@ -32,32 +32,18 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--token", default="")
 
-    brd = sub.add_parser("board", help="local status board URL "
-                                      "(served by `jarvis serve`)")
-    brd.add_argument("--host", default="127.0.0.1")
-    brd.add_argument("--port", type=int, default=8765)
-    brd.add_argument("--open", action="store_true",
-                     help="open the board in the default browser")
-
-    rmt = sub.add_parser("remote", help="phone/local remote URL "
-                                        "(served by `jarvis serve`)")
-    rmt.add_argument("--host", default="127.0.0.1")
-    rmt.add_argument("--port", type=int, default=8765)
-    rmt.add_argument("--open", action="store_true",
-                     help="open the remote in the default browser")
-
-    cmd = sub.add_parser("command", help="AI command centre URL "
-                                         "(live data, served by `jarvis serve`)")
-    cmd.add_argument("--host", default="127.0.0.1")
-    cmd.add_argument("--port", type=int, default=8765)
-    cmd.add_argument("--open", action="store_true",
-                     help="open the command centre in the default browser")
-    off = sub.add_parser("office", help="agent office floor URL "
-                                        "(live desks, served by `jarvis serve`)")
-    off.add_argument("--host", default="127.0.0.1")
-    off.add_argument("--port", type=int, default=8765)
-    off.add_argument("--open", action="store_true",
-                     help="open the office in the default browser")
+    plat = sub.add_parser("platform", help="the public JARVIS site: "
+                                           "accounts, chat, voice")
+    plat.add_argument("action", nargs="?", default="status",
+                      choices=["status", "serve", "users"])
+    plat.add_argument("--host", default="127.0.0.1",
+                      help="address to bind (0.0.0.0 to let the world in)")
+    plat.add_argument("--port", type=int, default=8766)
+    plat.add_argument("--root", default="",
+                      help="where accounts and per-user homes live")
+    plat.add_argument("--no-voice", action="store_true",
+                      help="do not speak the answers")
+    plat.add_argument("--json", action="store_true", help="emit JSON")
 
     sub.add_parser("status", help="print system status JSON")
     status_parser = sub.add_parser("status-summary",
@@ -4528,6 +4514,81 @@ def _install_action(args: Any) -> int:
     return 0 if not failed else 1
 
 
+def _platform_action(args: Any) -> int:
+    """The public JARVIS site: accounts, chat, voice.
+
+    `status` says what is there. `serve` runs the site. `users` lists
+    the accounts (never a password hash).
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from .platform.accounts import UserStore
+    from .platform.server import PlatformServer
+
+    as_json = bool(getattr(args, "json", False))
+    action = str(getattr(args, "action", "status"))
+    root = str(getattr(args, "root", "") or "")
+    if not root:
+        from .core.config import DEFAULT_HOME
+        root = str(_Path(DEFAULT_HOME) / "platform")
+
+    if action == "status":
+        store = UserStore(root)
+        payload = {"root": root, "accounts": store.count(),
+                   "speak": not bool(getattr(args, "no_voice", False))}
+        if as_json:
+            print(_json.dumps(payload, indent=2))
+        else:
+            print("PLATFORM")
+            print(f"accounts: {payload['accounts']}")
+            print(f"data:     {root}")
+            print(f"voice:    {'on' if payload['speak'] else 'off'}")
+            print("serve it: jarvis platform serve --host 0.0.0.0")
+        return 0
+
+    if action == "users":
+        store = UserStore(root)
+        users = []
+        try:
+            data = _json.loads((_Path(root) / "users.json").read_text(
+                encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        for email, user in (data or {}).items():
+            if isinstance(user, dict):
+                users.append({"email": email, "id": user.get("id", ""),
+                              "created_at": user.get("created_at", 0)})
+        if as_json:
+            print(_json.dumps({"users": users}, indent=2))
+        else:
+            print(f"{len(users)} account(s)")
+            for user in users:
+                print(f"  {user['email']}  {user['id']}")
+        return 0
+
+    # serve
+    template = _Path(root).parent / "config.json"
+    server = PlatformServer(root, host=str(getattr(args, "host", "127.0.0.1")),
+                             port=int(getattr(args, "port", 8766)),
+                             template_config=template,
+                             speak=not bool(getattr(args, "no_voice", False)))
+    server.serve_forever()
+    url = f"http://{getattr(args, 'host', '127.0.0.1')}:{server.port}/"
+    print(f"platform: {url}")
+    print(f"data:     {root}")
+    print("press Ctrl-C to stop")
+    try:
+        while True:
+            import time as _time
+            _time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nstopping")
+    finally:
+        server.shutdown()
+    return 0
+
+
 def _setup_action(jarvis: Any, args: Any) -> int:
     """Guided first-run checklist. Read-only; exit 1 when any required
     check fails so scripts can gate on it."""
@@ -4725,66 +4786,8 @@ def main(argv: list[str] | None = None) -> int:
             jarvis.close()
         return 0
 
-    if args.command == "board":
-        url = f"http://{args.host}:{args.port}/board"
-        print(f"status board: {url}")
-        print("served by `jarvis serve` (same host/port/token). "
-              "read-only, localhost by default.")
-        if bool(getattr(args, "open", False)):
-            try:
-                import webbrowser
-                webbrowser.open(url)
-            except Exception as exc:
-                print(f"could not open browser: {type(exc).__name__}")
-                jarvis.close()
-                return 1
-        jarvis.close()
-        return 0
-
-    if args.command == "remote":
-        url = f"http://{args.host}:{args.port}/remote"
-        print(f"remote: {url}")
-        print("same token as `serve`. LAN use only on networks you trust: "
-              "`serve --host <lan-ip>` (default stays localhost).")
-        if bool(getattr(args, "open", False)):
-            try:
-                import webbrowser
-                webbrowser.open(url)
-            except Exception as exc:
-                print(f"could not open browser: {type(exc).__name__}")
-                jarvis.close()
-                return 1
-        jarvis.close()
-        return 0
-
-    if args.command == "command":
-        url = f"http://{args.host}:{args.port}/command"
-        print(f"command centre: {url}")
-        print("live data from `/api/experience` — same token as `serve`.")
-        if bool(getattr(args, "open", False)):
-            try:
-                import webbrowser
-                webbrowser.open(url)
-            except Exception as exc:
-                print(f"could not open browser: {type(exc).__name__}")
-                jarvis.close()
-                return 1
-        jarvis.close()
-        return 0
-    if args.command == "office":
-        url = f"http://{args.host}:{args.port}/office"
-        print(f"office: {url}")
-        print("live desks from `/api/experience` — same token as `serve`.")
-        if bool(getattr(args, "open", False)):
-            try:
-                import webbrowser
-                webbrowser.open(url)
-            except Exception as exc:
-                print(f"could not open browser: {type(exc).__name__}")
-                jarvis.close()
-                return 1
-        jarvis.close()
-        return 0
+    if args.command == "platform":
+        return _platform_action(args)
 
     if args.command == "serve":
         from .api.server import JarvisAPI

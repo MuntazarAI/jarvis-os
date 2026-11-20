@@ -4,6 +4,20 @@ All notable project milestones are recorded here.
 
 ## Unreleased
 
+### The platform: people can actually use JARVIS
+
+- Added the public platform: sign up, sign in, sign out. Passwords are
+  hashed with scrypt, the session is an `HttpOnly` cookie, and every
+  session can be revoked
+- Each account gets **its own JARVIS** — its own home directory, so its
+  own memory, files, tasks and conversation. One person's data can
+  never reach another person's answers
+- Added conversations (list, switch, delete), the chat endpoint, the
+  voice endpoint (the British voice), change password and delete
+  account
+- The web page is being built separately: the platform ships as the
+  contract it will talk to (`POST /api/chat`, `POST /api/signup`, …)
+
 ### A British voice for JARVIS
 
 - Added the Kokoro TTS provider: a natural local British male voice

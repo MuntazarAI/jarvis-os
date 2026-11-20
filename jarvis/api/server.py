@@ -12,6 +12,21 @@ from typing import Any
 from ..core.loop import Jarvis
 from ..policy.policy import sanitize_approval_args
 
+#: The RFC 6455 §1.3 handshake GUID. One constant, one handshake: a
+#: second copy of this is how the board live feed ended up with a
+#: wrong GUID and every browser refused the connection.
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+def ws_accept_key(key: str) -> str:
+    """The `Sec-WebSocket-Accept` value for a client key.
+
+    SHA-1 here is mandated by RFC 6455 §1.3 for the handshake; it is
+    not a password hash.
+    """
+    digest = hashlib.sha1((key + WS_GUID).encode()).digest()
+    return base64.b64encode(digest).decode()
+
 #: Hard cap on a request body. The API takes small JSON documents;
 #: anything larger is a client bug or an attack, never a real request.
 MAX_BODY_BYTES = 64 * 1024
@@ -76,18 +91,6 @@ class JarvisAPI:
         # all data comes from /api/board, which stays token-gated
         # below. Gating the shell too would hide the token prompt
         # itself (chicken-and-egg: the login box locked behind login).
-        if method == "GET" and path.split("?", 1)[0] == "/board":
-            from .board import BOARD_HTML
-            return 200, {"__html__": BOARD_HTML}
-        if method == "GET" and path.split("?", 1)[0] == "/remote":
-            from .remote import REMOTE_HTML
-            return 200, {"__html__": REMOTE_HTML}
-        if method == "GET" and path.split("?", 1)[0] == "/command":
-            from .command_page import COMMAND_HTML
-            return 200, {"__html__": COMMAND_HTML}
-        if method == "GET" and path.split("?", 1)[0] == "/office":
-            from .office_page import OFFICE_HTML
-            return 200, {"__html__": OFFICE_HTML}
         if self.token and not _bearer_ok(
                 headers.get("authorization", ""), self.token):
             return 401, {"error": "unauthorized"}
@@ -123,9 +126,6 @@ class JarvisAPI:
             if method == "GET" and path.split("?", 1)[0] == "/api/experience":
                 from .experience import build_experience
                 return 200, build_experience(self.jarvis)
-            if method == "GET" and path.split("?", 1)[0] == "/experience":
-                from .experience_page import EXPERIENCE_HTML
-                return 200, {"__html__": EXPERIENCE_HTML}
             # NOTE: query strings are stripped for API routes only;
             # legacy routes above keep exact-match behavior.
             api_path = path.split("?", 1)[0].rstrip("/") or "/"
@@ -574,9 +574,7 @@ class JarvisAPI:
         # TRIAGED (self-review pattern:weak-crypto): SHA-1 here is
         # mandated by RFC 6455 §1.3 for the WebSocket handshake, not a
         # password hash. Not negotiable, not a finding.
-        magic = "258EAFA5-E914-47DA-95CA-C5940E9E065"
-        digest = hashlib.sha1((key + magic).encode()).digest()
-        return base64.b64encode(digest).decode()
+        return ws_accept_key(key)
 
     # -- serving ---------------------------------------------------------------
     def serve_forever(self) -> None:
@@ -584,11 +582,19 @@ class JarvisAPI:
 
         class Handler(BaseHTTPRequestHandler):
             server_version = "jarvis-os/0.1"
+            # HTTP/1.1, not the 1.0 default: with 1.0 the server closes
+            # every connection right after the response, which kills the
+            # WebSocket the moment it has been accepted.
+            protocol_version = "HTTP/1.1"
 
             def _headers(self, code: int, ctype: str = "application/json",
-                           extra: dict[str, str] | None = None) -> None:
+                           extra: dict[str, str] | None = None,
+                           length: int = 0) -> None:
                 self.send_response(code)
                 self.send_header("Content-Type", ctype)
+                # HTTP/1.1 wants a length: without it the client waits
+                # for the body to end.
+                self.send_header("Content-Length", str(length))
                 for key, value in (extra or {}).items():
                     self.send_header(key, value)
                 self.end_headers()
@@ -603,18 +609,12 @@ class JarvisAPI:
                 code, payload = api.handle("GET", self.path, b"",
                                            {k.lower(): v for k, v in self.headers.items()})
                 nocache = {"Cache-Control": "no-store"}
-                if isinstance(payload, dict) and "__html__" in payload:
-                    raw = payload["__html__"].encode()
-                    self._headers(code, "text/html; charset=utf-8",
-                                  nocache)
-                    self.wfile.write(raw)
-                    return
                 body = json.dumps(payload, default=str).encode()
                 bare = self.path.split("?", 1)[0]
                 self._headers(code, "application/json",
                               nocache if bare in ("/api/board",
                                                   "/api/experience")
-                              else None)
+                              else None, len(body))
                 self.wfile.write(body)
 
             def do_POST(self) -> None:  # noqa: N802
@@ -625,22 +625,28 @@ class JarvisAPI:
                     # A malformed header is a client bug: answer 400
                     # instead of dying inside the handler (which the
                     # client would see as a dropped connection).
-                    self._headers(400)
-                    self.wfile.write(json.dumps(
-                        {"error": "invalid Content-Length"}).encode())
+                    raw = json.dumps(
+                        {"error": "invalid Content-Length"}).encode()
+                    self._headers(400, "application/json", None,
+                                  len(raw))
+                    self.wfile.write(raw)
                     return
                 if length < 0:
-                    self._headers(400)
-                    self.wfile.write(json.dumps(
-                        {"error": "invalid Content-Length"}).encode())
+                    raw = json.dumps(
+                        {"error": "invalid Content-Length"}).encode()
+                    self._headers(400, "application/json", None,
+                                  len(raw))
+                    self.wfile.write(raw)
                     return
                 if length > MAX_BODY_BYTES:
                     # Refuse before reading: never allocate a body the
                     # client asked us to hold in memory.
-                    self._headers(413)
-                    self.wfile.write(json.dumps({
+                    raw = json.dumps({
                         "error": "request body too large",
-                        "max_bytes": MAX_BODY_BYTES}).encode())
+                        "max_bytes": MAX_BODY_BYTES}).encode()
+                    self._headers(413, "application/json", None,
+                                  len(raw))
+                    self.wfile.write(raw)
                     return
                 body = self.rfile.read(length) if length else b""
                 code, payload = api.handle("POST", self.path, body,
@@ -648,20 +654,27 @@ class JarvisAPI:
                 if isinstance(payload, dict) and "__audio__" in payload:
                     raw = payload["__audio__"]
                     self._headers(code, str(payload.get("ctype",
-                                                        "audio/wav")))
+                                                        "audio/wav")),
+                                  None, len(raw))
                     self.wfile.write(raw)
                     return
                 raw = json.dumps(payload, default=str).encode()
-                self._headers(code)
+                self._headers(code, "application/json", None, len(raw))
                 self.wfile.write(raw)
 
             def _ws(self) -> None:
                 if not _ws_token_ok(self.path, api.token or ""):
-                    self._headers(403)
+                    raw = b'{"error": "forbidden"}'
+                    self._headers(403, "application/json", None,
+                                  len(raw))
+                    self.wfile.write(raw)
                     return
                 key = self.headers.get("Sec-WebSocket-Key", "")
                 if not key:
-                    self._headers(400)
+                    raw = b'{"error": "bad websocket handshake"}'
+                    self._headers(400, "application/json", None,
+                                  len(raw))
+                    self.wfile.write(raw)
                     return
                 accept = api._ws_accept(key)
                 self.send_response(101)

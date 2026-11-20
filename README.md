@@ -45,23 +45,13 @@ It combines **cognition, memory, world modeling, evidence-based reasoning, agent
 
 ## What it looks like
 
-Real screenshots, real data — every number below came from a live system:
-
-**Command centre** (`jarvis serve`, then `/command`) — agents, mission
-checklist, task queue, approvals, system status, working command bar:
-
-![JARVIS command centre with live agents, mission checklist and task queue](docs/assets/command.png)
-
-**Status board** (`/board`) and **experience view** (`/experience`) —
-presence, mesh, durable tasks, policy, voice, events:
-
-![JARVIS status board](docs/assets/board.png)
-
-![JARVIS experience view](docs/assets/experience.png)
+The interface is being rebuilt. What is here today is the **engine
+behind it**: the REST and WebSocket API that any new frontend will
+talk to.
 
 ```bash
-jarvis serve --token <pick-one>   # terminal 1: API + live events
-jarvis board --open               # terminal 2: dashboard in your browser
+jarvis serve --token <pick-one>   # the API
+jarvis platform serve              # the public site (accounts, chat)
 ```
 
 > **Status:** Active development · public repository · architecture evolving rapidly
@@ -372,10 +362,7 @@ jarvis install --uninstall         # remove the services and the global command
 ### Experience Layer (command center)
 
 ```bash
-jarvis serve --token <pick-one>   # terminal 1: API + live events
-jarvis board --open               # status dashboard
-# http://127.0.0.1:8765/experience  # full command center:
-# presence orb, agent mesh, tasks + approvals, timeline, world, voice
+jarvis serve --token <pick-one>   # the API a new frontend will talk to
 jarvis proof "gate code"          # receipts for a claim
 jarvis setup                      # first-run checklist
 ```
