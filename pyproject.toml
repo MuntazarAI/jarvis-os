@@ -34,7 +34,7 @@ training = [
     "torch>=2.15.0",
     "torchvision>=0.18.0",
     "tensorboard>=2.16.0",
-    "wandb>=0.17.0",
+    "wandb>=0.31.2",
     "accelerate>=0.30.0",
     "peft>=0.11.0",
 ]
